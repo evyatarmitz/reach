@@ -10,6 +10,7 @@ var sim: Sim
 var speed_idx := 1
 var day_accum := 0.0
 var selected_planet_id := -1
+var view_system_id := -1  # -1 = galaxy view, otherwise the focused system
 
 var raw_label: Label
 var goods_label: Label
@@ -56,11 +57,22 @@ func _unhandled_input(event: InputEvent) -> void:
 				speed_idx = 2
 			KEY_3:
 				speed_idx = 3
+			KEY_ESCAPE:
+				view_system_id = -1
+				selected_planet_id = -1
 
 
 func _select_at(pos: Vector2) -> void:
+	if view_system_id == -1:
+		for sys in sim.systems.values():
+			if pos.distance_to(sys.map_pos) <= 20.0:
+				view_system_id = sys.id
+				selected_planet_id = -1
+				return
+		return
 	selected_planet_id = -1
-	for planet in sim.planets.values():
+	for pid in sim.systems[view_system_id].planet_ids:
+		var planet: Planet = sim.planets[pid]
 		if pos.distance_to(_planet_pos(planet)) <= 16.0:
 			selected_planet_id = planet.id
 			return
@@ -71,12 +83,44 @@ func _planet_pos(planet: Planet) -> Vector2:
 
 
 func _draw() -> void:
-	draw_circle(SYSTEM_CENTER, 18.0, Color(1.0, 0.85, 0.35))
+	if view_system_id == -1:
+		_draw_galaxy()
+	else:
+		_draw_system(sim.systems[view_system_id])
+
+
+func _draw_galaxy() -> void:
 	var font := ThemeDB.fallback_font
-	draw_string(font, SYSTEM_CENTER + Vector2(-60.0, -30.0),
-		sim.systems.values()[0].name, HORIZONTAL_ALIGNMENT_CENTER, 120, 13,
-		Color(1, 1, 1, 0.5))
-	for planet in sim.planets.values():
+	for lane in sim.lanes:
+		draw_line(sim.systems[lane[0]].map_pos, sim.systems[lane[1]].map_pos,
+			Color(1, 1, 1, 0.13), 1.5)
+	for sys in sim.systems.values():
+		var colony_count := 0
+		var established_count := 0
+		for pid in sys.planet_ids:
+			var c: Colony = sim.planets[pid].colony
+			if c != null:
+				colony_count += 1
+				if c.established:
+					established_count += 1
+		draw_circle(sys.map_pos, 9.0, Color(1.0, 0.85, 0.35))
+		if colony_count > 0:
+			var ring := Color(0.35, 1.0, 0.5) if established_count > 0 \
+				else Color(1.0, 0.7, 0.25)
+			draw_arc(sys.map_pos, 13.0, 0.0, TAU, 32, ring, 2.0)
+		draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
+			HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.65))
+	draw_string(font, Vector2(16.0, 52.0), "Click a system to inspect it",
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.4))
+
+
+func _draw_system(sys: StarSystem) -> void:
+	var font := ThemeDB.fallback_font
+	draw_circle(SYSTEM_CENTER, 18.0, Color(1.0, 0.85, 0.35))
+	draw_string(font, SYSTEM_CENTER + Vector2(-60.0, -30.0), sys.name,
+		HORIZONTAL_ALIGNMENT_CENTER, 120, 13, Color(1, 1, 1, 0.5))
+	for pid in sys.planet_ids:
+		var planet: Planet = sim.planets[pid]
 		draw_arc(SYSTEM_CENTER, planet.orbit_radius, 0.0, TAU, 96,
 			Color(1, 1, 1, 0.08), 1.0)
 		var pos := _planet_pos(planet)
@@ -94,6 +138,8 @@ func _draw() -> void:
 			draw_arc(pos, 14.5, 0.0, TAU, 32, Color.WHITE, 1.2)
 		draw_string(font, pos + Vector2(-60.0, 26.0), planet.name,
 			HORIZONTAL_ALIGNMENT_CENTER, 120, 11, Color(1, 1, 1, 0.65))
+	draw_string(font, Vector2(16.0, 52.0), "Esc — back to galaxy",
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.4))
 
 
 func _build_ui() -> void:
@@ -175,8 +221,8 @@ func _refresh_ui() -> void:
 		speed_buttons[i].button_pressed = (i == speed_idx)
 
 	var planet: Planet = sim.planets.get(selected_planet_id)
-	panel.visible = planet != null
-	if planet == null:
+	panel.visible = planet != null and view_system_id != -1
+	if not panel.visible:
 		return
 	panel_title.text = planet.name
 	var deposit_line := "Deposit: %s%s" % [
@@ -201,15 +247,18 @@ func _refresh_ui() -> void:
 
 
 # Debug hook for automated visual verification: found a colony, run fast for a
-# couple of real seconds, save a screenshot, quit.
+# couple of real seconds, save galaxy + system screenshots, quit.
 func _autoshot() -> void:
-	var first_planet_id: int = sim.systems.values()[0].planet_ids[0]
-	sim.found_colony(first_planet_id)
-	selected_planet_id = first_planet_id
+	var home: StarSystem = sim.systems.values()[0]
+	sim.found_colony(home.planet_ids[0])
 	speed_idx = 3
 	await get_tree().create_timer(2.0).timeout
 	await RenderingServer.frame_post_draw
-	var img := get_viewport().get_texture().get_image()
-	img.save_png("user://autoshot.png")
-	print("autoshot saved: ", ProjectSettings.globalize_path("user://autoshot.png"))
+	get_viewport().get_texture().get_image().save_png("user://autoshot_galaxy.png")
+	view_system_id = home.id
+	selected_planet_id = home.planet_ids[0]
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://autoshot.png")
+	print("autoshots saved: ", ProjectSettings.globalize_path("user://"))
 	get_tree().quit()

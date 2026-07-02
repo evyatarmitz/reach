@@ -20,16 +20,51 @@ var _next_id := 1
 
 static func new_demo() -> Sim:
 	var sim := Sim.new()
-	var sys := sim.add_system("Meridian")
+	# [name, map position, planet count]. Hand-authored, deterministic.
+	var defs := [
+		["Meridian", Vector2(250, 360), 4],
+		["Harrow", Vector2(450, 220), 3],
+		["Cinder", Vector2(470, 500), 2],
+		["Vale", Vector2(660, 340), 3],
+		["Tessa", Vector2(850, 200), 3],
+		["Oro", Vector2(880, 480), 2],
+		["Locke", Vector2(1080, 350), 4],
+	]
+	var numerals := ["I", "II", "III", "IV"]
 	var radii := [70.0, 115.0, 165.0, 220.0]
-	var angles := [0.7, 2.4, 4.1, 5.5]
-	var deposits := [true, false, true, false]
-	for i in radii.size():
-		var p := sim.add_planet(sys.id, "Meridian %s" % ["I", "II", "III", "IV"][i])
-		p.orbit_radius = radii[i]
-		p.orbit_angle = angles[i]
-		p.has_deposit = deposits[i]
+	for si in defs.size():
+		var sys := sim.add_system(defs[si][0])
+		sys.map_pos = defs[si][1]
+		for pi in int(defs[si][2]):
+			var p := sim.add_planet(sys.id, "%s %s" % [sys.name, numerals[pi]])
+			p.orbit_radius = radii[pi]
+			p.orbit_angle = fmod(0.9 + pi * 1.9 + si * 1.3, TAU)
+			# Scattered deterministically; guarantees the home system's first
+			# planet has one.
+			p.has_deposit = (si + pi) % 3 == 0
+	var sys_ids: Array = sim.systems.keys()
+	for l in [[0, 1], [0, 2], [1, 3], [2, 3], [1, 4], [3, 4], [3, 5], [2, 5],
+			[4, 6], [5, 6]]:
+		sim.add_lane(sys_ids[l[0]], sys_ids[l[1]])
 	return sim
+
+
+func add_lane(a_system_id: int, b_system_id: int) -> void:
+	lanes.append([a_system_id, b_system_id])
+
+
+func lane_neighbors(system_id: int) -> Array[int]:
+	var out: Array[int] = []
+	for l in lanes:
+		if l[0] == system_id:
+			out.append(l[1])
+		elif l[1] == system_id:
+			out.append(l[0])
+	return out
+
+
+func system_distance(a_system_id: int, b_system_id: int) -> float:
+	return systems[a_system_id].map_pos.distance_to(systems[b_system_id].map_pos)
 
 
 func add_system(system_name: String) -> StarSystem:

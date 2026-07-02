@@ -26,6 +26,7 @@ func first_planet_id(sim: Sim) -> int:
 
 
 func _init() -> void:
+	_test_topology()
 	_test_founding()
 	_test_mining()
 	_test_production_input()
@@ -39,6 +40,35 @@ func _init() -> void:
 	else:
 		print(failures, " TEST(S) FAILED")
 	quit(1 if failures > 0 else 0)
+
+
+func _test_topology() -> void:
+	var sim := Sim.new_demo()
+	check(sim.systems.size() >= 5, "demo map has several systems")
+	var lanes_valid := true
+	for l in sim.lanes:
+		if not (sim.systems.has(l[0]) and sim.systems.has(l[1])):
+			lanes_valid = false
+	check(lanes_valid, "every lane connects two existing systems")
+	var all_have_planets := true
+	for sys in sim.systems.values():
+		if sys.planet_ids.is_empty():
+			all_have_planets = false
+	check(all_have_planets, "every system has at least one planet")
+	# Connectivity: BFS over lanes must reach every system.
+	var visited := {}
+	var queue: Array[int] = [sim.systems.keys()[0]]
+	while not queue.is_empty():
+		var sid: int = queue.pop_front()
+		if visited.has(sid):
+			continue
+		visited[sid] = true
+		for n in sim.lane_neighbors(sid):
+			queue.append(n)
+	check(visited.size() == sim.systems.size(),
+		"lane graph is fully connected")
+	var d := sim.system_distance(sim.systems.keys()[0], sim.systems.keys()[1])
+	check(d > 0.0, "distinct systems have positive distance")
 
 
 func _test_founding() -> void:

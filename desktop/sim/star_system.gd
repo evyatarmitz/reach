@@ -7,3 +7,7 @@ extends RefCounted
 var id: int = -1
 var name: String = ""
 var planet_ids: Array[int] = []
+
+# Position on the galaxy map. Layout AND the distance metric for the
+# influence/neighbor-bonus math — systems are points, distance is euclidean.
+var map_pos: Vector2 = Vector2.ZERO
