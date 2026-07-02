@@ -49,6 +49,8 @@ var mine_btn: Button
 
 
 func _ready() -> void:
+	# Black space so fogged (unseen) area reads as truly dark, not grey.
+	RenderingServer.set_default_clear_color(Color(0.02, 0.02, 0.03))
 	sim = Sim.new_demo()
 	player_empire_id = sim.empires.keys()[0]  # demo convention: first = human
 	_build_ui()
@@ -281,21 +283,23 @@ func _draw() -> void:
 
 func _draw_galaxy() -> void:
 	var font := ThemeDB.fallback_font
-	# Deformed influence borders: bold edge LINE in each empire's colour, under
-	# the rest. Already fog-gated in _recompute_borders.
+	# Fog of war: the background is black. First lift the SEEN area to a dim lit
+	# grey with a disc around each sight source; everything unseen stays pure
+	# black (not a dim-grey map). Nothing outside the lit area is drawn.
+	for src in _sight:   # [pos, radius]
+		draw_circle(src[0], src[1], Color(0.12, 0.12, 0.14))
+	# Deformed influence borders (already fog-gated in _recompute_borders).
 	for seg in _border_segments:
 		draw_line(seg[0], seg[1], seg[2], 2.0)
+	# Lanes only where both ends are seen — no topology leaks into the dark.
 	for lane in sim.lanes:
-		draw_line(sim.systems[lane[0]].map_pos, sim.systems[lane[1]].map_pos,
-			Color(1, 1, 1, 0.13), 1.5)
+		var a: Vector2 = sim.systems[lane[0]].map_pos
+		var b: Vector2 = sim.systems[lane[1]].map_pos
+		if _visible(a) and _visible(b):
+			draw_line(a, b, Color(1, 1, 1, 0.13), 1.5)
 	for sys in sim.systems.values():
-		# Fog of war: systems out of sight are shown as unknown (dim, no live
-		# owner/colony info — you know the map layout, not the current state).
 		if not _visible(sys.map_pos):
-			draw_circle(sys.map_pos, 7.0, Color(0.5, 0.5, 0.55, 0.35))
-			draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
-				HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.2))
-			continue
+			continue   # unseen systems are hidden in the dark entirely
 		draw_circle(sys.map_pos, 9.0, Color(1.0, 0.85, 0.35))
 		# Live border contest result: ring in the current owner's color
 		# (cached in the border recompute, not recomputed per frame).
@@ -478,7 +482,9 @@ func _autoshot() -> void:
 	speed_idx = 0
 	for i in 3000:  # 300 days
 		sim.tick(SimConstants.TICK_DAYS)
-	_fog_disabled = true   # screenshot only: reveal the full border line
+	# Fog stays ON for the galaxy shot so the dark fog + lit explored region show;
+	# the expanded player has a border inside its sight.
+	_sight = sim.sight_sources(player_empire_id)
 	_recompute_borders()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
