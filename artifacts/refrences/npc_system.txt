@@ -1,0 +1,531 @@
+# Living NPCs — Final Spec (Revision 3)
+
+A modular, game-agnostic simulation core for lazy NPC generation, progressive
+discovery, finite populations, relationship simulation, and constrained
+dialogue rendering.
+
+---
+
+## 1) The Idea
+
+The world implies millions of NPCs; none exist until observed. Facts about an
+NPC live as weighted possibilities defined in JSON; observation collapses
+them into permanent canon. Observation is any act of attention — talking,
+watching someone fight, pulling a behavior profile for the combat AI.
+Authoring effort goes into trait pools and conditional rules ("200 NPCs of
+work"); combinatorics plus coherence rules yield millions of plausible,
+persistent, unique individuals. Cost — storage, compute, inference — scales
+with what has been observed, never with the size of the implied world.
+
+The engine's defining law: **the world is frozen except where attention
+touches it — and no one can prove otherwise**, because the only way to check
+is to observe, and observing is what makes it real.
+
+---
+
+## 2) The Four Spaces
+
+**Character space (canon).** Facts: gender, age band, profession, family,
+and trait-class facts (bravery, strength, skills) expressed as 1–10 enums.
+Uncollapsed = weighted distribution; collapsed = permanent, never rerolled.
+
+**Speech space (the collapse trigger).** Dialogue creates canon rather than
+reading it. An NPC may only say what is already collapsed or what collapses
+in that utterance — the blacksmith mentioning his starving children IS the
+collapse of `has_children: yes`. Self-contradiction is structurally
+impossible.
+
+**Role/population space (the finite urn).** A place's demographics are a
+census, not independent dice. Discovered artists deplete the artist pool;
+unique roles (the mayor) bind to one `entity_id` forever — street encounter
+and office visit resolve to the same person. Above a population threshold,
+depletion bookkeeping is skipped (finite population correction (1 − n/N)
+makes the error provably negligible — 50 met of 100,000 is a 0.05% skew).
+
+**Observer/relationship space (canon vs. knowledge).** World truth and
+player knowledge are separate layers. `collapsed_facts` belong to the
+entity — global, rolled once. `known_facts` and the intimacy score belong to
+an (entity, observer) record. A second observer never rerolls; they just
+haven't read pages already written. NPCs keep met-lists of observers,
+enabling "have you met my friend?" and "you two know each other — small
+world." Useful in single-player (UI, journals, gating); makes co-op possible
+later at zero redesign cost. Multiplayer is not a design goal.
+
+---
+
+## 3) The Mathematics
+
+**Model: a Bayesian network, sampled lazily.** Facts are nodes; dependencies
+(profession→gender, age→has_children, profession→skills) are edges; each
+fact needs only a conditional table over its parents, not the full joint.
+The `collapse_order` is the topological order of the DAG. Collapse is
+ancestral (forward) sampling — the textbook algorithm, which the V1 design
+implemented by accident.
+
+**The lean theorem: nothing is ever updated.** Live probability maintenance
+is only needed for *uncollapsed* facts — which have no state. A fact's
+distribution is computed exactly once, at collapse, conditioned on
+already-canon parents. Between collapses the machinery costs zero.
+
+**Resolution formula.** final_weights = base_weights × ∏(active rule
+factors), elementwise, clamp negatives, normalize. Rules are factors:
+`set_weights` (row replacement), `multiply_weights` (likelihood factor),
+`add_weights` (additive prior). Multi-parent facts (has_children ←
+age_band + marital_status) are just multiple factors on one vector.
+Fully collapsing a 25-fact NPC ≈ a few hundred multiplications —
+sub-microsecond. A thousand NPCs could collapse in a frame.
+
+**Direction discipline.** The DAG forbids cycles: each dependency pair gets
+ONE authored direction (the collapse_order forces it); the validator rejects
+rules pointing against the order. Reverse inference (saw her in the market →
+profession odds) is Bayes' theorem on the same tables — trivial at this
+scale, but out of scope until needed.
+
+**Collapse order ≠ discovery order.** Players roam conversations freely.
+When a player jumps to fact #7, the engine silently collapses only its
+*ancestors* first (cascade depth ≈ 3–4 for 25 facts; still sub-microsecond).
+Identical to the second-observer case: canon exists, this observer hasn't
+read it yet. Consequence: **intimacy gates revelation, never collapse** —
+deep facts may be silently pinned early. Accepted and documented; validator
+warns when a shallow fact depends on a much deeper one.
+
+**Depletion** is hypergeometric sampling (drawing without replacement) for
+small places — integer decrements — and skipped above the threshold per the
+correction above. Depletion makes worlds order-dependent: determinism is
+per-world-state, place_state is part of the save, and that is intended.
+
+---
+
+## 4) Three-Layer Resolution (the world matrix)
+
+Every resolution combines three layers, merged only at the moment of use:
+
+1. **World matrix** — global factor set derived from active events (drought,
+   war, storm) including magnitude tags (`threat:regional` vs
+   `threat:personal`). Computed once per *event change*, cached. Never
+   per-NPC, never per-conversation.
+2. **Personal layer** — the entity's collapsed facts and persistent state.
+3. **Session overlay** — the ephemeral product of the two, built at
+   conversation start, used for collapses and renderer context, discarded
+   after.
+
+**The firewall invariant: transient effects live in the overlay; lasting
+effects exist only via explicit collapse.** A storm making the farmer grumpy
+today is overlay — gone tomorrow. The drought costing his harvest is a
+collapsed fact. The world matrix cannot write to storage. Per-conversation
+cost: one elementwise multiply of a precomputed vector. Rounds to free.
+
+---
+
+## 5) Intimacy as a Relationship System
+
+Intimacy is divorced from generation depth (which becomes internal
+bookkeeping). Three separated quantities: what **exists** (canon), what the
+observer **knows** (observer record), what the relationship **is** (intimacy
+score — a float on the observer record).
+
+**Gains are event-weighted with context multipliers**, defined in JSON like
+all content: five street conversations ≈ 5×1; the same five during a shared
+adventure ≈ 5×3 plus a lump "we fought together" bonus. Shared experience
+outweighs interrogation volume.
+
+**Two gates on revelation, not one.** Threshold gate: is the relationship
+deep enough for this topic at all? Rate gate: a per-conversation disclosure
+budget — one or two new reveals per encounter, then "enough about me."
+Solves the empty-seat exploit (standing in front of an NPC for ten minutes
+cannot drain him); makes return visits intrinsically valuable.
+
+**Losses are core; time-decay is optional and host-supplied.** Event-driven
+drops (caught lying −20, betrayed mid-adventure −50) are entries in the same
+source table — cheap, universal, time-agnostic, and more believable than
+calendars. Time decay, where wanted, is a host-pluggable policy
+`decay(elapsed, intimacy)` evaluated **lazily on touch** via the stored
+`last_interaction` timestamp: one subtraction at next interaction, zero
+background cost. 5,000 met NPCs are 5,000 dormant rows, not 5,000 timers.
+The engine stores timestamps in host-defined units and never knows what time
+means (Stellaris centuries vs. Bannerlord's single year).
+
+---
+
+## 6) Traits, Skills, and Outliers
+
+A 1–10 stat is a ten-value enum — it inherits the entire fact system free
+(seeds, factors, order, persistence). Facts shape traits via ordinary
+factors (`profession=guard → bravery skewed high`, `age=elder → strength
+down, experience up`); direction stays facts→traits.
+
+**Outliers are free — they are distribution tails.** If elders carry a 4%
+chance of bravery 9–10, the one old guardsman growling "let them come" at
+the barbarian scare simply exists, deterministically, waiting to be met.
+Design law: rules shift and skew distributions, never floor-and-ceiling
+them — zeroing a tail authors the memorable characters out of existence.
+Validator warns on tail-killing rules.
+
+**Combat is observation.** Skills collapse the first time an NPC fights —
+watching him swing the axe is the collapse of his combat skills, exactly as
+mentioning his kids collapsed `has_children`. Recruiting an untested
+companion is genuinely recruiting an unknown: a feature designed-stat
+systems cannot offer.
+
+---
+
+## 7) Profiles — the Sockets for Other Modules
+
+The engine exposes **values, never behavior**. A profile is a JSON-defined,
+named projection mapping facts/traits onto a flat parameter bag another
+module consumes:
+
+- `combat_profile`: aggression = f(courage, bravery); preferred_range =
+  f(profession, skills); flee_threshold = f(courage, age)
+- `routine_profile`, `merchant_profile`, dialogue tone parameters (the
+  renderer was using a profile all along)
+
+Formulas live in JSON, authored per game; the engine evaluates and serves.
+The combat AI calls `get_profile(entity, "combat_profile")` and never sees
+raw facts; the engine never learns what combat is.
+
+Boundaries: **equipment is host state, not engine state** — "master axeman
+currently holding a skillet" is the combat module combining the engine's
+*person* with the host's *inventory*. And **profile pulls are observation
+events**: requesting a combat profile collapses the skills it reads, through
+the same ancestor cascade. One pipeline, not two.
+
+---
+
+## 8) Simulation Hosts — Lazy History and the Active Set
+
+For player-driven games the frozen-world law holds as-is. For simulation
+hosts (4X, sandbox), two extensions:
+
+**Lazy history.** Returning to an NPC after elapsed time collapses her
+*recent past* at the moment of observation: given elapsed time, global
+events that occurred (world matrix history), and existing facts, roll what
+happened — shop lost, child born, joined the militia. Offscreen life is a
+distribution sampled on touch. She appears to have lived continuously, and
+no one can prove otherwise.
+
+**The active set.** The host nominates "hot" entities (on screen, in party,
+plot-critical) for per-tick action resolution; everyone else stays
+frozen-with-lazy-history. Behavioral LOD — how every large sim works
+internally — as a host-side choice, not engine machinery. Engine exposes
+`resolve_actions(entity)` and `collapse_elapsed_history(entity, from, to)`;
+the host decides who gets which and how often.
+
+Softened invariant: no per-entity computation outside an interaction **or
+explicit host nomination**. Cost scales with attention — the player's or
+the host's — never with population.
+
+---
+
+## 9) Dialogue Rendering and the Passive AI
+
+**The AI is a renderer, never a simulator.** No open text box; players pick
+from options. Templates serve strangers; a small local model (1–3B
+quantized, CPU-viable, no tokens, no internet) serves confidants. The
+escalation gradient means inference cost scales with emotional investment,
+not world size. Generated lines are cached as canon phrasings — consistent
+voice for free, and most inference happens once, ever.
+
+**Passive by construction, not instruction.** The prompt contract: here are
+the facts (only those at or below the current revelation gate — the model
+physically cannot overshare), intimacy as tone parameter, magnitude tags,
+last exchange; phrase one line; nothing else. Never imply freedom — a small
+model offered a door leaves the map entirely, and a rejection loop is a
+failed box.
+
+**Contradiction is solvable; freedom is not.** Pipeline: generate → extract
+claims → validate against canon and population math → display. Pre-display
+violation: silent regenerate. Post-display: in-character repair ("forgive
+me, I misspoke") — which reads as human, not broken.
+
+**Lies are engine-authored.** A deception rule layer distorts facts *before*
+rendering (raiders:3 → "a horde") under stakes conditions; the AI phrases
+the distortion believing it true. Truth and lie are both stored; every lie
+is a logged, motivated, rare, discoverable event — confrontation is
+queryable game state. Calibration is a player-facing contract, taught in a
+tutorial beat (someone lies, gets caught): NPCs are mostly honest, sometimes
+motivated to distort, and lies leave seams. 70% liars would make speech
+worthless as a mechanic.
+
+**Implicature is managed, not solved.** Players infer scale from word choice
+("they're scary" vs "I'm afraid"). Mitigations: magnitude tags in the world
+matrix flow to the prompt; and the design rule — *players may infer from
+speech, but the game never confirms an inference that was not a collapsed
+fact*. Unreliable narrators are diegetic; a frightened farmer would
+exaggerate. The medieval setting self-masks low-grade generation: stilted
+phrasing from a small model is characterization in a 12th-century mouth.
+
+---
+
+## 10) Guardrails — Problems → Solutions
+
+| # | Problem | Solution |
+|---|---------|----------|
+| 1 | Rerolls create contradictions | Deterministic seeds `hash(world_seed, place_id, entity_id, fact_key)`; canon immutable |
+| 2 | Hidden dependency-order bugs | Explicit collapse_order = DAG topological order; validator rejects against-order rules |
+| 3 | P(A\|B) and P(B\|A) authored independently disagree | One canonical direction per dependency; validator-enforced |
+| 4 | Forced discovery order feels railroaded | Silent ancestor cascade: collapse order internal, discovery order free |
+| 5 | Early silent collapse pins deep facts before late context | Accepted: intimacy gates revelation, not collapse; validator warns shallow→deep dependencies |
+| 6 | Per-interaction "update everything" cost | Lazy ancestral sampling: uncollapsed facts have no state; zero cost between collapses |
+| 7 | World events force recalculating all met NPCs | Three-layer model: cached world matrix × personal layer → ephemeral session overlay; nothing written without collapse |
+| 8 | 9 mayors in a 100-person town | Role bindings + hypergeometric depletion in place_state; skip threshold via finite population correction |
+| 9 | Depletion breaks pure seed determinism | Documented: determinism is per-world-state; place_state is saved; order-dependence intended |
+| 10 | Thousands of background trackers (decay, budgets) | No trackers exist: timestamps + lazy evaluation on touch; dormant rows are free |
+| 11 | Time semantics vary wildly across games | Engine never defines time: host-unit timestamps, pluggable decay policy, event-driven losses as core |
+| 12 | Empty-seat exploit (drain NPC in one sitting) | Dual gate: intimacy threshold + per-conversation disclosure budget |
+| 13 | Speech referencing uncollapsed facts | Hard rule: speech references only collapsed facts or facts it collapses in-utterance |
+| 14 | AI invents facts | Permanently passive renderer; prompt never implies freedom |
+| 15 | AI contradicts canon | Claim-guard pipeline; silent regen or in-character repair |
+| 16 | Implicature misleads players | Magnitude tags + "game never confirms non-canon inferences"; unreliable narrators diegetic |
+| 17 | Lying as emergent AI noise | Engine-authored deception layer; truth+lie stored; rare, motivated, discoverable |
+| 18 | Over-lying kills speech as a mechanic | Calibration contract, taught in tutorial |
+| 19 | API costs / online dependency | Local small model; tight box makes small sufficient; template fallback always |
+| 20 | Rules flooring/ceiling trait tails | Validator warns: tail-killing rules delete memorable outliers |
+| 21 | Engine learning game concepts (combat, items) | Profile sockets: JSON projections, flat parameter bags; equipment stays host-side |
+| 22 | Sims need a living world | Lazy history collapse + host-nominated active set (behavioral LOD) |
+| 23 | Broken content silently corrected | Validator-first, fail-loud default; base-weight fallback opt-in only |
+| 24 | Multiple set_weights on one target fight via priority | Validator warning |
+
+---
+
+## 11) Invariants
+
+1. A collapsed fact is never rerolled or overwritten.
+2. Speech references only collapsed facts or facts collapsed in-utterance.
+3. Canon lives on entities and places; knowledge lives on observer records;
+   relationship is a score on observer records.
+4. Intimacy gates revelation, never collapse.
+5. Unique roles bind to one entity, place-wide, forever.
+6. Transient effects live in the session overlay; only explicit collapse
+   writes to storage. The world matrix cannot write.
+7. The AI never originates facts; it renders what the engine hands it,
+   including engine-authored lies it believes true. Every lie has a stored
+   truth and a producing rule.
+8. The engine exposes values (profiles), never behavior; it knows no time
+   units, no items, no combat.
+9. No per-entity computation outside an interaction or explicit host
+   nomination.
+10. Invalid content fails loudly at validation, never silently at runtime.
+11. Cost scales with attention, never with the size of the implied world.
+
+---
+
+## 12) Data Model (key objects)
+
+**Entity state** — collapsed_facts, collapsed_at (internal generation
+tracker, no longer player-facing), metadata/seed_version.
+
+**Place definition** (read-only content) — fact_groups, intimacy_map,
+collapse_order, facts (enum + 1–10 trait enums), rules (factors + deception
+rules), actions, profiles, intimacy_sources.
+
+**Place state** (mutable, saved) —
+```json
+{
+  "place_id": "town_hall",
+  "population_total": 100,
+  "depletion_tracking": true,
+  "role_pools": { "artist": { "initial": 5, "remaining": 4 },
+                  "mayor":  { "initial": 1, "remaining": 0 } },
+  "role_bindings": { "mayor": "npc_000007" }
+}
+```
+
+**Observer record** —
+```json
+{
+  "entity_id": "npc_000123",
+  "observer_id": "player_1",
+  "intimacy": 34.5,
+  "known_facts": ["gender", "profession", "has_children"],
+  "last_interaction": 125900,
+  "reveals_this_encounter": 1
+}
+```
+
+**Intimacy source table** (content) —
+```json
+{
+  "conversation": 1,
+  "shared_adventure_bonus": 10,
+  "adventure_context_multiplier": 3,
+  "caught_lying_to_npc": -20,
+  "betrayal": -50
+}
+```
+
+**Profile definition** (content) —
+```json
+{
+  "combat_profile": {
+    "aggression":      { "formula": "0.6*courage + 0.4*bravery" },
+    "flee_threshold":  { "formula": "10 - courage - 0.5*age_band_rank" },
+    "preferred_range": { "map": { "guard": "melee", "hunter": "ranged" },
+                         "from": "profession" }
+  }
+}
+```
+
+**Deception rule** (content) —
+```json
+{
+  "id": "farmer_exaggerates_raiders",
+  "type": "deception",
+  "target": "fact:raider_threat",
+  "when": { "all": [ { "fact": "profession", "equals": "farmer" },
+                     { "event": "raids", "active": true },
+                     { "stake": "personal_loss", "present": true } ] },
+  "effect": { "distort": { "from": "minor", "to": "severe" },
+              "tell_chance": 0.3 }
+}
+```
+
+---
+
+## 13) Worked Examples
+
+**The blacksmith's children.** Player (intimacy 2, budget remaining) asks
+about family. `has_children` is uncollapsed; parents `age_band`,
+`marital_status` silently cascade-collapse first. Drought is active, so the
+session overlay (world matrix × personal layer) skews the conversation
+toward hardship topics. `has_children` collapses to `yes` *in the utterance*
+"my little ones go hungry since the drought." Renderer receives facts +
+`threat:regional` + intimacy 34 → one warm, worried line. Budget decrements.
+Nothing else in the world computed anything.
+
+**The defiant guardsman.** Global event `barbarian_raids` enters the world
+matrix; 500 met NPCs cost zero. Each NPC talked to during the scare gets a
+session overlay skewing fear topics. One elder collapsed years ago (in play
+time) with bravery 9 — a 4% tail. His overlay + trait profile flips the
+renderer tone parameter to defiant: "let them come — I want some action."
+No special case exists anywhere in the content.
+
+**The untested recruit.** Player recruits a laborer. Combat skills are
+uncollapsed — he is genuinely an unknown. First skirmish, the combat module
+calls `get_profile(entity, "combat_profile")`; the pull cascades collapse
+of strength, axe_skill, courage. He turns out to be the farmhand with
+sword_skill 8 — a tail outlier. From now on, that is canon, in every save,
+forever.
+
+**The mayor twice.** Player meets a stranger on the street; conversation
+collapses `role: mayor`, claiming the binding `mayor → npc_000007` and
+zeroing the role pool. Next day at the mayor's office, role resolution
+returns the bound entity — same face, same facts, remembers yesterday.
+
+---
+
+## 14) Implementation & Testing Stages
+
+### V1 — Deterministic Collapse Core
+Build: validator → rule engine → trait resolver → action resolver → one
+example place. Enum facts (incl. 1–10 traits), factors, DAG order with
+silent ancestor cascade, deterministic seeds, abstract persistence, single
+place JSON.
+**Test:** golden-seed suites (same inputs → identical collapses across
+runs/platforms); property tests (canon never overwritten; cascade collapses
+exactly the ancestor set); validator fixtures (cycles, against-order rules,
+zero-distributions, set_weights collisions, tail-killing rules all caught);
+statistical tests (10k collapses per fact converge to authored
+distributions, χ² check).
+
+### V2 — Stateful World
+Place state (depletion, role pools/bindings, skip threshold), observer
+records (canon/knowledge split, intimacy score, disclosure budget, intimacy
+source table, lazy decay hook), met-lists with small-world queries,
+three-layer resolution (cached world matrix, session overlay,
+write-through-only-via-collapse), speech topics as collapse requests with
+template rendering.
+**Test:** urn exhaustion (100-person town: roles deplete exactly, never
+oversubscribe; mayor binds once); two-observer test (second observer rerolls
+nothing); budget/threshold gating; overlay leak test (transient factors
+never appear in storage); save/load round-trips of place_state + observer
+records.
+
+### V3 — Constrained Rendering
+`dialogue_renderer` interface (template / local-LLM / scripted — host's
+choice; core stays AI-agnostic), passive prompt contract, claim-guard
+pipeline with regen + in-character repair, line cache as canon phrasings,
+escalation gradient, template fallback, engine-side deception layer with
+truth+lie logging.
+**Test:** red-team the box (adversarial contexts trying to elicit invented
+facts; measure claim-guard catch rate and regen budget); cache-consistency
+(same context → same cached line); fallback drill (model unavailable →
+seamless template tier); deception audit (every distorted utterance has
+stored truth + rule id; tell_chance statistics match content).
+
+### V4 — Social & Simulation Dynamics
+Time-decay policies (host-supplied, lazily evaluated), lazy history
+collapse, host-nominated active set with per-tick action resolution, gossip
+propagation across met-lists, relationship reasoning, households —
+structure already reserved, logic lands here. Active-AI collapse proposals
+remain gated on model reliability; until then, permanently passive.
+**Test:** lazy-history equivalence (NPC touched after N elapsed units lands
+in statistically correct state vs. brute-force continuous sim baseline);
+active-set scaling (frame cost linear in hot-set size, flat in total
+population); decay correctness across wildly different host time scales.
+
+---
+
+## 15) Code Skeleton
+
+```
+living_npcs/
+  core/
+    rng.py                # stable seed: hash(world, place, entity, fact)
+    validator.py          # DAG/direction checks, tail warnings, fail-loud
+    rule_engine.py        # factor evaluation, priority, clamping
+    trait_resolver.py     # intimacy gating, ancestor cascade, collapse
+    action_resolver.py    # base weights -> factors -> weights/sample
+    overlay.py            # world matrix cache + session overlay assembly
+  world/
+    place_state.py        # depletion, role pools/bindings, skip threshold
+    observer.py           # records: intimacy, known_facts, budget, timestamps
+    met_list.py           # reverse index + small-world queries
+    speech_topics.py      # topic = collapse request + template binding
+    history.py            # lazy elapsed-history collapse          (V4)
+    active_set.py         # host-nominated hot entities            (V4)
+  dialogue/
+    renderer_iface.py     # render(context) -> line
+    template_renderer.py  # always-available tier
+    llm_renderer.py       # local model adapter, passive contract
+    claim_guard.py        # extract -> validate -> regen/repair
+    line_cache.py         # generated lines persisted as canon phrasing
+    deception.py          # engine-side distortion; truth+lie logging
+  profiles/
+    profile_engine.py     # JSON projections -> flat parameter bags
+  interfaces/
+    persistence.py        # abstract: entity, place_state, observer, lines
+    config_provider.py    # place definitions from host
+    time_policy.py        # optional host decay(elapsed, intimacy)
+  schemas/  examples/
+```
+
+**Core loop:**
+```python
+def collapse_fact(entity, fact_key, place, place_state, observer, ctx):
+    if fact_key in entity.collapsed_facts:
+        return entity.collapsed_facts[fact_key]        # canon immutable
+    for parent in dag_ancestors(fact_key, place):       # silent cascade
+        collapse_fact(entity, parent, place, place_state, observer, ctx)
+    w = base_weights(place, fact_key)
+    w = rule_engine.apply(w, fact_key, entity, overlay(ctx))  # factors
+    w = place_state.apply_depletion(w, fact_key)
+    value = weighted_pick(w, stable_seed(world, place.id, entity.id, fact_key))
+    entity.collapsed_facts[fact_key] = value
+    place_state.consume(fact_key, value)
+    return value
+```
+
+---
+
+## 16) Why It Stays Lean — the One-Paragraph Proof
+
+Uncollapsed facts have no state, so there is nothing to update between
+interactions. World events change one cached global vector, not N NPCs.
+Decay and budgets are timestamps evaluated on touch, not timers. Depletion
+is integer decrements in small places and provably skippable in large ones.
+A full NPC collapse is a few hundred multiplications; a conversation is one
+vector multiply plus at most a short ancestor cascade; inference is paid
+only for emotionally invested relationships and cached forever after.
+Every cost in the system is attached to a moment of attention — and
+attention is the one resource that does not scale with world size.

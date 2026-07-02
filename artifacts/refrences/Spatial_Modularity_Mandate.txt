@@ -1,0 +1,14 @@
+SPATIAL MODULARITY MANDATE
+==========================
+
+1. COMPONENT ISOLATION
+- Systems must not directly access internal room state.
+- Use the CommsBus for inter-system signaling.
+
+2. DATA-DRIVEN TOPOLOGY
+- All room connections must be defined in roomDefinitions.json.
+- Socket tags determine physical compatibility.
+
+3. VALIDATION FIRST
+- No ship can be instantiated without passing the LayoutValidator.
+- Valid rules: 100% reachability, no dead corridors, valid socket pairs.
