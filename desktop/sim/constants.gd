@@ -43,6 +43,10 @@ const NEIGHBOR_COEF := 0.5
 const MINE_COST := 50.0
 const MINE_RAW_PER_DAY := 5.0
 
+# How often an AI empire re-evaluates (sim days). Gradual, deterministic; not
+# tied to framerate or the speed dial (which only change ticks per real second).
+const AI_ACTION_INTERVAL_DAYS := 5.0
+
 # Tier-1 production of an established colony: goods/day = PROD_COEF * pop^PROD_EXP,
 # but every good consumes GOODS_RAW_PER_GOOD raw — production is throughput-limited
 # by real resource input (anti-snowball pillar), never by theoretical maximums.

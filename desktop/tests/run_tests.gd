@@ -53,6 +53,7 @@ func _init() -> void:
 	_test_influence_gating()
 	_test_border_contest()
 	_test_neighbor_bonus()
+	_test_ai_rival()
 	_test_mining()
 	_test_mine_income_routing()
 	_test_production_input()
@@ -276,6 +277,68 @@ func _test_neighbor_bonus() -> void:
 	run_days(clu.sim, 100.0)
 	check(clu.subject.population > iso.subject.population,
 		"over time, a clustered colony grows past an isolated one")
+
+
+func _test_ai_rival() -> void:
+	# Gating: the AI acts only where it legally can. Home system (origin) has an
+	# established homeworld with no deposit; a near system is in reach; a far
+	# system is out of reach.
+	var sim := Sim.new()
+	var e := sim.add_empire("AI", Color.RED)
+	e.raw = 10000.0
+	var home := sim.add_system("Home")
+	home.map_pos = Vector2.ZERO
+	var hp := sim.add_planet(home.id, "Home I")
+	sim.inject_colony(e.id, hp.id, 150.0, true)  # reach = A2*150 = 270
+	var near := sim.add_system("Near")
+	near.map_pos = Vector2(200, 0)
+	var near_p := sim.add_planet(near.id, "Near I")
+	near_p.has_deposit = true
+	var far := sim.add_system("Far")
+	far.map_pos = Vector2(5000, 0)
+	var far_p := sim.add_planet(far.id, "Far I")
+	far_p.has_deposit = true
+
+	var ai := EmpireAI.new(e.id)
+	ai.maybe_act(sim)  # day 0 >= next_action_day 0 → acts once
+
+	check(sim.planets[near_p.id].colony != null
+		and sim.planets[near_p.id].colony.empire_id == e.id,
+		"AI colonizes a reachable empty system")
+	check(sim.planets[near_p.id].has_mine(),
+		"AI builds a mine on a reachable deposit")
+	check(sim.planets[far_p.id].colony == null
+		and not sim.planets[far_p.id].has_mine(),
+		"AI never acts outside its influence (same gating as the player)")
+
+	# Cadence: it does not act again until the interval elapses.
+	var colonies_after_first: int = sim.colonies.size()
+	ai.maybe_act(sim)
+	check(sim.colonies.size() == colonies_after_first,
+		"AI respects its action interval (no acting every tick)")
+
+	# End to end in the real demo: the rival becomes a going concern via the
+	# public API alone — multiple colonies and at least one mine — and never
+	# seizes the player's homeworld (no combat yet; influence gating holds).
+	var demo := Sim.new_demo()
+	var player_id: int = demo.empires.keys()[0]
+	var rival_id: int = demo.empires.keys()[1]
+	run_days(demo, 400.0)
+	var rival_colonies := 0
+	var rival_mines := 0
+	for c in demo.colonies:
+		if c.empire_id == rival_id:
+			rival_colonies += 1
+	for p in demo.planets.values():
+		if p.has_mine() and p.mine_empire_id == rival_id:
+			rival_mines += 1
+	check(rival_colonies >= 2, "rival AI expands to multiple colonies over time")
+	check(rival_mines >= 1, "rival AI builds mines for income")
+	var player_home_intact := false
+	for c in demo.colonies:
+		if c.empire_id == player_id:
+			player_home_intact = true
+	check(player_home_intact, "player homeworld is untouched (no combat yet)")
 
 
 func _test_mining() -> void:

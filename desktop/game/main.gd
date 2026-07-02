@@ -268,8 +268,12 @@ func _autoshot() -> void:
 	var home: StarSystem = sim.systems.values()[0]
 	sim.build_mine(player_empire_id, home.planet_ids[0])
 	sim.found_colony(player_empire_id, home.planet_ids[1])
-	speed_idx = 3
-	await get_tree().create_timer(2.0).timeout
+	# Advance the sim directly (deterministic, instant) so both empires expand
+	# and the galaxy shows a real two-color contest.
+	speed_idx = 0
+	for i in 3000:  # 300 days
+		sim.tick(SimConstants.TICK_DAYS)
+	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://autoshot_galaxy.png")
 	view_system_id = home.id

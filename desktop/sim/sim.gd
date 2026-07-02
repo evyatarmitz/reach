@@ -16,6 +16,7 @@ var systems: Dictionary = {}   # id -> StarSystem
 var planets: Dictionary = {}   # id -> Planet
 var lanes: Array = []          # [system_id, system_id] pairs
 var colonies: Array[Colony] = []
+var ais: Array[EmpireAI] = []  # rival brains; step deterministically in tick()
 
 var _next_id := 1
 
@@ -53,7 +54,18 @@ static func new_demo() -> Sim:
 	var home := sim.inject_colony(player.id,
 		sim.systems[sys_ids[0]].planet_ids[0], 150.0, true)
 	home.days_since_established = 60.0
+	# A rival on the far side (Locke) that expands toward the player under the
+	# same rules — the border between them is a live contest, not scripted.
+	var rival := sim.add_empire("Locke Ascendancy", Color(1.0, 0.4, 0.35))
+	var rival_home := sim.inject_colony(rival.id,
+		sim.systems[sys_ids[6]].planet_ids[0], 150.0, true)
+	rival_home.days_since_established = 60.0
+	sim.add_ai(rival.id)
 	return sim
+
+
+func add_ai(empire_id: int) -> void:
+	ais.append(EmpireAI.new(empire_id))
 
 
 # --- construction -----------------------------------------------------------
@@ -238,6 +250,9 @@ func build_mine(empire_id: int, planet_id: int) -> bool:
 
 func tick(dt_days: float) -> void:
 	day += dt_days
+	# Rival decisions run on their own day-cadence, before the economy advances.
+	for ai in ais:
+		ai.maybe_act(self)
 	# Income first, so a tick's own mining output can feed its upkeep/production.
 	for p in planets.values():
 		if p.has_mine():
