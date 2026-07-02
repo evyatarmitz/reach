@@ -73,9 +73,43 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — through 0.26.0 (2026-07-02, Godot 4.7)
+
+**98 headless test assertions, all passing.** Overnight batch 0.23.0–0.26.0
+(fleets finished + military economy + specialization; all per user spec):
+- **0.23.0** Tiered military resources (nat[1-5]): a refining chain in cities, tier
+  T from tier T-1, gated by pop cutoffs (100/400/900/1600/2500). A maxed city feeds
+  the top tier; small cities only make tier 1 — spreading cities gives a resource mix.
+- **0.24.0** Fighter/bomber ships, tiers 1-5. Top-right shipyard: an F and B button
+  per tier, enabled only when that tier's resource can pay; each click builds one
+  above the most-populated city. **Automatic combat**: fleets of two empires in a
+  system fight (attrition ∝ enemy combat power, fighters win); otherwise a fleet
+  bombards enemy colonies weakest-first, destroying them under 100 pop.
+- **0.25.0** Planet specialization (FOOD/ALLOY, +60% at full, ramps over 60 days,
+  resets on switch = inertia) + mine upgrades (needs a big same-planet colony +
+  alloys; +50% output/level, up to L4).
+- **0.26.0** AI now builds ships and attacks adjacent enemy systems — combat is
+  two-sided in a real game.
+
+DESIGN DECISIONS made autonomously (flag if you disagree): military chain is
+tier-from-previous (drains lower tiers into the top → spread cities for a mix);
+ship stats/costs and pop cutoffs are first-pass numbers to tune after playing;
+combat is pure attrition (no ship-power ceiling yet — see below).
+
+NEXT / STILL OPEN:
+- Ship-power CEILING (vision pillar): investment past a cap becomes capacity, not
+  raw strength. Not yet in — combat is currently unbounded attrition.
+- Supply depot (reduces fleet attrition — pairs with a grace period), observation
+  post (extend VR beyond one jump), transportation (boost neighbor bonus).
+- Construction/civ VESSEL to build structures (vision: can't cross borders) instead
+  of instant press — the user wants this for buildings.
+- National vs civilian resource split; anomalies blocking influence+visibility.
+- Balance pass once there's more play/content (user: hard to judge before then):
+  influence-reach scaling, mine-richness vs conversion capacity, ship/tier numbers.
+
 ## Status — through 0.22.0 (2026-07-02, Godot 4.7)
 
-**81 headless test assertions, all passing.** Batch 0.19.0–0.22.0:
+Batch 0.19.0–0.22.0:
 - **0.19.0** Pacing (GROWTH_RATE 0.01→0.004 so the first center stops ballooning
   past expansion); fleet icon drawn above the system (system stays clickable);
   borders drawn side-by-side at a seam (each empire's curve nudged into its own
