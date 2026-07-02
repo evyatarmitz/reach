@@ -357,6 +357,12 @@ func _test_ai_rival() -> void:
 		if c.empire_id == rival_id:
 			rival_colonies += 1
 	check(rival_colonies >= 2, "rival AI expands to multiple colonies over time")
+	# The AI also builds ships once its cities produce military resources.
+	var rival_ships := 0
+	for f in demo.fleets:
+		if f.empire_id == rival_id:
+			rival_ships += f.ship_count()
+	check(rival_ships >= 1, "rival AI builds ships once it can afford them")
 
 
 func _test_mining() -> void:

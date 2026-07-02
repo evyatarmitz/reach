@@ -508,6 +508,14 @@ func empire_fleet_in_system(empire_id: int, system_id: int) -> bool:
 	return false
 
 
+func _has_enemy_colony(empire_id: int, system_id: int) -> bool:
+	for pid in systems[system_id].planet_ids:
+		var c: Colony = planets[pid].colony
+		if c != null and c.empire_id != empire_id:
+			return true
+	return false
+
+
 # The empire's most-populated colony's system — its de-facto shipyard, where new
 # ships appear. -1 if the empire has no colonies.
 func most_populated_system(empire_id: int) -> int:

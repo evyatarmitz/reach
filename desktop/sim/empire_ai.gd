@@ -8,6 +8,7 @@ extends RefCounted
 
 var empire_id: int = -1
 var _next_action_day: float = 0.0
+var _build_count: int = 0   # alternates fighter/bomber deterministically
 
 
 func _init(id: int) -> void:
@@ -25,6 +26,34 @@ func _act(sim: Sim) -> void:
 	# One mine and one colony per interval, keeping expansion gradual.
 	_build_one_mine(sim)
 	_found_one_colony(sim)
+	_build_ships(sim)
+	_move_fleets(sim)
+
+
+# Build the highest tier it can afford (alternating fighter/bomber), for defence.
+func _build_ships(sim: Sim) -> void:
+	for tier in [5, 4, 3, 2, 1]:
+		if sim.can_build_ship(empire_id, tier):
+			var role: int = SimConstants.Role.FIGHTER if _build_count % 2 == 0 \
+				else SimConstants.Role.BOMBER
+			sim.build_ship(empire_id, role, tier)
+			_build_count += 1
+			return
+
+
+# Send a stationary fleet to the nearest enemy-owned adjacent system (attack), or
+# hold. Only commits a fleet that actually has ships. Deterministic (sorted).
+func _move_fleets(sim: Sim) -> void:
+	for f in sim.fleets:
+		if f.empire_id != empire_id or f.is_moving() or f.ship_count() == 0:
+			continue
+		var targets: Array = sim.lane_neighbors(f.system_id)
+		targets.sort()
+		for nb in targets:
+			if sim._has_enemy_colony(empire_id, nb):
+				sim.order_fleet(f.id, nb)
+				break
+		return   # one fleet order per interval
 
 
 func _build_one_mine(sim: Sim) -> void:
