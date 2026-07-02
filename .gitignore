@@ -1,1 +1,7 @@
+# Rust build cache
 /desktop/target
+
+# Synty POLYGON assets (PAID — licensed to owner, MUST NOT be committed/redistributed).
+# Raw source + converted glTF live here, gitignored. Keep RON data (goods/universe) tracked.
+/desktop/assets/models/
+/desktop/assets/synty_atlas/
