@@ -3,6 +3,19 @@
 Working notes written by Claude across sessions. Not for users — for continuity
 between AI sessions on this specific game.
 
+## Where the code lives (as of 0.6.0)
+
+- `desktop/sim/` — the simulation core, pure engine-free GDScript. `sim.gd` is the
+  orchestrator + public command API (found_colony, build_mine, influence/border math,
+  tick); `empire.gd`, `star_system.gd`, `planet.gd`, `colony.gd` are state;
+  `empire_ai.gd` is a rival brain that uses the same public API; `constants.gd` holds
+  every tunable. **Never import Godot rendering/Node here** — the engine is swappable.
+- `desktop/game/main.gd` — the only Godot-facing file: reads sim state, draws the
+  galaxy/system views, forwards input. Knows no game rules.
+- `desktop/tests/run_tests.gd` — 65 headless test assertions. Run:
+  `godot --headless --path desktop --script res://tests/run_tests.gd`.
+- `run.bat` — launches the game (finds the winget Godot).
+
 ## Files
 
 - [TODO.md](TODO.md) — Active tasks, what to build next

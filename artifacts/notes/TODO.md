@@ -4,23 +4,50 @@ New project, split from To Infinity (2026-07-02). This game is genuinely novel �
 nothing from the old codebase transfers directly, because the old build assumed an
 embodied player and direct entity control, and Reach has neither.
 
-## Status
+## Status — through 0.6.0 (2026-07-02, Godot 4.7)
 
-First playable slice built (2026-07-02, Godot 4.7): one system, four planets, colony
-founding (flat cost) → drain phase → activation at pop threshold → tapering upkeep +
-tier-1 production. Real-time with speed dial (pause/1x/3x/10x, space+number keys).
-Sim core is pure GDScript (`desktop/sim/`, no engine deps), render/UI layer reads it
-(`desktop/game/`). 21 headless tests in `desktop/tests/run_tests.gd` — run with:
-`godot --headless --path desktop --script res://tests/run_tests.gd` (after a one-time
-`--import`). Visual verification via `godot --path desktop -- --autoshot`.
+The economic + spatial foundation is built, tested, and playable. Both core design
+pillars are in and covered by tests. Build/run: `run.bat`, or `godot --path desktop`.
+Tests: `godot --headless --path desktop --script res://tests/run_tests.gd` (after a
+one-time `--import`). Visual: `godot --path desktop -- --autoshot` (saves galaxy +
+system PNGs to the Godot user dir). **65 headless test assertions, all passing.**
 
-Still to build from scratch: everything else — influence bubbles, neighbor bonus,
-borders, mining/conversion chain, combat (see build order below).
+Done so far (one commit each, 0.1.0 → 0.6.0):
+- **0.1.0** Colony lifecycle: founding (flat cost) → drain phase → activation at a pop
+  threshold → tapering upkeep → tier-1 production. Growth uses a power-law
+  diminishing-returns curve (uncapped, only asymptotically flattening). Real-time
+  speed dial (pause/1x/3x/10x, space+number keys). Fixed-size deterministic ticks.
+- **0.2.0** Deposits + mines (only raw income) + input-consuming production
+  (throughput-limited — anti-snowball pillar #1).
+- **0.3.0** Multi-system galaxy: 7 systems, 10 lanes, galaxy view ↔ per-system view.
+- **0.4.0** Empires + influence: influence=A1·pop (non-stacking, max per system),
+  reach=A2·influence, contested border at the influence-ratio point (live, moves on
+  outgrowth). Colonizing/mining are influence-gated.
+- **0.5.0** Neighbor bonus: cross-system established centers boost growth, 1/R,
+  compounding. Same-system gives nothing. This is the "cluster across systems" half
+  of the core tension (the "spread within a system" half is non-stacking influence).
+- **0.6.0** AI rival empire — plays through the *same* command methods and gating as
+  the player, deterministic, expands on a day-cadence. Demo has a red rival on the
+  far side; the border between the two empires is live and unscripted.
 
-Known limitations (deliberate, this slice): production consumes no input (raw→goods
-conversion chain is build-order step 3); starved colonies stall but don't decline
-(vision doesn't specify decline — decide when populations can die via bombardment);
-planets have no deposits yet.
+Architecture as built: sim core in `desktop/sim/` is pure engine-free GDScript
+(`sim.gd` orchestrates; `empire.gd`/`star_system.gd`/`planet.gd`/`colony.gd` are
+state; `empire_ai.gd` is a rival brain; `constants.gd` holds all tunables). The
+Godot layer is just `desktop/game/main.gd` — it reads sim state, draws, forwards
+input, and knows no game rules. Swapping engines = rewriting only main.gd.
+
+Deliberate limitations / open design calls (not bugs):
+- No combat yet — bombardment, attrition, ship-power ceiling (build-order step 10).
+  Borders are currently pure influence; nothing can kill population.
+- Starved colonies stall but don't decline (vision doesn't specify decline outside
+  bombardment — decide alongside combat).
+- Goods have no sink yet (no military/higher-tier consumers).
+- Resources are single-type "raw" — no national/civilian split, no resource-type
+  variety gating (build-order steps 3 tail, 8).
+- Balance note: with A2=1.8 a colony's influence bubble grows large as population
+  climbs; a lone empire can blanket a wide region. This is faithful to the formula
+  and the check on it is rival contest + growth flattening, not a smaller bubble —
+  but it wants a real playtest pass once combat exists to confirm it feels right.
 
 ## What MIGHT transfer, loosely
 
@@ -37,21 +64,27 @@ planets have no deposits yet.
 
 ## Core systems to design and build, in rough dependency order
 
-1. System/planet/lane topology data model — this underlies everything else
-2. Colony founding + the established-activation curve (drain-that-tapers, then
-   production switches on)
-3. Basic resource mining structure + tier-0→tier-1+ conversion chain
-4. Population growth curve with per-colony diminishing returns (power-law)
-5. Influence bubble (non-stacking, defines where you can colonize) — separate from
-6. Neighbor bonus (1/R falloff, compounding, from established centers)
-7. Specialization (resource-type bonus, inertia on change, partial propagation via
-   neighbor bonus)
-8. National vs. civilian resource split, tier-gated resource-type requirements
-9. Border contest resolution (relative-influence-weighted line position)
-10. Combat: pop-killing bombardment, percentage-of-strength attrition with grace
-    period, ship-tier power ceiling, throughput-limited production
-11. Support structures: observation post, supply depot, transportation
-12. Cosmic anomalies blocking influence + visibility
+1. ~~System/planet/lane topology data model~~ ✅ 0.3.0
+2. ~~Colony founding + established-activation curve~~ ✅ 0.1.0
+3. Basic resource mining structure ✅ 0.2.0 / tier-0→tier-1+ conversion chain
+   ✅ 0.2.0 (still single-type; multi-type variety gating is step 8)
+4. ~~Population growth curve with per-colony diminishing returns~~ ✅ 0.1.0
+5. ~~Influence bubble (non-stacking)~~ ✅ 0.4.0
+6. ~~Neighbor bonus (1/R, compounding, established centers)~~ ✅ 0.5.0
+7. **Specialization** (resource-type bonus, inertia on change, partial propagation
+   via neighbor bonus) — NEXT
+8. **National vs. civilian resource split**, tier-gated resource-type requirements
+9. ~~Border contest resolution (relative-influence-weighted position)~~ ✅ 0.4.0
+10. **Combat**: pop-killing bombardment, percentage-of-strength attrition with grace
+    period, ship-tier power ceiling, throughput-limited production (throughput limit
+    ✅ 0.2.0). The big remaining pillar — makes borders more than influence.
+11. **Support structures**: observation post, supply depot, transportation (the last
+    strengthens the neighbor bonus — hook already noted in constants.gd).
+12. **Cosmic anomalies** blocking influence + visibility.
+
+Suggested next session order: 7 (specialization) or 8 (resource split) are low-risk
+economic depth; 10 (combat) is the highest-value remaining pillar but the largest —
+it needs ships, lane movement, and the attrition/ceiling math, so budget for it.
 
 ## Decisions made (2026-07-02, with user)
 
@@ -70,14 +103,17 @@ planets have no deposits yet.
   contested border1/border2 = influence1/influence2. The 1/R falloff belongs to the
   neighbor bonus only, not the border math.
 
-## Immediate priorities
+## Immediate priorities (next session)
 
-1. Build the smallest possible slice in Godot: one system, a few planets, one colony
-   that can activate and produce tier-1 output, real-time tick with speed dial.
-   No combat, no borders, no neighbors yet. Sim core headless-testable from day one.
-2. Pin down placeholder constants for diminishing returns (power-law exponent),
-   neighbor bonus falloff (1/R constant), A1/A2, and attrition percentage/grace
-   period — "tune until it feels right" numbers, expect to retune in playtests.
+1. Pick up at build-order step 7 (specialization) or 8 (resource split) for
+   low-risk economic depth, or commit to step 10 (combat) as the next real pillar.
+2. All core constants in `constants.gd` are still placeholders ("tune until it feels
+   right"): GROWTH_RATE/SOFTCAP/EXP, INFLUENCE_A1, BORDER_A2, NEIGHBOR_COEF,
+   GOODS_RAW_PER_GOOD, activation/upkeep values, AI cadence. The test suite locks the
+   *shapes*, not the numbers — a playtest/tuning pass is worthwhile before combat.
+3. When combat lands, revisit the two open design calls: (a) can starved populations
+   decline, and (b) does the influence bubble need reining in, or does rival pressure
+   handle it.
 
 ## Pinned notes
 
