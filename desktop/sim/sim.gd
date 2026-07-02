@@ -458,6 +458,39 @@ func toggle_emigration(empire_id: int, planet_id: int) -> void:
 		p.colony.emigrating = not p.colony.emigrating
 
 
+# Set a colony's specialization target. Switching resets its ramp (inertia).
+func set_specialization(empire_id: int, planet_id: int, kind: int) -> void:
+	var p: Planet = planets.get(planet_id)
+	if p != null and p.colony != null and p.colony.empire_id == empire_id:
+		if p.colony.spec != kind:
+			p.colony.spec_strength = 0.0
+		p.colony.spec = kind
+
+
+# A mine can be upgraded when the same planet holds a big enough colony of the
+# owning empire (and there are alloys to pay for it).
+func can_upgrade_mine(empire_id: int, planet_id: int) -> bool:
+	var p: Planet = planets.get(planet_id)
+	var e: Empire = empires.get(empire_id)
+	if p == null or e == null or not p.has_mine() or p.mine_empire_id != empire_id:
+		return false
+	if p.mine_level >= SimConstants.MINE_MAX_LEVEL:
+		return false
+	if e.alloys < SimConstants.MINE_UPGRADE_COST_ALLOYS:
+		return false
+	var c: Colony = p.colony
+	return c != null and c.empire_id == empire_id \
+		and c.population >= (p.mine_level + 1) * SimConstants.MINE_UPGRADE_POP
+
+
+func upgrade_mine(empire_id: int, planet_id: int) -> bool:
+	if not can_upgrade_mine(empire_id, planet_id):
+		return false
+	empires[empire_id].alloys -= SimConstants.MINE_UPGRADE_COST_ALLOYS
+	planets[planet_id].mine_level += 1
+	return true
+
+
 # --- fleets -------------------------------------------------------------------
 
 func _empire_has_colony_in(empire_id: int, system_id: int) -> bool:
@@ -742,10 +775,17 @@ func tick(dt_days: float) -> void:
 		if not c.established:
 			continue
 		var e: Empire = empires[c.empire_id]
-		var food_made: float = minf(c.food_capacity() * dt_days, e.water)
+		# Specialization ramps in over time (inertia); it multiplies its output.
+		if c.spec != SimConstants.Spec.NONE and c.spec_strength < 1.0:
+			c.spec_strength = minf(1.0,
+				c.spec_strength + dt_days / SimConstants.SPEC_RAMP_DAYS)
+		var food_made: float = minf(
+			c.food_capacity() * c.spec_factor(SimConstants.Spec.FOOD) * dt_days, e.water)
 		e.water -= food_made
 		e.food += food_made
-		var alloy_made: float = minf(c.alloy_capacity() * dt_days, e.minerals)
+		var alloy_made: float = minf(
+			c.alloy_capacity() * c.spec_factor(SimConstants.Spec.ALLOY) * dt_days,
+			e.minerals)
 		e.minerals -= alloy_made
 		e.alloys += alloy_made
 		# Military refining chain: tier 1 from alloys, each higher tier from the

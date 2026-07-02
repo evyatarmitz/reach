@@ -10,6 +10,20 @@ extends RefCounted
 # holds. Water -> Food (grows population); Minerals -> Alloys (builds things).
 enum Deposit { NONE, WATER, MINERAL }
 
+# A colony can specialize its refining toward FOOD or ALLOYS for a bonus, but
+# switching has inertia: the bonus ramps 0->1 over SPEC_RAMP_DAYS and resets to 0
+# when you change target (vision: "specialization with inertia on change").
+enum Spec { NONE, FOOD, ALLOY }
+const SPEC_BONUS := 0.6          # +60% to the specialized output at full strength
+const SPEC_RAMP_DAYS := 60.0
+
+# Mines can be upgraded when the same planet holds a big enough colony of the
+# owning empire; each level multiplies output and needs a higher pop + alloys.
+const MINE_UPGRADE_STEP := 0.5           # +50% output per level
+const MINE_UPGRADE_POP := 400.0          # same-planet colony pop needed per level
+const MINE_UPGRADE_COST_ALLOYS := 80.0
+const MINE_MAX_LEVEL := 4
+
 # One sim tick advances this many in-game days. Fixed tick size keeps the sim
 # deterministic; the speed dial changes how many ticks run per real second.
 const TICK_DAYS := 0.1

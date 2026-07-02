@@ -7,6 +7,7 @@ var name: String = ""
 var colony: Colony = null
 var deposit_type: int = SimConstants.Deposit.NONE  # NONE / WATER / MINERAL
 var mine_empire_id: int = -1  # -1 = no mine; otherwise the owning empire
+var mine_level: int = 0        # upgrade level; each adds MINE_UPGRADE_STEP output
 
 # Layout data for rendering — the sim itself never does physics with these.
 var orbit_radius: float = 0.0
@@ -25,8 +26,9 @@ func has_mine() -> bool:
 # over time, varying between deposits.
 func mine_output() -> float:
 	var n: float = abs(sin(id * 12.9898 + 78.233))
-	return SimConstants.MINE_RICHNESS_MIN \
+	var base: float = SimConstants.MINE_RICHNESS_MIN \
 		+ n * (SimConstants.MINE_RICHNESS_MAX - SimConstants.MINE_RICHNESS_MIN)
+	return base * (1.0 + mine_level * SimConstants.MINE_UPGRADE_STEP)
 
 
 # The pre-build estimate: the ESTIMATE_BAND-wide bracket the true output falls in

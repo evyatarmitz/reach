@@ -56,6 +56,9 @@ var mine_btn: Button
 var emigrate_btn: Button
 var merge_btn: Button
 var split_btn: Button
+var spec_food_btn: Button
+var spec_alloy_btn: Button
+var upgrade_btn: Button
 var ship_f_btns: Array = []   # fighter build buttons, tier 1-5
 var ship_b_btns: Array = []   # bomber build buttons, tier 1-5
 var planet_list: VBoxContainer
@@ -559,12 +562,21 @@ func _build_ui() -> void:
 	split_btn = Button.new()
 	split_btn.text = "Split fleet"
 	split_btn.pressed.connect(_on_split)
+	spec_food_btn = Button.new()
+	spec_food_btn.pressed.connect(func() -> void: _on_spec(SimConstants.Spec.FOOD))
+	spec_alloy_btn = Button.new()
+	spec_alloy_btn.pressed.connect(func() -> void: _on_spec(SimConstants.Spec.ALLOY))
+	upgrade_btn = Button.new()
+	upgrade_btn.pressed.connect(_on_upgrade_mine)
 	vbox.add_child(panel_title)
 	vbox.add_child(planet_list)
 	vbox.add_child(panel_body)
 	vbox.add_child(colonize_btn)
 	vbox.add_child(mine_btn)
+	vbox.add_child(upgrade_btn)
 	vbox.add_child(emigrate_btn)
+	vbox.add_child(spec_food_btn)
+	vbox.add_child(spec_alloy_btn)
 	vbox.add_child(merge_btn)
 	vbox.add_child(split_btn)
 
@@ -622,6 +634,22 @@ func _on_build_mine() -> void:
 func _on_emigrate() -> void:
 	if selected_planet_id != -1:
 		sim.toggle_emigration(player_empire_id, selected_planet_id)
+
+
+func _on_spec(kind: int) -> void:
+	if selected_planet_id != -1:
+		var c: Colony = sim.planets[selected_planet_id].colony
+		# Toggle off if pressing the active one, else set it.
+		if c != null and c.spec == kind:
+			sim.set_specialization(player_empire_id, selected_planet_id,
+				SimConstants.Spec.NONE)
+		else:
+			sim.set_specialization(player_empire_id, selected_planet_id, kind)
+
+
+func _on_upgrade_mine() -> void:
+	if selected_planet_id != -1:
+		sim.upgrade_mine(player_empire_id, selected_planet_id)
 
 
 func _on_merge() -> void:
@@ -705,7 +733,8 @@ func _show_fleet_panel(fleet: Fleet) -> void:
 	panel_body.text = "At: %s%s\nCombat %.0f · Bomb %.0f\n%s" % [loc,
 		"  → moving" if fleet.is_moving() else "",
 		fleet.combat_power(), fleet.bomb_power(), comp]
-	for b in [colonize_btn, mine_btn, emigrate_btn]:
+	for b in [colonize_btn, mine_btn, emigrate_btn, upgrade_btn, spec_food_btn,
+			spec_alloy_btn]:
 		b.visible = false
 	merge_btn.visible = true
 	merge_btn.disabled = fleet.is_moving() or not _another_fleet_here(fleet)
@@ -741,7 +770,8 @@ func _show_system_panel(sys_id: int) -> void:
 	var planet: Planet = sim.planets.get(selected_planet_id)
 	if planet == null or planet.system_id != sys_id:
 		panel_body.text = "Select a planet."
-		for b in [colonize_btn, mine_btn, emigrate_btn]:
+		for b in [colonize_btn, mine_btn, emigrate_btn, upgrade_btn, spec_food_btn,
+				spec_alloy_btn]:
 			b.visible = false
 		return
 
@@ -782,6 +812,23 @@ func _show_system_panel(sys_id: int) -> void:
 	if own_colony:
 		emigrate_btn.text = "Immigration: ON" if planet.colony.emigrating \
 			else "Immigration: off"
+	# Mine upgrade (own mine on this planet).
+	upgrade_btn.visible = planet.has_mine() \
+		and planet.mine_empire_id == player_empire_id
+	if upgrade_btn.visible:
+		upgrade_btn.text = "Upgrade mine (L%d, %d alloys)" \
+			% [planet.mine_level, int(SimConstants.MINE_UPGRADE_COST_ALLOYS)]
+		upgrade_btn.disabled = not sim.can_upgrade_mine(player_empire_id, planet.id)
+	# Specialization (own established city).
+	var can_spec: bool = own_colony and planet.colony.established
+	spec_food_btn.visible = can_spec
+	spec_alloy_btn.visible = can_spec
+	if can_spec:
+		var sp: int = planet.colony.spec
+		spec_food_btn.text = ("◆ " if sp == SimConstants.Spec.FOOD else "") \
+			+ "Specialize food"
+		spec_alloy_btn.text = ("◆ " if sp == SimConstants.Spec.ALLOY else "") \
+			+ "Specialize alloys"
 
 
 # Debug hook for automated visual verification: found a colony, run fast for a

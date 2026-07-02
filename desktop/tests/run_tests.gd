@@ -63,6 +63,8 @@ func _init() -> void:
 	_test_emigration()
 	_test_fleets()
 	_test_military_resources()
+	_test_specialization()
+	_test_mine_upgrade()
 	_test_determinism()
 	if failures == 0:
 		print("ALL TESTS PASSED")
@@ -638,6 +640,50 @@ func _test_military_resources() -> void:
 	run_days(sim2, 40.0)
 	check(e2.nat[0] > 0.0 and e2.nat[1] == 0.0,
 		"a small city (below the tier-2 cutoff) refines only tier 1")
+
+
+func _test_specialization() -> void:
+	var sim := Sim.new()
+	var e := sim.add_empire("S", Color.WHITE)
+	e.food = 0.0
+	var s := sim.add_system("S")
+	s.map_pos = Vector2.ZERO
+	var c := sim.inject_colony(e.id, sim.add_planet(s.id, "p").id, 300.0, true)
+	check(is_equal_approx(c.spec_factor(SimConstants.Spec.FOOD), 1.0),
+		"an unspecialized colony has no bonus")
+	sim.set_specialization(e.id, c.planet_id, SimConstants.Spec.FOOD)
+	check(c.spec_strength == 0.0, "a fresh specialization starts at zero strength")
+	e.water = 1.0e9   # keep the city refining so the ramp advances
+	run_days(sim, SimConstants.SPEC_RAMP_DAYS * 2.0)
+	check(is_equal_approx(c.spec_strength, 1.0), "specialization ramps to full strength")
+	check(c.spec_factor(SimConstants.Spec.FOOD) > 1.0
+		and is_equal_approx(c.spec_factor(SimConstants.Spec.ALLOY), 1.0),
+		"a food-specialized city boosts food only")
+	# Switching resets the ramp (inertia).
+	sim.set_specialization(e.id, c.planet_id, SimConstants.Spec.ALLOY)
+	check(c.spec_strength == 0.0, "switching specialization resets the ramp (inertia)")
+
+
+func _test_mine_upgrade() -> void:
+	var sim := Sim.new()
+	var e := sim.add_empire("U", Color.WHITE)
+	e.food = 1.0e12
+	e.alloys = 1.0e9
+	var s := sim.add_system("S")
+	s.map_pos = Vector2.ZERO
+	var p := sim.add_planet(s.id, "p")
+	p.deposit_type = SimConstants.Deposit.MINERAL
+	p.mine_empire_id = e.id
+	var small := sim.inject_colony(e.id, p.id, 100.0, true)
+	var out0: float = p.mine_output()
+	check(not sim.can_upgrade_mine(e.id, p.id),
+		"cannot upgrade a mine without a big enough same-planet colony")
+	small.population = SimConstants.MINE_UPGRADE_POP + 10.0
+	check(sim.can_upgrade_mine(e.id, p.id),
+		"can upgrade once the colony passes the pop threshold")
+	check(sim.upgrade_mine(e.id, p.id) and p.mine_level == 1,
+		"upgrading raises the mine level")
+	check(p.mine_output() > out0, "an upgraded mine outputs more")
 
 
 func _test_determinism() -> void:
