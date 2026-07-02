@@ -30,22 +30,27 @@ const MINE_COST_ALLOYS := 50.0
 # A colony activates (becomes an established city, starts converting) at this pop.
 const ACTIVATION_POP := 100.0
 
-# Growth curve (unchanged shape): dpop/day = RATE*pop/(1+(pop/SOFTCAP)^EXP), times
-# the neighbor multiplier — but only applied when the empire has a food surplus.
+# Growth curve: relative growth/day = RATE / (1 + (pop/SOFTCAP)^EXP), times the
+# neighbor multiplier, applied only when the empire has a food surplus. Base ~1%,
+# and SOFTCAP tuned so a LONE colony flattens around ~2k pop but never stops (the
+# neighbor bonus is what lets a clustered colony keep climbing past that).
 # Never a hard cap; the ceiling emerges from food throughput + diminishing returns.
-const GROWTH_RATE := 0.02
-const GROWTH_SOFTCAP := 500.0
+const GROWTH_RATE := 0.01
+const GROWTH_SOFTCAP := 2000.0
 const GROWTH_EXP := 2.0
 # Population decline per day while the empire is in food deficit, floored so a
 # colony persists (can regrow) rather than vanishing.
 const SHRINK_RATE := 0.03
 const MIN_POP := 1.0
 
-# Neighbor bonus: an established center boosts a same-empire colony in a DIFFERENT
-# system by NEIGHBOR_COEF * neighbor_pop / R (system distance), summed. Same-system
-# gives nothing (they compete for influence instead). The "cluster across systems"
-# half of the core tension.
-const NEIGHBOR_COEF := 0.5
+# Neighbor bonus: a colony's growth bonus = Σ over OTHER systems of
+# NEIGHBOR_COEF * that system's influence / distance. It's the reward for being
+# near a MAJOR CENTER (big influence pushes a big bonus onto nearby colonies),
+# while a major center gains almost nothing from a small neighbor (that neighbor's
+# influence is tiny). Same-system gives nothing (they compete for influence). The
+# bonus multiplies growth (a 20% bonus makes 1% -> 1.2%), offsetting diminishing
+# returns so clustered colonies climb past the lone-colony flattening.
+const NEIGHBOR_COEF := 0.1
 
 # Mining: one structure, extracts MINE_RATE/day of the deposit's T0 resource.
 const MINE_RATE := 5.0

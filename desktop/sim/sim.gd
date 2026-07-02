@@ -273,24 +273,24 @@ func point_owner(pos: Vector2) -> int:
 
 # --- neighbor bonus (vision.md: cluster-across-systems) ----------------------
 
-# Growth multiplier for a colony from same-empire established centers in OTHER
-# systems, 1/R falloff, summed (compounding). Same-system centers give nothing —
-# they compete via influence instead. This is what lets a clustered colony grow
-# past the diminishing-returns wall an isolated one hits.
+# Growth multiplier for a colony: the bonus it gets for being near major centers
+# (other systems where the same empire has influence), = Σ A * influence_j / R,
+# 1/R falloff, summed. Uses system influence (max per system, non-stacking), so a
+# small colony near a big center gets a big bonus while the big center gets almost
+# nothing back. Same-system gives nothing (they compete). Multiplies growth.
 func neighbor_growth_multiplier(colony: Colony) -> float:
 	var sys_id: int = planets[colony.planet_id].system_id
 	var bonus := 0.0
-	for other in colonies:
-		if other == colony or other.empire_id != colony.empire_id \
-				or not other.established:
+	for sys in systems.values():
+		if sys.id == sys_id:
 			continue
-		var other_sys: int = planets[other.planet_id].system_id
-		if other_sys == sys_id:
+		var inf := system_influence(sys.id, colony.empire_id)
+		if inf <= 0.0:
 			continue
-		var r := system_distance(sys_id, other_sys)
+		var r := system_distance(sys_id, sys.id)
 		if r > 0.0:
-			bonus += other.population / r
-	return 1.0 + SimConstants.NEIGHBOR_COEF * bonus
+			bonus += SimConstants.NEIGHBOR_COEF * inf / r
+	return 1.0 + bonus
 
 
 # --- visibility (fog of war) --------------------------------------------------
