@@ -475,23 +475,49 @@ func empire_fleet_in_system(empire_id: int, system_id: int) -> bool:
 	return false
 
 
-func can_build_fleet(empire_id: int, system_id: int) -> bool:
+# The empire's most-populated colony's system — its de-facto shipyard, where new
+# ships appear. -1 if the empire has no colonies.
+func most_populated_system(empire_id: int) -> int:
+	var best := -1
+	var best_pop := -1.0
+	for c in colonies:
+		if c.empire_id == empire_id and c.population > best_pop:
+			best_pop = c.population
+			best = planets[c.planet_id].system_id
+	return best
+
+
+func can_build_ship(empire_id: int, tier: int) -> bool:   # tier 1-5
 	var e: Empire = empires.get(empire_id)
-	return e != null and systems.has(system_id) \
-		and e.alloys >= SimConstants.FLEET_COST_ALLOYS \
-		and _empire_has_colony_in(empire_id, system_id)
+	return e != null and tier >= 1 and tier <= 5 \
+		and e.nat[tier - 1] >= SimConstants.SHIP_NAT_COST \
+		and most_populated_system(empire_id) != -1
 
 
-func build_fleet(empire_id: int, system_id: int) -> Fleet:
-	if not can_build_fleet(empire_id, system_id):
-		return null
-	empires[empire_id].alloys -= SimConstants.FLEET_COST_ALLOYS
+# Build one ship (role, tier) above the empire's most-populated city, paid in the
+# tier's national military resource. It joins (or forms) a stationary fleet there.
+func build_ship(empire_id: int, role: int, tier: int) -> bool:
+	if not can_build_ship(empire_id, tier):
+		return false
+	var sys := most_populated_system(empire_id)
+	empires[empire_id].nat[tier - 1] -= SimConstants.SHIP_NAT_COST
+	var f := _fleet_at(empire_id, sys)
+	if role == SimConstants.Role.FIGHTER:
+		f.fighters[tier - 1] += 1
+	else:
+		f.bombers[tier - 1] += 1
+	return true
+
+
+func _fleet_at(empire_id: int, system_id: int) -> Fleet:
+	for f in fleets:
+		if f.empire_id == empire_id and not f.is_moving() and f.system_id == system_id:
+			return f
 	var f := Fleet.new()
 	f.id = _next_id
 	_next_id += 1
 	f.empire_id = empire_id
 	f.system_id = system_id
-	f.strength = SimConstants.FLEET_STRENGTH
 	fleets.append(f)
 	return f
 
@@ -541,6 +567,111 @@ func fleet_position(f: Fleet) -> Vector2:
 	return systems[f.system_id].map_pos.lerp(systems[f.path[0]].map_pos, f.progress)
 
 
+# Automatic combat, per stationary-fleet cluster in each system:
+#  - if two+ empires are present, they fight: every fleet takes damage in
+#    proportion to the enemy's combat power (fighter-heavy fleets deal more, so
+#    they win) — accumulated, no single decisive blow;
+#  - otherwise a lone empire's fleets bombard enemy colonies weakest-first, and a
+#    colony left under BOMBARD_DESTROY_POP is destroyed.
+func _resolve_combat(dt_days: float) -> void:
+	var by_sys := {}   # system_id -> { empire_id -> [fleets] }
+	for f in fleets:
+		if f.is_moving():
+			continue
+		var emap: Dictionary = by_sys.get(f.system_id, {})
+		var list: Array = emap.get(f.empire_id, [])
+		list.append(f)
+		emap[f.empire_id] = list
+		by_sys[f.system_id] = emap
+
+	var destroyed_colonies: Array[Colony] = []
+	for sid in by_sys:
+		var emap: Dictionary = by_sys[sid]
+		if emap.size() >= 2:
+			_fight(emap, dt_days)
+		else:
+			_bombard(emap.keys()[0], emap[emap.keys()[0]], sid, dt_days,
+				destroyed_colonies)
+	for c in destroyed_colonies:
+		planets[c.planet_id].colony = null
+		colonies.erase(c)
+	# Cull emptied fleets.
+	var empty: Array[Fleet] = []
+	for f in fleets:
+		if f.ship_count() == 0:
+			empty.append(f)
+	for f in empty:
+		fleets.erase(f)
+
+
+func _fight(emap: Dictionary, dt_days: float) -> void:
+	var power := {}
+	for eid in emap:
+		var p := 0.0
+		for f in emap[eid]:
+			p += (f as Fleet).combat_power()
+		power[eid] = p
+	for eid in emap:
+		var enemy := 0.0
+		for oid in power:
+			if oid != eid:
+				enemy += power[oid]
+		var dmg: float = enemy * SimConstants.COMBAT_RATE * dt_days
+		# Spread this empire's incoming damage across its fleets by hull share.
+		var total_hull := 0.0
+		for f in emap[eid]:
+			total_hull += (f as Fleet).hull()
+		if total_hull <= 0.0:
+			continue
+		for f in emap[eid]:
+			_damage_fleet(f, dmg * (f.hull() / total_hull))
+
+
+# Accumulate damage and destroy whole ships (lowest tier / weakest first) as it
+# covers their hit points.
+func _damage_fleet(f: Fleet, dmg: float) -> void:
+	f.damage += dmg
+	while true:
+		var removed := false
+		for t in 5:
+			if f.fighters[t] > 0 and f.damage >= SimConstants.FIGHTER_HP[t]:
+				f.damage -= SimConstants.FIGHTER_HP[t]
+				f.fighters[t] -= 1
+				removed = true
+				break
+			if f.bombers[t] > 0 and f.damage >= SimConstants.BOMBER_HP[t]:
+				f.damage -= SimConstants.BOMBER_HP[t]
+				f.bombers[t] -= 1
+				removed = true
+				break
+		if not removed:
+			break
+
+
+func _bombard(empire_id: int, fleet_list: Array, system_id: int, dt_days: float,
+		destroyed: Array[Colony]) -> void:
+	var budget := 0.0
+	for f in fleet_list:
+		budget += (f as Fleet).bomb_power()
+	budget *= dt_days
+	if budget <= 0.0:
+		return
+	var targets: Array[Colony] = []
+	for pid in systems[system_id].planet_ids:
+		var c: Colony = planets[pid].colony
+		if c != null and c.empire_id != empire_id:
+			targets.append(c)
+	targets.sort_custom(func(a, b): return a.population < b.population)  # weakest first
+	for c in targets:
+		if budget <= 0.0:
+			break
+		var applied: float = minf(budget, c.population)
+		c.population -= applied
+		budget -= applied
+		if c.population < SimConstants.BOMBARD_DESTROY_POP and not destroyed.has(c):
+			destroyed.append(c)
+
+
 # Merge every other stationary same-empire fleet in this fleet's system into it
 # (strengths add). Returns how many were absorbed.
 func merge_fleets_into(fleet_id: int) -> int:
@@ -551,26 +682,37 @@ func merge_fleets_into(fleet_id: int) -> int:
 	for f in fleets:
 		if f != keep and f.empire_id == keep.empire_id and not f.is_moving() \
 				and f.system_id == keep.system_id:
-			keep.strength += f.strength
+			for t in 5:
+				keep.fighters[t] += f.fighters[t]
+				keep.bombers[t] += f.bombers[t]
 			absorbed.append(f)
 	for f in absorbed:
 		fleets.erase(f)
 	return absorbed.size()
 
 
-# Split a stationary fleet in two (half strength each). Returns the new fleet.
+# Split a stationary fleet in two (half of each ship type). Returns the new fleet
+# (null if it has nothing to split).
 func split_fleet(fleet_id: int) -> Fleet:
 	var f := get_fleet(fleet_id)
-	if f == null or f.is_moving() or f.strength < 2.0 * SimConstants.FLEET_MIN_SPLIT:
+	if f == null or f.is_moving() or f.ship_count() < 2:
 		return null
-	var half := f.strength * 0.5
-	f.strength -= half
 	var g := Fleet.new()
 	g.id = _next_id
 	_next_id += 1
 	g.empire_id = f.empire_id
 	g.system_id = f.system_id
-	g.strength = half
+	var moved := 0
+	for t in 5:
+		var hf: int = f.fighters[t] / 2
+		g.fighters[t] = hf
+		f.fighters[t] -= hf
+		var hb: int = f.bombers[t] / 2
+		g.bombers[t] = hb
+		f.bombers[t] -= hb
+		moved += hf + hb
+	if moved == 0:
+		return null
 	fleets.append(g)
 	return g
 
@@ -673,7 +815,7 @@ func tick(dt_days: float) -> void:
 		for o in others:
 			o.population += each
 
-	# 6. Fleets move along lanes (one hop per tick at most)...
+	# 6. Fleets move along lanes (one hop per tick at most).
 	for f in fleets:
 		if f.path.is_empty():
 			continue
@@ -683,19 +825,5 @@ func tick(dt_days: float) -> void:
 			f.system_id = f.path.pop_front()
 			f.progress = 0.0
 
-	# ...then stationary fleets bombard enemy colonies in their system. Slow
-	# flat + percentage kill; a colony bombed to zero is destroyed.
-	var destroyed: Array[Colony] = []
-	for f in fleets:
-		if not f.path.is_empty():
-			continue
-		for pid in systems[f.system_id].planet_ids:
-			var target: Colony = planets[pid].colony
-			if target != null and target.empire_id != f.empire_id:
-				target.population -= (SimConstants.BOMBARD_FLAT \
-					+ SimConstants.BOMBARD_FRAC * target.population) * dt_days
-				if target.population <= 0.0 and not destroyed.has(target):
-					destroyed.append(target)
-	for c in destroyed:
-		planets[c.planet_id].colony = null
-		colonies.erase(c)
+	# 7. Combat: fleets auto-fight where enemies meet, else bombard (see 0.25.0).
+	_resolve_combat(dt_days)

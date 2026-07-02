@@ -54,9 +54,10 @@ var panel_body: Label
 var colonize_btn: Button
 var mine_btn: Button
 var emigrate_btn: Button
-var fleet_btn: Button
 var merge_btn: Button
 var split_btn: Button
+var ship_f_btns: Array = []   # fighter build buttons, tier 1-5
+var ship_b_btns: Array = []   # bomber build buttons, tier 1-5
 var planet_list: VBoxContainer
 var _planet_rows: Array = []   # [Button, planet_id] rows for the open system
 var _panel_system := -1        # which system the planet list was built for
@@ -533,8 +534,8 @@ func _build_ui() -> void:
 	panel.anchor_bottom = 0.5
 	panel.offset_left = -292.0
 	panel.offset_right = -12.0
-	panel.offset_top = -170.0
-	panel.offset_bottom = 170.0
+	panel.offset_top = -50.0    # sits below the top-right shipyard panel
+	panel.offset_bottom = 290.0
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 6)
 	panel.add_child(vbox)
@@ -552,9 +553,6 @@ func _build_ui() -> void:
 	mine_btn.pressed.connect(_on_build_mine)
 	emigrate_btn = Button.new()
 	emigrate_btn.pressed.connect(_on_emigrate)
-	fleet_btn = Button.new()
-	fleet_btn.text = "Build fleet (%d alloys)" % int(SimConstants.FLEET_COST_ALLOYS)
-	fleet_btn.pressed.connect(_on_build_fleet)
 	merge_btn = Button.new()
 	merge_btn.text = "Merge fleets here"
 	merge_btn.pressed.connect(_on_merge)
@@ -567,9 +565,48 @@ func _build_ui() -> void:
 	vbox.add_child(colonize_btn)
 	vbox.add_child(mine_btn)
 	vbox.add_child(emigrate_btn)
-	vbox.add_child(fleet_btn)
 	vbox.add_child(merge_btn)
 	vbox.add_child(split_btn)
+
+	_build_ship_panel(layer)
+
+
+# Top-right shipyard: a Fighter and Bomber build button per tier 1-5. Each click
+# builds one ship at the empire's most-populated city; a button is enabled only
+# when that tier's national resource can pay for it.
+func _build_ship_panel(layer: CanvasLayer) -> void:
+	var sp := PanelContainer.new()
+	sp.anchor_left = 1.0
+	sp.anchor_right = 1.0
+	sp.offset_left = -232.0
+	sp.offset_right = -12.0
+	sp.offset_top = 40.0
+	layer.add_child(sp)
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 3)
+	sp.add_child(grid)
+	for s in ["Build", "Fighter", "Bomber"]:
+		var h := Label.new()
+		h.text = s
+		grid.add_child(h)
+	for t in range(1, 6):
+		var lab := Label.new()
+		lab.text = "Tier %d" % t
+		grid.add_child(lab)
+		var fb := Button.new()
+		fb.text = "F%d" % t
+		fb.pressed.connect(func() -> void:
+			sim.build_ship(player_empire_id, SimConstants.Role.FIGHTER, t))
+		grid.add_child(fb)
+		ship_f_btns.append(fb)
+		var bb := Button.new()
+		bb.text = "B%d" % t
+		bb.pressed.connect(func() -> void:
+			sim.build_ship(player_empire_id, SimConstants.Role.BOMBER, t))
+		grid.add_child(bb)
+		ship_b_btns.append(bb)
 
 
 func _on_colonize() -> void:
@@ -585,11 +622,6 @@ func _on_build_mine() -> void:
 func _on_emigrate() -> void:
 	if selected_planet_id != -1:
 		sim.toggle_emigration(player_empire_id, selected_planet_id)
-
-
-func _on_build_fleet() -> void:
-	if view_system_id != -1:
-		sim.build_fleet(player_empire_id, view_system_id)
 
 
 func _on_merge() -> void:
@@ -636,6 +668,10 @@ func _refresh_ui() -> void:
 	day_label.text = "Day %.1f" % sim.day
 	for i in speed_buttons.size():
 		speed_buttons[i].button_pressed = (i == speed_idx)
+	for t in 5:   # enable ship buttons only for tiers the player can pay for
+		var affordable := sim.can_build_ship(player_empire_id, t + 1)
+		ship_f_btns[t].disabled = not affordable
+		ship_b_btns[t].disabled = not affordable
 
 	var fleet: Fleet = sim.get_fleet(selected_fleet_id) if selected_fleet_id != -1 \
 		else null
@@ -658,16 +694,23 @@ func _show_fleet_panel(fleet: Fleet) -> void:
 	_panel_system = -1
 	panel_title.text = "Fleet"
 	var loc: String = sim.systems[fleet.system_id].name
-	panel_body.text = "Strength: %.0f\nAt: %s%s" % [fleet.strength, loc,
-		"\n→ moving" if fleet.is_moving() else ""]
-	for b in [colonize_btn, mine_btn, emigrate_btn, fleet_btn]:
+	var comp := ""
+	for t in 5:
+		if fleet.fighters[t] > 0:
+			comp += "F%d×%d  " % [t + 1, fleet.fighters[t]]
+		if fleet.bombers[t] > 0:
+			comp += "B%d×%d  " % [t + 1, fleet.bombers[t]]
+	if comp == "":
+		comp = "(empty)"
+	panel_body.text = "At: %s%s\nCombat %.0f · Bomb %.0f\n%s" % [loc,
+		"  → moving" if fleet.is_moving() else "",
+		fleet.combat_power(), fleet.bomb_power(), comp]
+	for b in [colonize_btn, mine_btn, emigrate_btn]:
 		b.visible = false
 	merge_btn.visible = true
-	merge_btn.disabled = fleet.is_moving() \
-		or not _another_fleet_here(fleet)
+	merge_btn.disabled = fleet.is_moving() or not _another_fleet_here(fleet)
 	split_btn.visible = true
-	split_btn.disabled = fleet.is_moving() \
-		or fleet.strength < 2.0 * SimConstants.FLEET_MIN_SPLIT
+	split_btn.disabled = fleet.is_moving() or fleet.ship_count() < 2
 
 
 func _another_fleet_here(fleet: Fleet) -> bool:
@@ -700,8 +743,6 @@ func _show_system_panel(sys_id: int) -> void:
 		panel_body.text = "Select a planet."
 		for b in [colonize_btn, mine_btn, emigrate_btn]:
 			b.visible = false
-		fleet_btn.visible = sim._empire_has_colony_in(player_empire_id, sys_id)
-		fleet_btn.disabled = not sim.can_build_fleet(player_empire_id, sys_id)
 		return
 
 	var dep_name: String = ["none", "water", "minerals"][planet.deposit_type]
@@ -741,8 +782,6 @@ func _show_system_panel(sys_id: int) -> void:
 	if own_colony:
 		emigrate_btn.text = "Immigration: ON" if planet.colony.emigrating \
 			else "Immigration: off"
-	fleet_btn.visible = sim._empire_has_colony_in(player_empire_id, sys_id)
-	fleet_btn.disabled = not sim.can_build_fleet(player_empire_id, sys_id)
 
 
 # Debug hook for automated visual verification: found a colony, run fast for a
@@ -762,15 +801,15 @@ func _autoshot() -> void:
 		sim.tick(SimConstants.TICK_DAYS)
 		if i % 200 == 0:   # build up the explored/stale memory as territory shifts
 			_recompute_borders()
-	# Build a fleet at home and send it to a neighbour so a fleet marker + its
-	# move line show in the galaxy shot.
-	var home_sys: int = sim.systems.values()[0].id
-	var fl := sim.build_fleet(player_empire_id, home_sys)
-	if fl != null:
-		var nbrs := sim.lane_neighbors(home_sys)
-		if not nbrs.is_empty():
-			sim.order_fleet(fl.id, nbrs[0])
-		selected_fleet_id = fl.id
+	# Build a few ships (they appear at the most-populated city) so a fleet marker
+	# shows in the galaxy shot.
+	sim.empires[player_empire_id].nat[0] = 1000.0
+	sim.build_ship(player_empire_id, SimConstants.Role.FIGHTER, 1)
+	sim.build_ship(player_empire_id, SimConstants.Role.BOMBER, 1)
+	for f in sim.fleets:
+		if f.empire_id == player_empire_id:
+			selected_fleet_id = f.id
+			break
 	# Fog stays ON for the galaxy shot so the live / gray-explored / black states
 	# and the border inside the player's VR all show.
 	_recompute_borders()

@@ -512,11 +512,11 @@ func _test_emigration() -> void:
 
 
 func _test_fleets() -> void:
-	# Three systems in a line A-B-C; empire has a colony at A.
+	# Three systems in a line A-B-C; empire has a big city at B (its shipyard).
 	var sim := Sim.new()
 	var e := sim.add_empire("E", Color.WHITE)
-	e.alloys = 10000.0
 	e.food = 1.0e12
+	e.nat = [1000.0, 0.0, 0.0, 0.0, 0.0]   # tier-1 military resource to build with
 	var a := sim.add_system("A")
 	a.map_pos = Vector2.ZERO
 	var b := sim.add_system("B")
@@ -525,53 +525,92 @@ func _test_fleets() -> void:
 	c.map_pos = Vector2(240, 0)
 	sim.add_lane(a.id, b.id)
 	sim.add_lane(b.id, c.id)
-	sim.inject_colony(e.id, sim.add_planet(a.id, "A I").id, 200.0, true)
+	sim.inject_colony(e.id, sim.add_planet(b.id, "B I").id, 500.0, true)
 
-	check(not sim.can_build_fleet(e.id, b.id),
-		"cannot build a fleet where the empire has no colony")
-	var alloys0: float = e.alloys
-	var f := sim.build_fleet(e.id, a.id)
-	check(f != null and is_equal_approx(e.alloys, alloys0 - SimConstants.FLEET_COST_ALLOYS),
-		"building a fleet costs alloys and places it at the shipyard system")
+	var nat0: float = e.nat[0]
+	check(sim.build_ship(e.id, SimConstants.Role.FIGHTER, 1),
+		"building a fighter succeeds with the tier resource + a city")
+	check(is_equal_approx(e.nat[0], nat0 - SimConstants.SHIP_NAT_COST),
+		"a ship costs its tier's national resource")
+	check(sim.fleets.size() == 1 and sim.fleets[0].system_id == b.id
+		and sim.fleets[0].fighters[0] == 1,
+		"the ship appears in a fleet at the most-populated (shipyard) system")
+	check(sim.fleets[0].combat_power() > 0.0, "a fighter gives the fleet combat power")
+	check(not sim.can_build_ship(e.id, 3),
+		"cannot build a tier the empire has no resource for")
 
-	# Pathfinding A->C must route through B.
-	var path := sim.lane_path(a.id, c.id)
-	check(path.size() == 2 and path[0] == b.id and path[1] == c.id,
-		"lane_path routes A->C through B along the lanes")
-
-	# Order it to C; over enough days it arrives (moving along lanes, not instant).
+	# Lane movement: order the fleet A? no — it's at B; send it to C via the lane.
+	var f: Fleet = sim.fleets[0]
+	var path := sim.lane_path(b.id, c.id)
+	check(path.size() == 1 and path[0] == c.id, "lane_path routes B->C")
 	sim.order_fleet(f.id, c.id)
 	check(f.is_moving(), "an ordered fleet is moving")
 	run_days(sim, 20.0)
 	check(f.system_id == c.id and not f.is_moving(),
-		"the fleet travels the lanes and arrives at its destination")
+		"the fleet travels the lane and arrives")
 
-	# Bombardment: an enemy colony under a parked fleet loses population and,
-	# eventually, is destroyed.
+	# Bombardment: park a bomber over an enemy colony; it dies weakest-first.
+	sim.build_ship(e.id, SimConstants.Role.BOMBER, 1)   # spawns at B (the city)
+	var bomber_fleet: Fleet = null
+	for fl in sim.fleets:
+		if fl.system_id == b.id and fl.bombers[0] > 0:
+			bomber_fleet = fl
+	sim.order_fleet(bomber_fleet.id, c.id)
+	run_days(sim, 20.0)
 	var rival := sim.add_empire("R", Color.RED)
-	var enemy := sim.inject_colony(rival.id, sim.add_planet(c.id, "C I").id, 40.0, true)
+	var enemy := sim.inject_colony(rival.id, sim.add_planet(c.id, "C I").id, 150.0, true)
 	var pop0: float = enemy.population
 	sim.tick(SimConstants.TICK_DAYS)
-	check(enemy.population < pop0, "a parked fleet bombards an enemy colony")
-	run_days(sim, 400.0)
+	check(enemy.population < pop0, "a parked bomber bombards an enemy colony")
+	run_days(sim, 300.0)
 	check(sim.planets[enemy.planet_id].colony == null,
-		"sustained bombardment eventually destroys the colony")
+		"sustained bombardment destroys the colony (dropped under the cutoff)")
 
-	# Merge: build two more at A, merge them into one (strengths add).
-	var g1 := sim.build_fleet(e.id, a.id)
-	var g2 := sim.build_fleet(e.id, a.id)
-	var total: float = g1.strength + g2.strength
-	var absorbed := sim.merge_fleets_into(g1.id)
-	check(absorbed == 1 and is_equal_approx(g1.strength, total)
-		and sim.get_fleet(g2.id) == null,
-		"merging combines same-system fleets' strength into one")
+	# Merge/split: ships build into one fleet at the shipyard, so two fleets only
+	# exist once they converge from elsewhere. Send one to A, build another, send
+	# it to A too, then merge them there.
+	e.nat[0] = 1000.0
+	sim.build_ship(e.id, SimConstants.Role.FIGHTER, 1)
+	sim.build_ship(e.id, SimConstants.Role.FIGHTER, 1)
+	var fa: Fleet = null
+	for fl in sim.fleets:
+		if fl.system_id == b.id and not fl.is_moving() and fl.fighters[0] >= 2:
+			fa = fl
+	sim.order_fleet(fa.id, a.id)
+	run_days(sim, 10.0)
+	sim.build_ship(e.id, SimConstants.Role.FIGHTER, 1)
+	sim.build_ship(e.id, SimConstants.Role.FIGHTER, 1)
+	var fb: Fleet = null
+	for fl in sim.fleets:
+		if fl.system_id == b.id and not fl.is_moving():
+			fb = fl
+	sim.order_fleet(fb.id, a.id)
+	run_days(sim, 10.0)
+	var at_a: Array = []
+	for fl in sim.fleets:
+		if fl.empire_id == e.id and fl.system_id == a.id and not fl.is_moving():
+			at_a.append(fl)
+	check(at_a.size() >= 2, "two fleets converged on the same system")
+	var keep: Fleet = at_a[0]
+	sim.merge_fleets_into(keep.id)
+	check(keep.fighters[0] == 4, "merge combines the ships into one fleet")
+	var g := sim.split_fleet(keep.id)
+	check(g != null and keep.fighters[0] == 2 and g.fighters[0] == 2,
+		"split halves the ships into a new fleet")
 
-	# Split it back into two halves.
-	var half := g1.strength * 0.5
-	var g3 := sim.split_fleet(g1.id)
-	check(g3 != null and is_equal_approx(g1.strength, half)
-		and is_equal_approx(g3.strength, half),
-		"splitting halves a fleet's strength into a new fleet")
+	# Fleet combat: fighters beat an equal-strength bomber fleet.
+	var sim2 := Sim.new()
+	var e1 := sim2.add_empire("F", Color.RED)
+	var e2 := sim2.add_empire("G", Color.BLUE)
+	var s := sim2.add_system("S")
+	s.map_pos = Vector2.ZERO
+	var fighters := sim2._fleet_at(e1.id, s.id)
+	fighters.fighters[2] = 5
+	var bombers := sim2._fleet_at(e2.id, s.id)
+	bombers.bombers[2] = 5
+	run_days(sim2, 60.0)
+	check(fighters.ship_count() > bombers.ship_count(),
+		"in fleet combat the fighter fleet out-survives the bomber fleet")
 
 
 func _test_military_resources() -> void:

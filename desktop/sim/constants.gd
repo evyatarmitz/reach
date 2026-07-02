@@ -73,15 +73,25 @@ const ESTIMATE_BAND := 15.0
 # tied to framerate or the speed dial.
 const AI_ACTION_INTERVAL_DAYS := 8.0
 
-# Fleets: built at a colony (shipyard) for alloys, travel lanes at FLEET_SPEED
-# map-units/day. Parked over an enemy colony they bombard it — a slow flat + %
-# population kill (vision: no single decisive fight), destroying it near zero.
-const FLEET_COST_ALLOYS := 150.0
-const FLEET_STRENGTH := 100.0
-const FLEET_MIN_SPLIT := 10.0   # a fleet won't split below this per-half strength
+# Ships. Two roles x 5 tiers, built above the empire's most-populated city and
+# paid for in that tier's national military resource. Fighters win fleet combat
+# and barely bombard; bombers barely fight but bombard hard. Stats per tier (1-5).
+enum Role { FIGHTER, BOMBER }
+const SHIP_NAT_COST := 15.0     # cost in the tier's military resource, per ship
+const FIGHTER_ATK := [10.0, 18.0, 28.0, 40.0, 55.0]
+const FIGHTER_BOMB := [1.0, 1.5, 2.0, 2.5, 3.0]
+const FIGHTER_HP := [10.0, 16.0, 24.0, 34.0, 46.0]
+const BOMBER_ATK := [2.0, 3.0, 4.0, 5.0, 6.0]
+const BOMBER_BOMB := [8.0, 14.0, 22.0, 32.0, 44.0]
+const BOMBER_HP := [12.0, 18.0, 26.0, 36.0, 48.0]
+
+# Fleets travel lanes at FLEET_SPEED map-units/day. In a system with an enemy
+# fleet they auto-fight, losing hull proportional to enemy combat power (no single
+# decisive fight). Otherwise a fleet bombards enemy colonies weakest-first; a
+# colony under BOMBARD_DESTROY_POP left when bombed is destroyed.
 const FLEET_SPEED := 60.0
-const BOMBARD_FLAT := 1.0
-const BOMBARD_FRAC := 0.02
+const COMBAT_RATE := 0.02       # hull lost per enemy-combat-power per day
+const BOMBARD_DESTROY_POP := 100.0
 
 # Established-city conversion: capacity/day = COEF * pop^EXP for each chain
 # (water->food, minerals->alloys). Actual output is capped by the available T0
