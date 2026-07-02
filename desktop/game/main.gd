@@ -27,6 +27,8 @@ const BORDER_CELL := 14.0
 const BORDER_REFRESH := 0.4
 const BORDER_EPS := 0.01     # tiny rival-claim floor so bubble-vs-empty edges draw
 const FOG_DISC := 170.0      # lit/gray halo radius around a known system
+const FLEET_ICON_OFF := Vector2(0, -17)   # drawn above the system so it stays clickable
+const BORDER_INSET := 3.5    # push each empire's border curve into its own territory
 
 var cam: Camera2D
 var _panning := false
@@ -238,13 +240,31 @@ func _recompute_borders() -> void:
 				var m_bl := ck[i_bl] - maxf(_best_other(claims, k, i_bl), BORDER_EPS)
 				if vrgrid[i_tl] == 0:   # fog: only draw border where the player sees
 					continue
-				for seg in _ms_segments([p_tl, p_tr, p_br, p_bl],
-						[m_tl, m_tr, m_br, m_bl]):
+				# Centroid of this cell's INSIDE corners (margin >= 0) — the
+				# empire's own side. Each segment is nudged toward it so a shared
+				# seam shows both empires' curves side by side, not overlapping.
+				var corners := [p_tl, p_tr, p_br, p_bl]
+				var margins := [m_tl, m_tr, m_br, m_bl]
+				var in_sum := Vector2.ZERO
+				var in_n := 0
+				for ci in 4:
+					if margins[ci] >= 0.0:
+						in_sum += corners[ci]
+						in_n += 1
+				var inside_c: Vector2 = in_sum / in_n if in_n > 0 \
+					else (p_tl + p_br) * 0.5
+				for seg in _ms_segments(corners, margins):
 					var mid: Vector2 = (seg[0] + seg[1]) * 0.5
+					var off := inside_c - mid
+					if off.length() > 0.01:
+						off = off.normalized() * BORDER_INSET
+					var near := false
 					for lp in live_pos:
 						if mid.distance_squared_to(lp) <= FOG_DISC * FOG_DISC:
-							_border_segments.append([seg[0], seg[1], col])
+							near = true
 							break
+					if near:
+						_border_segments.append([seg[0] + off, seg[1] + off, col])
 
 
 # One empire's combined claim at a world point: (Σi)² / Σ(d·i) over its sources
@@ -360,10 +380,10 @@ func _select_at(pos: Vector2) -> void:
 					sim.order_fleet(selected_fleet_id, sys.id)
 					selected_fleet_id = -1
 					return
-		# 2. Click near one of your fleets to select it.
+		# 2. Click near one of your fleets (drawn above its system) to select it.
 		for f in sim.fleets:
 			if f.empire_id == player_empire_id \
-					and pos.distance_to(sim.fleet_position(f)) <= 14.0:
+					and pos.distance_to(sim.fleet_position(f) + FLEET_ICON_OFF) <= 12.0:
 				selected_fleet_id = f.id
 				return
 		# 3. Click a known system to inspect it (never-seen ones aren't clickable).
@@ -475,7 +495,7 @@ func _draw_galaxy() -> void:
 		var own := f.empire_id == player_empire_id
 		if not (own or _sys_live(f.system_id)):
 			continue
-		var fp := sim.fleet_position(f)
+		var fp := sim.fleet_position(f) + FLEET_ICON_OFF   # above the system node
 		var col: Color = sim.empires[f.empire_id].color
 		draw_colored_polygon(PackedVector2Array([
 			fp + Vector2(0, -6), fp + Vector2(6, 0),

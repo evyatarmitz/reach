@@ -35,7 +35,11 @@ const ACTIVATION_POP := 100.0
 # and SOFTCAP tuned so a LONE colony flattens around ~2k pop but never stops (the
 # neighbor bonus is what lets a clustered colony keep climbing past that).
 # Never a hard cap; the ceiling emerges from food throughput + diminishing returns.
-const GROWTH_RATE := 0.01
+# RATE lowered again (0.01 -> 0.004): the first center was ballooning far faster
+# than you could gather resources or expand, so it never paid to found a second
+# system (and the neighbor bonus, which needs colonies in OTHER systems, stayed 0
+# all game). Slower growth keeps pop in step with development.
+const GROWTH_RATE := 0.004
 const GROWTH_SOFTCAP := 2000.0
 const GROWTH_EXP := 2.0
 # Population decline per day while the empire is in food deficit, floored so a
