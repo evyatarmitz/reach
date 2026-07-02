@@ -18,10 +18,21 @@ var view_system_id := -1  # -1 = galaxy view, otherwise the focused system
 const ZOOM_MIN := 0.35
 const ZOOM_MAX := 2.5
 
+# Border field: sampled on a world grid, refreshed on a timer (borders drift
+# slowly, so per-frame recompute is wasted work). Each entry is [center, color]
+# for a frontier cell — drawn as a dot at the cell's own centre so each empire's
+# edge sits inside its territory and hostile seams show BOTH colours.
+const BORDER_CELL := 14.0
+const BORDER_REFRESH := 0.3
+
 var cam: Camera2D
 var _panning := false
 var _galaxy_cam_pos := Vector2.ZERO   # persisted galaxy pan/zoom across view switches
 var _galaxy_cam_zoom := 1.0
+var _map_lo := Vector2.ZERO
+var _map_hi := Vector2.ZERO
+var _border_segments: Array = []
+var _border_timer := 0.0
 
 var raw_label: Label
 var goods_label: Label
@@ -54,6 +65,8 @@ func _init_camera() -> void:
 	for sys in sim.systems.values():
 		lo = lo.min(sys.map_pos)
 		hi = hi.max(sys.map_pos)
+	_map_lo = lo
+	_map_hi = hi
 	var vp := get_viewport_rect().size
 	var span := (hi - lo) + Vector2(240, 240)  # margin so edge systems aren't clipped
 	_galaxy_cam_pos = (lo + hi) * 0.5
@@ -70,9 +83,50 @@ func _process(delta: float) -> void:
 		while day_accum >= SimConstants.TICK_DAYS:
 			sim.tick(SimConstants.TICK_DAYS)
 			day_accum -= SimConstants.TICK_DAYS
+	if view_system_id == -1:
+		_border_timer -= delta
+		if _border_timer <= 0.0:
+			_border_timer = BORDER_REFRESH
+			_recompute_borders()
 	_apply_camera()
 	_refresh_ui()
 	queue_redraw()
+
+
+# Sample the influence field on a world grid and emit bold colored edges where
+# the owning empire changes — the deformed border. Blocky at cell resolution;
+# fine enough here, could be marching-squares-smoothed later.
+func _recompute_borders() -> void:
+	_border_segments.clear()
+	var lo := _map_lo - Vector2(140, 140)
+	var hi := _map_hi + Vector2(140, 140)
+	var cols := int((hi.x - lo.x) / BORDER_CELL) + 1
+	var rows := int((hi.y - lo.y) / BORDER_CELL) + 1
+	var owner := PackedInt32Array()
+	owner.resize(cols * rows)
+	for gy in rows:
+		for gx in cols:
+			owner[gy * cols + gx] = sim.point_owner(
+				Vector2(lo.x + gx * BORDER_CELL, lo.y + gy * BORDER_CELL))
+	for gy in rows:
+		for gx in cols:
+			var o := owner[gy * cols + gx]
+			if o == -1:
+				continue
+			# A frontier cell = owned, with at least one differing IN-GRID
+			# 4-neighbor (enemy or neutral). The grid edge itself is just the
+			# sampling boundary, not a border, so out-of-bounds doesn't count.
+			# Record its own centre in its own colour, so a hostile seam becomes
+			# two parallel colour bands, one per empire.
+			var frontier := \
+				(gx + 1 < cols and owner[gy * cols + gx + 1] != o) or \
+				(gx - 1 >= 0 and owner[gy * cols + gx - 1] != o) or \
+				(gy + 1 < rows and owner[(gy + 1) * cols + gx] != o) or \
+				(gy - 1 >= 0 and owner[(gy - 1) * cols + gx] != o)
+			if frontier:
+				_border_segments.append([
+					Vector2(lo.x + gx * BORDER_CELL, lo.y + gy * BORDER_CELL),
+					sim.empires[o].color])
 
 
 # Galaxy view: free pan/zoom (persisted). System view: locked so SYSTEM_CENTER
@@ -149,14 +203,10 @@ func _draw() -> void:
 
 func _draw_galaxy() -> void:
 	var font := ThemeDB.fallback_font
-	# Influence bubbles first, under everything else.
-	for sys in sim.systems.values():
-		for e in sim.empires.values():
-			var reach: float = sim.influence_reach(sys.id, e.id)
-			if reach > 0.0:
-				var fill: Color = e.color
-				fill.a = 0.08
-				draw_circle(sys.map_pos, reach, fill)
+	# Deformed influence borders (bold, in each empire's colour), under the rest.
+	# Dots at frontier-cell centres; adjacent cells overlap into a solid edge.
+	for seg in _border_segments:
+		draw_circle(seg[0], BORDER_CELL * 0.6, seg[1])
 	for lane in sim.lanes:
 		draw_line(sim.systems[lane[0]].map_pos, sim.systems[lane[1]].map_pos,
 			Color(1, 1, 1, 0.13), 1.5)
@@ -332,6 +382,7 @@ func _autoshot() -> void:
 	speed_idx = 0
 	for i in 3000:  # 300 days
 		sim.tick(SimConstants.TICK_DAYS)
+	_recompute_borders()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://autoshot_galaxy.png")

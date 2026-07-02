@@ -52,6 +52,7 @@ func _init() -> void:
 	_test_influence_nonstacking()
 	_test_influence_gating()
 	_test_border_contest()
+	_test_influence_field()
 	_test_neighbor_bonus()
 	_test_ai_rival()
 	_test_mining()
@@ -197,6 +198,55 @@ func _test_border_contest() -> void:
 
 # Build a fresh empire with a subject colony in system A and configurable
 # established centers in other systems, all with unlimited supply.
+func _test_influence_field() -> void:
+	# Two hostile single sources positioned so their bubbles overlap.
+	# E1 at (0,0) i=200 reach=360; E2 at (300,0) i=100 reach=180. Overlap x in
+	# [120,360]; ratio border r1/r2=i1/i2=2 → x=200 on the connecting line.
+	var sim := Sim.new()
+	var e1 := sim.add_empire("A", Color.RED)
+	var e2 := sim.add_empire("B", Color.BLUE)
+	var sa := sim.add_system("A")
+	sa.map_pos = Vector2.ZERO
+	sim.inject_colony(e1.id, sim.add_planet(sa.id, "a").id, 200.0, true)
+	var sb := sim.add_system("B")
+	sb.map_pos = Vector2(300, 0)
+	sim.inject_colony(e2.id, sim.add_planet(sb.id, "b").id, 100.0, true)
+	check(sim.point_owner(Vector2(150, 0)) == e1.id,
+		"field: point left of the ratio border belongs to the stronger empire")
+	check(sim.point_owner(Vector2(250, 0)) == e2.id,
+		"field: point right of the ratio border belongs to the weaker empire")
+	check(sim.point_owner(Vector2(5000, 0)) == -1,
+		"field: point beyond every bubble's reach is unclaimed")
+	# Non-overlapping bubbles leave neutral space between (range never adds).
+	var sim2 := Sim.new()
+	var f1 := sim2.add_empire("A", Color.RED)
+	var f2 := sim2.add_empire("B", Color.BLUE)
+	var s1 := sim2.add_system("A")
+	s1.map_pos = Vector2.ZERO
+	sim2.inject_colony(f1.id, sim2.add_planet(s1.id, "a").id, 50.0, true)  # reach 90
+	var s2 := sim2.add_system("B")
+	s2.map_pos = Vector2(300, 0)
+	sim2.inject_colony(f2.id, sim2.add_planet(s2.id, "b").id, 50.0, true)  # reach 90
+	check(sim2.point_owner(Vector2(150, 0)) == -1,
+		"field: gap between non-overlapping bubbles is neutral (range never adds)")
+
+	# Friction adds: a second friendly source that also reaches a point strictly
+	# raises that empire's claim there (pushing the border).
+	var claim_one: float = sim.empire_claim_at(Vector2(200, 0), e1.id)
+	var sc := sim.add_system("C")
+	sc.map_pos = Vector2(0, 120)
+	sim.inject_colony(e1.id, sim.add_planet(sc.id, "c").id, 200.0, true)
+	check(sim.empire_claim_at(Vector2(200, 0), e1.id) > claim_one,
+		"field: a second reaching friendly source adds friction (higher claim)")
+
+	# Within-system non-stacking still holds under the field: a weaker
+	# same-system colony changes nothing; a stronger one raises the claim.
+	var base: float = sim.empire_claim_at(Vector2(150, 0), e1.id)
+	sim.inject_colony(e1.id, sim.add_planet(sa.id, "a2").id, 100.0, true)
+	check(is_equal_approx(sim.empire_claim_at(Vector2(150, 0), e1.id), base),
+		"field: same-system colonies don't stack (max, not sum)")
+
+
 func _neighbor_rig() -> Dictionary:
 	var sim := Sim.new()
 	var e := sim.add_empire("N", Color.WHITE)

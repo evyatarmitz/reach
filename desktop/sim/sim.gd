@@ -215,6 +215,49 @@ func is_under_influence(system_id: int, empire_id: int) -> bool:
 	return system_owner(system_id) == empire_id
 
 
+# --- influence field (deformed borders) --------------------------------------
+# The border between empires is the boundary of a scalar field, sampled by the
+# renderer. At any world point, an empire's claim combines its sources that
+# REACH the point: influences ADD (friction/gang-up across systems) while the
+# effective distance is their influence-weighted mean. Range never adds — a
+# source only contributes within its own reach A2*i, so non-overlapping bubbles
+# leave neutral space between them and only overlapping ones form a border.
+# Within a system, sources are already collapsed to the max (system_influence),
+# so same-system colonies don't stack; only different systems add.
+func empire_claim_at(pos: Vector2, empire_id: int) -> float:
+	var sum_i := 0.0
+	var sum_ri := 0.0
+	for sys in systems.values():
+		var inf := system_influence(sys.id, empire_id)
+		if inf <= 0.0:
+			continue
+		var d := pos.distance_to(sys.map_pos)
+		if d > SimConstants.BORDER_A2 * inf:   # reach-gated: bubble radius
+			continue
+		sum_i += inf
+		sum_ri += d * inf
+	if sum_i <= 0.0:
+		return 0.0
+	var r_comb := sum_ri / sum_i
+	if r_comb <= 0.0:
+		return INF   # exactly on a source
+	return sum_i / r_comb
+
+
+# Which empire holds a world point (-1 if none reaches it). Free space in reach
+# of a single empire is claimed; where two overlap, the stronger combined claim
+# wins and the boundary sits at r1/r2 = i1/i2.
+func point_owner(pos: Vector2) -> int:
+	var best := -1
+	var best_claim := 0.0
+	for e in empires.values():
+		var c := empire_claim_at(pos, e.id)
+		if c > best_claim:
+			best_claim = c
+			best = e.id
+	return best
+
+
 # --- neighbor bonus (vision.md: cluster-across-systems) ----------------------
 
 # Growth multiplier for a colony from same-empire established centers in OTHER
