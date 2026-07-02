@@ -27,7 +27,10 @@ const ACTIVATION_POP := 100.0
 # Growth: dpop/day = GROWTH_RATE * pop / (1 + (pop/GROWTH_SOFTCAP)^GROWTH_EXP),
 # times the neighbor multiplier below. Never a hard cap — growth only
 # asymptotically flattens; the neighbor bonus is the designed way past the wall.
-const GROWTH_RATE := 0.08
+# GROWTH_RATE was halved (0.08 -> 0.04) to slow population — and therefore
+# influence (= A1*pop) — expansion; still tune-to-taste, and the speed dial
+# covers the boring stretches.
+const GROWTH_RATE := 0.04
 const GROWTH_SOFTCAP := 500.0
 const GROWTH_EXP := 2.0
 

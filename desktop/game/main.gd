@@ -3,7 +3,9 @@ extends Node2D
 # Render/UI layer. Reads Sim state, forwards commands. No game rules live here.
 
 const SPEEDS: Array[float] = [0.0, 1.0, 3.0, 10.0]
-const DAYS_PER_REAL_SECOND := 1.0
+# Base clock halved (was 1.0) so the whole sim reads slower in real time; the
+# speed dial multiplies this, so fast-forward is still one click away.
+const DAYS_PER_REAL_SECOND := 0.5
 const SYSTEM_CENTER := Vector2(510.0, 380.0)
 
 var sim: Sim
