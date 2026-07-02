@@ -25,10 +25,10 @@ Same license/IP rules as the embodied games — see `wws/artifacts/refrences/ASS
 the full standard. Short version: **CC0 preferred, CC-BY with tracked attribution OK,
 nothing ripped from commercial games, no fan-made copyrighted-IP designs.**
 
-Format note: Reach's stack is undecided (Rust/Bevy may not be the fit — see TODO.md). If
-it ends up 2D/UI-heavy rather than 3D, the asset targets shift toward vector/sprite/icon
-sets (Kenney has extensive CC0 UI and icon packs) rather than glTF models. Decide the
-stack before the asset pass.
+Format note: stack decided 2026-07-02 — Godot 4, top-down 2D (prototype stack, engine
+may change; see TODO.md). Asset targets are therefore vector/sprite/icon sets (Kenney
+has extensive CC0 UI and icon packs) rather than glTF models. Prefer SVG/PNG sources
+that survive an engine swap.
 
 ## Sources (same verified CC0 set)
 

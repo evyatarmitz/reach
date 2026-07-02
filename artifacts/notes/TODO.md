@@ -42,18 +42,31 @@ contest resolution, attrition combat) needs to be designed and built from scratc
 11. Support structures: observation post, supply depot, transportation
 12. Cosmic anomalies blocking influence + visibility
 
+## Decisions made (2026-07-02, with user)
+
+- **Tech stack: Godot 4 (GDScript), as a prototype stack.** User dislikes webapps;
+  choice was between web-stack and Godot, Godot chosen. Explicitly provisional — the
+  engine may be replaced later, so the sim core is a pure, engine-free module (no
+  Node/rendering imports) that Godot only renders and feeds input to. That split is
+  non-negotiable (see PROTOCOLS.md architecture principles).
+- **Real-time with a speed dial, not turn-based.** Boring stretches → player speeds
+  up time. Slow mechanics are allowed to be slow.
+- **Multiplayer later, single-player first.** Rivals are AI empires on exactly the
+  same rules/code paths as the player. No player-only special cases, but also no
+  multiplayer infrastructure before a single-player release.
+- **Border/influence formulas restored to vision.md** (they'd been lost in
+  iteration): influence = A1×pop_count; uncontested border_length = A2×influence;
+  contested border1/border2 = influence1/influence2. The 1/R falloff belongs to the
+  neighbor bonus only, not the border math.
+
 ## Immediate priorities
 
-1. Pin down the actual math for diminishing returns (power-law exponent), neighbor
-   bonus falloff (1/R constant), and attrition percentage/grace-period — these were
-   discussed as "tunable numbers, get playtested" in design conversation, not final
-   values. Start with placeholder constants and expect to retune.
-2. Build the smallest possible slice: one system, a few planets, one colony that can
-   activate and produce tier-1 output. No combat, no borders, no neighbors yet.
-3. Choose the tech stack — nothing forces Rust/Bevy here given there's no embodied
-   player and no 3D walking-around requirement. A top-down 2D/UI-heavy stack might
-   be a better fit and faster to iterate in. This is worth a real decision, not a
-   default inheritance from the other two games.
+1. Build the smallest possible slice in Godot: one system, a few planets, one colony
+   that can activate and produce tier-1 output, real-time tick with speed dial.
+   No combat, no borders, no neighbors yet. Sim core headless-testable from day one.
+2. Pin down placeholder constants for diminishing returns (power-law exponent),
+   neighbor bonus falloff (1/R constant), A1/A2, and attrition percentage/grace
+   period — "tune until it feels right" numbers, expect to retune in playtests.
 
 ## Pinned notes
 

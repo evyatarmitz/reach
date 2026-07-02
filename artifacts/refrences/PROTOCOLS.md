@@ -1,41 +1,73 @@
-# To Infinity — AI Collaboration Protocols
+# Reach — AI Collaboration Protocols
 
-Working agreements governing how Claude makes decisions, implements features, and verifies work in an open-ended autonomous session. Updated as the project evolves.
+Working agreements governing how Claude makes decisions, implements features, and
+verifies work in an open-ended autonomous session. Updated as the project evolves.
+
+Rewritten 2026-07-02 for Reach specifically — the original file was inherited verbatim
+from the parent "To Infinity" project and described an embodied X4+NMS hybrid with a JS
+toolchain, both of which contradict this game. The decision/test/bug protocols below are
+preserved from the original (they were always game-agnostic); the vision context,
+toolchain, and telemetry sections are Reach's own.
 
 ---
 
 ## Vision Context
 
-**Goal:** The largest scope space sim ever built, expanded incrementally over time with no fixed endpoint.
+**Goal:** An indirect-control population god-game. No physical body, ever. Top-down
+map. The population is the protagonist — the player supplies resources, issues
+directives, and clears dangers; the population grows and organizes on its own.
+`vision.md` is the authoritative design document; this section is orientation only.
 
-**Core niche:** Management depth of X4 Foundations + embodied presence of No Man's Sky. The player doesn't manage from a god screen — they physically exist in the world. They fly to the meeting, walk to the trade terminal, fight in the cockpit and on foot. Empire-scale systems (economy, factions, fleet AI) and personal-scale systems (FPS combat, NPC relationships, ship interior) must coexist and reinforce each other.
+**Core niche:** Novel — no direct genre inspiration. Closest tonal cousins are
+indirect-control god games (conditions, not commands), not traditional 4X.
 
-**Scope rule:** If X4 has it AND NMS has it → we probably want it eventually. That's the floor, not the ceiling.
+**Two design pillars everything else protects:**
+1. Population growth is uncapped-but-self-limiting — ceilings emerge from diminishing
+   returns × map geometry, never from a designed number.
+2. Combat is un-snowballable — percentage-of-own-strength attrition, ship-power
+   ceiling, and throughput-limited production independently prevent steamrolling.
 
-**Architecture mandate:** Modular, reusable systems. The spell-book library (sb) captures reusable components. New systems should be designed for reuse: if I build trade routes, build them so they work for player ships, NPC freighters, and faction fleets — not just the one case I'm implementing today.
+**Scope rule:** vision.md is the floor AND the ceiling for core mechanics. New
+mechanics get judged against it; drift requires a documented reason.
+
+**Architecture mandate:** The simulation core must be engine-agnostic — pure logic
+with no rendering/engine dependencies, driven by a tick, readable as plain data. The
+current engine (Godot 4, chosen 2026-07-02 for the prototype) is explicitly
+provisional and may be replaced; the sim core must survive that replacement. Systems
+interact through data (state, events), not direct references, where avoidable.
 
 ---
 
 ## Decision Protocol
 
 ### Full autonomy — do without asking or flagging
-- Anything explicitly in the session task list
+- Anything explicitly in the session task list / TODO.md
 - Bug fixes discovered while implementing — fix it, note it in the commit
-- API changes, data format changes, interface renames — fine as long as (1) it works, (2) we know what changed and why, (3) it moves toward the goal
-- Choosing between equivalent implementations — pick simpler, name the choice in commit message
-- Balance numbers (prices, HP, spawn counts, ranges) — pick reasonable values, state rationale in commit
+- API changes, data format changes, interface renames — fine as long as (1) it works,
+  (2) we know what changed and why, (3) it moves toward the goal
+- Choosing between equivalent implementations — pick simpler, name the choice in
+  commit message
+- Balance numbers (growth exponents, falloff constants, attrition %, costs, rates) —
+  pick reasonable values, state rationale in commit. Core constants were explicitly
+  designated "tune until it feels right" — preserve the *shape* of the mechanic, not
+  the placeholder number.
 
 ### Pick an approach, mention it in the session summary
 - Ambiguous scope: interpret minimally, name what was skipped and the tradeoff
-- New subsystem where design direction matters (e.g., "add economy" could mean 3 very different things) — state the interpretation, implement it, flag it so we can discuss direction
-- When adding a system that exists in X4 or NMS, note which game's version I'm approximating and why
+- New subsystem where design direction matters — state the interpretation, implement
+  it, flag it so we can discuss direction
 
 ### Stop and ask
-- Discovered scope is genuinely 3x larger than implied — describe actual scope before committing
-- Two conflicting design directions neither of which is clearly better for the core niche — describe the fork
-- Cannot find root cause of a bug after deep analysis (see Bug Protocol) — describe symptoms, affected systems, and what I've ruled out, then skip it
+- Discovered scope is genuinely 3x larger than implied — describe actual scope before
+  committing
+- Two conflicting design directions neither of which is clearly better for the core
+  pillars — describe the fork
+- Cannot find root cause of a bug after deep analysis (see Bug Protocol) — describe
+  symptoms, affected systems, and what's been ruled out, then skip it
 
-**Note:** Changing APIs and data formats does NOT require asking. The project is pre-release and internal. Breaking changes are fine as long as they're working and documented.
+**Note:** Changing APIs and data formats does NOT require asking. The project is
+pre-release and internal. Breaking changes are fine as long as they're working and
+documented.
 
 ---
 
@@ -43,12 +75,14 @@ Working agreements governing how Claude makes decisions, implements features, an
 
 **Sequence for every change:**
 
-1. **Read** all files I will touch before editing anything
+1. **Read** all files to be touched before editing anything
 2. **Edit** — minimal changes that accomplish the task; no scope creep
-3. `npx tsc --noEmit` — zero errors before proceeding
-4. `npx vite build` — confirm clean build
-5. **Test** — follow Test Protocol below
-6. **Commit** — one commit per feature or bug-fix group
+3. **Static check** — the project must load with zero script errors. Headless check:
+   `godot --headless --check-only` (or open + quit: import/parse errors surface in
+   stderr). Sim-core code must not import engine rendering/UI classes.
+4. **Test** — follow Test Protocol below. Sim logic gets headless deterministic tests
+   (`godot --headless -s <test script>`); UI/rendering gets a run + screenshot read.
+5. **Commit** — one commit per feature or bug-fix group
 
 **Commit message format:**
 ```
@@ -63,13 +97,16 @@ Working agreements governing how Claude makes decisions, implements features, an
 - No WIP commits
 - No "while I'm here" refactors beyond what the task requires
 - No comments that describe WHAT the code does; only WHY if non-obvious
-- Do not add features not in the session scope — if I notice a gap, spawn_task it
+- Do not add features not in the session scope — note gaps in TODO.md instead
 
 ---
 
 ## Test Protocol
 
-Testing is a three-step process, not a one-step verification. The goal is *knowledge*, not *confirmation*. Partial success and partial confirmation are different: partial success means some things worked and some failed; partial confirmation means some things worked and we don't know about the rest.
+Testing is a three-step process, not a one-step verification. The goal is *knowledge*,
+not *confirmation*. Partial success and partial confirmation are different: partial
+success means some things worked and some failed; partial confirmation means some
+things worked and we don't know about the rest.
 
 ### Step 1: Plan the test before writing it
 
@@ -81,9 +118,11 @@ Before touching the test tool, answer these questions:
 - Are there conditions where it would appear broken but isn't (false negative)?
 
 **Tool coverage:**
-- Can our current tools (robot CLI, dump, snapshot, screenshot) actually test for this?
-- Are we testing existence ("the command returns something") or functionality ("the values are correct")?
-- If functionality can't be tested, say so explicitly — don't let an existence check stand in for a functionality check
+- Can current tools (headless sim runner, state dumps, screenshots) actually test this?
+- Are we testing existence ("the value is present") or functionality ("the value is
+  correct")?
+- If functionality can't be tested, say so explicitly — don't let an existence check
+  stand in for a functionality check
 
 **Coverage gaps:**
 - What aspect of this feature can we NOT test with current tools?
@@ -92,14 +131,19 @@ Before touching the test tool, answer these questions:
 ### Step 2: Create or upgrade tools if needed, then test
 
 If the plan reveals a tool gap:
-- Implement the minimal tool that closes the gap (new robot CLI command, new dump field, new snapshot field)
+- Implement the minimal tool that closes the gap (new dump field, new headless test
+  entry point, new snapshot comparison)
 - Then run the test
 
-Test commands should be explicit sequences that would catch both "broken" and "subtly wrong":
-- Don't just verify the command doesn't error — verify the output values make sense
-- For economy: buy something, verify credits decreased by the right amount, verify cargo increased
-- For AI: dump ships before and after tick, verify positions changed in expected direction
-- For visual: read the PNG and describe what's in it — don't just confirm the file exists
+Test commands should be explicit sequences that would catch both "broken" and "subtly
+wrong":
+- Don't just verify it doesn't error — verify the output values make sense
+- For growth: snapshot population, tick N times, verify the curve *shape* (diminishing
+  returns actually diminish; neighbor bonus actually compounds)
+- For borders: place two centers with known influence, verify the border sits at the
+  influence-ratio position, then change one population and verify the border moves
+- For visual/UI: read the screenshot PNG and describe what's in it — don't just
+  confirm the file exists
 
 ### Step 3: Analyze results with precision
 
@@ -110,7 +154,8 @@ State results as one of:
 - **Failed:** describe what happened vs what was expected
 - **Cannot test:** describe what's missing and why
 
-Always distinguish between "the feature works" and "the test passed" — these are not the same if the test has coverage gaps.
+Always distinguish between "the feature works" and "the test passed" — these are not
+the same if the test has coverage gaps.
 
 ---
 
@@ -125,10 +170,15 @@ Always distinguish between "the feature works" and "the test passed" — these a
 
 Ask and answer these questions before touching code:
 
-1. **System map:** What systems touch the broken component? Draw the call chain mentally.
-2. **Specificity:** Is it failing completely, or failing in a specific case only? Specific failures point to edge cases; complete failures point to initialization or wiring.
-3. **Isolation:** Can I reproduce it in a simpler state? (e.g., does it fail right at boot, or only after certain actions?)
-4. **Tool validity:** Could the test tool itself be wrong? Am I measuring the right thing?
+1. **System map:** What systems touch the broken component? Draw the call chain
+   mentally.
+2. **Specificity:** Is it failing completely, or failing in a specific case only?
+   Specific failures point to edge cases; complete failures point to initialization
+   or wiring.
+3. **Isolation:** Can it be reproduced in a simpler state? (e.g., a two-colony map
+   instead of the full scenario, or tick 1 instead of tick 10,000?)
+4. **Tool validity:** Could the test tool itself be wrong? Am I measuring the right
+   thing?
 5. **Recent change:** Did this work before? What changed since then?
 
 ### Attempt 3: One targeted fix based on the analysis
@@ -142,38 +192,48 @@ If it still doesn't work: **skip it**. Document:
 
 Continue with the rest of the session. Flag it in the summary. Discuss later.
 
-**Do not spiral.** A bug I can't fix in 3 attempts + deep analysis is a bug that needs a fresh session or user input. The project is too large to let one blocker stall everything.
+**Do not spiral.** A bug that survives 3 attempts + deep analysis needs a fresh
+session or user input. The project is too large to let one blocker stall everything.
 
 ---
 
 ## Telemetry & Diagnosis Tools
 
-| Tool | When to use |
+None exist yet (from-scratch build). Build them as the sim grows — the sim core being
+plain data makes these cheap, and per the Test Protocol, tool gaps get closed before
+features get declared working. Planned set:
+
+| Tool | Purpose |
 |---|---|
-| `dump` | Quick terminal summary during active debugging |
-| `snapshot <name>` | Persistent JSON for state comparison (before/after) |
-| `screenshot` | Visual — I must READ the PNG and describe what's visible |
-| `cinema on` + `lookat <target>` | View any object from any angle |
-| `dump ships` | AI/fleet state: positions, velocities, HP distribution, LOD |
-| `dump econ` | Credits, cargo, faction rep |
-| `dump map` | Entity placement, distances, spawn positions |
-| `dump player` | Player position, velocity, HP — for verifying robot mode state |
+| Headless sim runner | Run N ticks with a fixed seed, no rendering — the backbone of every sim test |
+| `dump` (state → JSON) | Full sim state snapshot for before/after comparison |
+| Scenario loader | Boot the sim into a hand-authored map state (two colonies, one contested border, …) instead of playing there manually |
+| Screenshot | Visual verification — the PNG must be READ and described, not just created |
 
 ---
 
-## Architecture Principles (from modularity mandate)
+## Architecture Principles
 
-- Every system should work at two scales: empire-level and personal-level
-- Reuse over duplication: if building trade routes, build them for all actors (player, NPC, factions)
-- The spell-book library captures systems that are complete enough to reuse
-- New systems get added to the spell-book when they're stable and self-contained
-- Systems interact through data (positions, prices, flags) not through direct references where avoidable
+- **Sim/render split is the prime directive.** The simulation is a pure, deterministic,
+  tick-driven module; Godot nodes only read its state and forward player input. The
+  engine is replaceable; the sim is not.
+- Deterministic where possible: fixed seed → identical run. This is what makes the
+  headless test tooling trustworthy, and keeps the door open for the eventual
+  multiplayer version (lockstep needs determinism).
+- One data model for space: systems, planets, and lanes form a topology graph.
+  Everything spatial (movement, influence, borders, anomaly blocking) derives from it.
+- Reuse over duplication: rivals are AI empires playing by exactly the same rules and
+  the same code paths as the player — no separate AI-side mechanics.
+- Systems interact through data (state, events) not direct references where avoidable.
 
 ---
 
-## Session Rhythm (for open-ended "go wild" sessions)
+## Session Rhythm (for open-ended sessions)
 
-1. Read vision files under `project_artifacts/references/` to orient
-2. Pick up from the phase plan where we left off
-3. Complete one feature fully (implemented + tested + committed) before starting the next
-4. At the end: summarize what was done, what was skipped, any bugs found (fixed or deferred), and what's next
+1. Read `CLAUDE.md` in the game root, then `artifacts/refrences/vision.md`, then
+   `artifacts/notes/INDEX.md` to orient
+2. Pick up from TODO.md where the last session left off
+3. Complete one feature fully (implemented + tested + committed) before starting the
+   next
+4. At the end: update TODO.md, then summarize what was done, what was skipped, any
+   bugs found (fixed or deferred), and what's next
