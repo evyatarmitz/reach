@@ -59,6 +59,7 @@ func _init() -> void:
 	_test_conversion()
 	_test_food_growth()
 	_test_diminishing_returns()
+	_test_emigration()
 	_test_determinism()
 	if failures == 0:
 		print("ALL TESTS PASSED")
@@ -443,6 +444,28 @@ func _test_diminishing_returns() -> void:
 	check(rel_huge < rel_big, "relative growth keeps falling at 100k pop")
 	check(Colony.growth_per_day(100000.0) > 0.0,
 		"no hard cap: growth still positive at 100k pop")
+
+
+func _test_emigration() -> void:
+	# Big source so shedding dominates the (tiny, concurrent) growth step.
+	var sim := Sim.new()
+	var e := sim.add_empire("E", Color.WHITE)
+	e.food = 1.0e12
+	var s := sim.add_system("S")
+	s.map_pos = Vector2.ZERO
+	var src := sim.inject_colony(e.id, sim.add_planet(s.id, "a").id, 100000.0, true)
+	var d1 := sim.inject_colony(e.id, sim.add_planet(s.id, "b").id, 100.0, true)
+	var d2 := sim.inject_colony(e.id, sim.add_planet(s.id, "c").id, 100.0, true)
+	var src0: float = src.population
+	var d10: float = d1.population
+	sim.toggle_emigration(e.id, src.planet_id)
+	check(src.emigrating, "toggle turns emigration on for the player's colony")
+	sim.tick(SimConstants.TICK_DAYS)
+	check(src.population < src0, "an emigrating colony loses population")
+	check(d1.population > d10 and is_equal_approx(d1.population, d2.population),
+		"shed population is split equally among the empire's other colonies")
+	sim.toggle_emigration(e.id, src.planet_id)
+	check(not src.emigrating, "toggling again turns emigration off")
 
 
 func _test_determinism() -> void:

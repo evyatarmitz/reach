@@ -9,6 +9,7 @@ var planet_id: int = -1
 var empire_id: int = -1
 var population: float = 0.0
 var established: bool = false
+var emigrating: bool = false   # while on, sheds pop to the empire's other colonies
 
 
 static func growth_per_day(pop: float) -> float:

@@ -46,6 +46,7 @@ var panel_title: Label
 var panel_body: Label
 var colonize_btn: Button
 var mine_btn: Button
+var emigrate_btn: Button
 
 
 func _ready() -> void:
@@ -461,10 +462,13 @@ func _build_ui() -> void:
 	mine_btn = Button.new()
 	mine_btn.text = "Build mine (%d alloys)" % int(SimConstants.MINE_COST_ALLOYS)
 	mine_btn.pressed.connect(_on_build_mine)
+	emigrate_btn = Button.new()
+	emigrate_btn.pressed.connect(_on_emigrate)
 	vbox.add_child(panel_title)
 	vbox.add_child(panel_body)
 	vbox.add_child(colonize_btn)
 	vbox.add_child(mine_btn)
+	vbox.add_child(emigrate_btn)
 
 
 func _on_colonize() -> void:
@@ -475,6 +479,11 @@ func _on_colonize() -> void:
 func _on_build_mine() -> void:
 	if selected_planet_id != -1:
 		sim.build_mine(player_empire_id, selected_planet_id)
+
+
+func _on_emigrate() -> void:
+	if selected_planet_id != -1:
+		sim.toggle_emigration(player_empire_id, selected_planet_id)
 
 
 func _refresh_ui() -> void:
@@ -518,6 +527,13 @@ func _refresh_ui() -> void:
 		colonize_btn.visible = false
 	mine_btn.visible = planet.has_deposit() and not planet.has_mine()
 	mine_btn.disabled = not sim.can_build_mine(player_empire_id, planet.id)
+	# Emigration toggle: only for the player's own colonies.
+	var own_colony: bool = planet.colony != null \
+		and planet.colony.empire_id == player_empire_id
+	emigrate_btn.visible = own_colony
+	if own_colony:
+		emigrate_btn.text = "Encourage immigration: ON" if planet.colony.emigrating \
+			else "Encourage immigration: off"
 
 
 # Debug hook for automated visual verification: found a colony, run fast for a

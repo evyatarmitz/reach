@@ -357,6 +357,12 @@ func build_mine(empire_id: int, planet_id: int) -> bool:
 	return true
 
 
+func toggle_emigration(empire_id: int, planet_id: int) -> void:
+	var p: Planet = planets.get(planet_id)
+	if p != null and p.colony != null and p.colony.empire_id == empire_id:
+		p.colony.emigrating = not p.colony.emigrating
+
+
 # --- tick ---------------------------------------------------------------------
 
 func tick(dt_days: float) -> void:
@@ -416,3 +422,24 @@ func tick(dt_days: float) -> void:
 		elif sign < 0:
 			c.population = maxf(SimConstants.MIN_POP,
 				c.population - SimConstants.SHRINK_RATE * c.population * dt_days)
+
+	# 5. Emigration: colonies with the toggle shed population to the empire's
+	#    other colonies, letting the player shift population (and influence).
+	for c in colonies:
+		if not c.emigrating:
+			continue
+		var others: Array[Colony] = []
+		for o in colonies:
+			if o != c and o.empire_id == c.empire_id:
+				others.append(o)
+		if others.is_empty():
+			continue
+		var shed: float = minf(
+			c.population * SimConstants.IMMIGRATION_RATE * dt_days,
+			c.population - SimConstants.MIN_POP)
+		if shed <= 0.0:
+			continue
+		c.population -= shed
+		var each := shed / others.size()
+		for o in others:
+			o.population += each

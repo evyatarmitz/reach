@@ -52,6 +52,11 @@ const MIN_POP := 1.0
 # returns so clustered colonies climb past the lone-colony flattening.
 const NEIGHBOR_COEF := 0.1
 
+# Emigration: a colony with the toggle on sheds this fraction of its population
+# per day to the empire's other colonies (0.1% per 0.1-day tick), letting you
+# shift population — and thus influence — toward where it matters.
+const IMMIGRATION_RATE := 0.01
+
 # Mining: one structure, extracts MINE_RATE/day of the deposit's T0 resource.
 const MINE_RATE := 5.0
 
