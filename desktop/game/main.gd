@@ -13,6 +13,7 @@ var player_empire_id := -1
 var speed_idx := 1
 var day_accum := 0.0
 var selected_planet_id := -1
+var selected_fleet_id := -1
 var view_system_id := -1  # -1 = galaxy view, otherwise the focused system
 
 const ZOOM_MIN := 0.35
@@ -51,6 +52,7 @@ var panel_body: Label
 var colonize_btn: Button
 var mine_btn: Button
 var emigrate_btn: Button
+var fleet_btn: Button
 
 
 func _ready() -> void:
@@ -351,13 +353,27 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _select_at(pos: Vector2) -> void:
 	if view_system_id == -1:
+		# 1. With a fleet selected, a click on a known system orders it there.
+		if selected_fleet_id != -1:
+			for sys in sim.systems.values():
+				if pos.distance_to(sys.map_pos) <= 20.0 and _sys_known(sys.id):
+					sim.order_fleet(selected_fleet_id, sys.id)
+					selected_fleet_id = -1
+					return
+		# 2. Click near one of your fleets to select it.
+		for f in sim.fleets:
+			if f.empire_id == player_empire_id \
+					and pos.distance_to(sim.fleet_position(f)) <= 14.0:
+				selected_fleet_id = f.id
+				return
+		# 3. Click a known system to inspect it (never-seen ones aren't clickable).
 		for sys in sim.systems.values():
-			# Fog of war: only known systems (currently visible or explored) can
-			# be inspected; never-seen ones aren't there to click.
 			if pos.distance_to(sys.map_pos) <= 20.0 and _sys_known(sys.id):
 				view_system_id = sys.id
 				selected_planet_id = -1
+				selected_fleet_id = -1
 				return
+		selected_fleet_id = -1   # clicked empty space -> deselect
 		return
 	selected_planet_id = -1
 	for pid in sim.systems[view_system_id].planet_ids:
@@ -452,6 +468,24 @@ func _draw_galaxy() -> void:
 			draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
 				HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.35))
 
+	# Fleets: your own always visible; a rival's only while it sits in your VR.
+	# Drawn as a diamond in the empire's colour; a selected fleet gets a ring and
+	# a dashed line to its destination.
+	for f in sim.fleets:
+		var own := f.empire_id == player_empire_id
+		if not (own or _sys_live(f.system_id)):
+			continue
+		var fp := sim.fleet_position(f)
+		var col: Color = sim.empires[f.empire_id].color
+		draw_colored_polygon(PackedVector2Array([
+			fp + Vector2(0, -6), fp + Vector2(6, 0),
+			fp + Vector2(0, 6), fp + Vector2(-6, 0)]), col)
+		if f.id == selected_fleet_id:
+			draw_arc(fp, 10.0, 0.0, TAU, 24, Color.WHITE, 1.5)
+			if f.is_moving():
+				draw_line(fp, sim.systems[f.path[f.path.size() - 1]].map_pos,
+					Color(1, 1, 1, 0.4), 1.0)
+
 
 func _draw_system(sys: StarSystem) -> void:
 	var font := ThemeDB.fallback_font
@@ -544,11 +578,15 @@ func _build_ui() -> void:
 	mine_btn.pressed.connect(_on_build_mine)
 	emigrate_btn = Button.new()
 	emigrate_btn.pressed.connect(_on_emigrate)
+	fleet_btn = Button.new()
+	fleet_btn.text = "Build fleet (%d alloys)" % int(SimConstants.FLEET_COST_ALLOYS)
+	fleet_btn.pressed.connect(_on_build_fleet)
 	vbox.add_child(panel_title)
 	vbox.add_child(panel_body)
 	vbox.add_child(colonize_btn)
 	vbox.add_child(mine_btn)
 	vbox.add_child(emigrate_btn)
+	vbox.add_child(fleet_btn)
 
 
 func _on_colonize() -> void:
@@ -564,6 +602,11 @@ func _on_build_mine() -> void:
 func _on_emigrate() -> void:
 	if selected_planet_id != -1:
 		sim.toggle_emigration(player_empire_id, selected_planet_id)
+
+
+func _on_build_fleet() -> void:
+	if view_system_id != -1:
+		sim.build_fleet(player_empire_id, view_system_id)
 
 
 func _refresh_ui() -> void:
@@ -619,6 +662,9 @@ func _refresh_ui() -> void:
 	if own_colony:
 		emigrate_btn.text = "Encourage immigration: ON" if planet.colony.emigrating \
 			else "Encourage immigration: off"
+	# Build fleet: available when the player has any colony in this system.
+	fleet_btn.visible = sim._empire_has_colony_in(player_empire_id, view_system_id)
+	fleet_btn.disabled = not sim.can_build_fleet(player_empire_id, view_system_id)
 
 
 # Debug hook for automated visual verification: found a colony, run fast for a
@@ -638,6 +684,15 @@ func _autoshot() -> void:
 		sim.tick(SimConstants.TICK_DAYS)
 		if i % 200 == 0:   # build up the explored/stale memory as territory shifts
 			_recompute_borders()
+	# Build a fleet at home and send it to a neighbour so a fleet marker + its
+	# move line show in the galaxy shot.
+	var home_sys: int = sim.systems.values()[0].id
+	var fl := sim.build_fleet(player_empire_id, home_sys)
+	if fl != null:
+		var nbrs := sim.lane_neighbors(home_sys)
+		if not nbrs.is_empty():
+			sim.order_fleet(fl.id, nbrs[0])
+		selected_fleet_id = fl.id
 	# Fog stays ON for the galaxy shot so the live / gray-explored / black states
 	# and the border inside the player's VR all show.
 	_recompute_borders()

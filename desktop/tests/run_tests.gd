@@ -61,6 +61,7 @@ func _init() -> void:
 	_test_food_growth()
 	_test_diminishing_returns()
 	_test_emigration()
+	_test_fleets()
 	_test_determinism()
 	if failures == 0:
 		print("ALL TESTS PASSED")
@@ -507,6 +508,53 @@ func _test_emigration() -> void:
 		"shed population is split equally among the empire's other colonies")
 	sim.toggle_emigration(e.id, src.planet_id)
 	check(not src.emigrating, "toggling again turns emigration off")
+
+
+func _test_fleets() -> void:
+	# Three systems in a line A-B-C; empire has a colony at A.
+	var sim := Sim.new()
+	var e := sim.add_empire("E", Color.WHITE)
+	e.alloys = 10000.0
+	e.food = 1.0e12
+	var a := sim.add_system("A")
+	a.map_pos = Vector2.ZERO
+	var b := sim.add_system("B")
+	b.map_pos = Vector2(120, 0)
+	var c := sim.add_system("C")
+	c.map_pos = Vector2(240, 0)
+	sim.add_lane(a.id, b.id)
+	sim.add_lane(b.id, c.id)
+	sim.inject_colony(e.id, sim.add_planet(a.id, "A I").id, 200.0, true)
+
+	check(not sim.can_build_fleet(e.id, b.id),
+		"cannot build a fleet where the empire has no colony")
+	var alloys0: float = e.alloys
+	var f := sim.build_fleet(e.id, a.id)
+	check(f != null and is_equal_approx(e.alloys, alloys0 - SimConstants.FLEET_COST_ALLOYS),
+		"building a fleet costs alloys and places it at the shipyard system")
+
+	# Pathfinding A->C must route through B.
+	var path := sim.lane_path(a.id, c.id)
+	check(path.size() == 2 and path[0] == b.id and path[1] == c.id,
+		"lane_path routes A->C through B along the lanes")
+
+	# Order it to C; over enough days it arrives (moving along lanes, not instant).
+	sim.order_fleet(f.id, c.id)
+	check(f.is_moving(), "an ordered fleet is moving")
+	run_days(sim, 20.0)
+	check(f.system_id == c.id and not f.is_moving(),
+		"the fleet travels the lanes and arrives at its destination")
+
+	# Bombardment: an enemy colony under a parked fleet loses population and,
+	# eventually, is destroyed.
+	var rival := sim.add_empire("R", Color.RED)
+	var enemy := sim.inject_colony(rival.id, sim.add_planet(c.id, "C I").id, 40.0, true)
+	var pop0: float = enemy.population
+	sim.tick(SimConstants.TICK_DAYS)
+	check(enemy.population < pop0, "a parked fleet bombards an enemy colony")
+	run_days(sim, 400.0)
+	check(sim.planets[enemy.planet_id].colony == null,
+		"sustained bombardment eventually destroys the colony")
 
 
 func _test_determinism() -> void:

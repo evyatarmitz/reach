@@ -69,6 +69,15 @@ const ESTIMATE_BAND := 15.0
 # tied to framerate or the speed dial.
 const AI_ACTION_INTERVAL_DAYS := 8.0
 
+# Fleets: built at a colony (shipyard) for alloys, travel lanes at FLEET_SPEED
+# map-units/day. Parked over an enemy colony they bombard it — a slow flat + %
+# population kill (vision: no single decisive fight), destroying it near zero.
+const FLEET_COST_ALLOYS := 150.0
+const FLEET_STRENGTH := 100.0
+const FLEET_SPEED := 60.0
+const BOMBARD_FLAT := 1.0
+const BOMBARD_FRAC := 0.02
+
 # Established-city conversion: capacity/day = COEF * pop^EXP for each chain
 # (water->food, minerals->alloys). Actual output is capped by the available T0
 # input — partial is fine (20W wanted but only 5W left -> 5F made). As pop rises,

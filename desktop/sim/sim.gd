@@ -16,6 +16,7 @@ var systems: Dictionary = {}   # id -> StarSystem
 var planets: Dictionary = {}   # id -> Planet
 var lanes: Array = []          # [system_id, system_id] pairs
 var colonies: Array[Colony] = []
+var fleets: Array[Fleet] = []
 var ais: Array[EmpireAI] = []  # rival brains; step deterministically in tick()
 
 var _next_id := 1
@@ -457,6 +458,82 @@ func toggle_emigration(empire_id: int, planet_id: int) -> void:
 		p.colony.emigrating = not p.colony.emigrating
 
 
+# --- fleets -------------------------------------------------------------------
+
+func _empire_has_colony_in(empire_id: int, system_id: int) -> bool:
+	for pid in systems[system_id].planet_ids:
+		var c: Colony = planets[pid].colony
+		if c != null and c.empire_id == empire_id:
+			return true
+	return false
+
+
+func can_build_fleet(empire_id: int, system_id: int) -> bool:
+	var e: Empire = empires.get(empire_id)
+	return e != null and systems.has(system_id) \
+		and e.alloys >= SimConstants.FLEET_COST_ALLOYS \
+		and _empire_has_colony_in(empire_id, system_id)
+
+
+func build_fleet(empire_id: int, system_id: int) -> Fleet:
+	if not can_build_fleet(empire_id, system_id):
+		return null
+	empires[empire_id].alloys -= SimConstants.FLEET_COST_ALLOYS
+	var f := Fleet.new()
+	f.id = _next_id
+	_next_id += 1
+	f.empire_id = empire_id
+	f.system_id = system_id
+	f.strength = SimConstants.FLEET_STRENGTH
+	fleets.append(f)
+	return f
+
+
+func get_fleet(fleet_id: int) -> Fleet:
+	for f in fleets:
+		if f.id == fleet_id:
+			return f
+	return null
+
+
+# Shortest lane path (BFS) from one system to another: the system ids to visit in
+# order, excluding the start, including the destination. [] if same or unreachable.
+func lane_path(from_sys: int, to_sys: int) -> Array[int]:
+	var out: Array[int] = []
+	if from_sys == to_sys or not systems.has(from_sys) or not systems.has(to_sys):
+		return out
+	var prev := {from_sys: from_sys}
+	var queue: Array[int] = [from_sys]
+	while not queue.is_empty():
+		var s: int = queue.pop_front()
+		if s == to_sys:
+			break
+		for nb in lane_neighbors(s):
+			if not prev.has(nb):
+				prev[nb] = s
+				queue.append(nb)
+	if not prev.has(to_sys):
+		return out
+	var cur := to_sys
+	while cur != from_sys:
+		out.push_front(cur)
+		cur = prev[cur]
+	return out
+
+
+func order_fleet(fleet_id: int, dest_system: int) -> void:
+	var f := get_fleet(fleet_id)
+	if f != null:
+		f.path = lane_path(f.system_id, dest_system)
+		f.progress = 0.0
+
+
+func fleet_position(f: Fleet) -> Vector2:
+	if f.path.is_empty():
+		return systems[f.system_id].map_pos
+	return systems[f.system_id].map_pos.lerp(systems[f.path[0]].map_pos, f.progress)
+
+
 # --- tick ---------------------------------------------------------------------
 
 func tick(dt_days: float) -> void:
@@ -539,3 +616,30 @@ func tick(dt_days: float) -> void:
 		var each := shed / others.size()
 		for o in others:
 			o.population += each
+
+	# 6. Fleets move along lanes (one hop per tick at most)...
+	for f in fleets:
+		if f.path.is_empty():
+			continue
+		var length: float = maxf(system_distance(f.system_id, f.path[0]), 1.0)
+		f.progress += SimConstants.FLEET_SPEED * dt_days / length
+		if f.progress >= 1.0:
+			f.system_id = f.path.pop_front()
+			f.progress = 0.0
+
+	# ...then stationary fleets bombard enemy colonies in their system. Slow
+	# flat + percentage kill; a colony bombed to zero is destroyed.
+	var destroyed: Array[Colony] = []
+	for f in fleets:
+		if not f.path.is_empty():
+			continue
+		for pid in systems[f.system_id].planet_ids:
+			var target: Colony = planets[pid].colony
+			if target != null and target.empire_id != f.empire_id:
+				target.population -= (SimConstants.BOMBARD_FLAT \
+					+ SimConstants.BOMBARD_FRAC * target.population) * dt_days
+				if target.population <= 0.0 and not destroyed.has(target):
+					destroyed.append(target)
+	for c in destroyed:
+		planets[c.planet_id].colony = null
+		colonies.erase(c)
