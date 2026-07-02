@@ -6,7 +6,6 @@ const SPEEDS: Array[float] = [0.0, 1.0, 3.0, 10.0]
 # Base clock slowed (1.0 -> 0.5 -> 0.4) so the whole sim reads slower in real
 # time; the speed dial multiplies this, so fast-forward is still one click away.
 const DAYS_PER_REAL_SECOND := 0.4
-const SYSTEM_CENTER := Vector2(510.0, 380.0)
 
 var sim: Sim
 var player_empire_id := -1
@@ -55,6 +54,11 @@ var colonize_btn: Button
 var mine_btn: Button
 var emigrate_btn: Button
 var fleet_btn: Button
+var merge_btn: Button
+var split_btn: Button
+var planet_list: VBoxContainer
+var _planet_rows: Array = []   # [Button, planet_id] rows for the open system
+var _panel_system := -1        # which system the planet list was built for
 
 
 func _ready() -> void:
@@ -96,11 +100,10 @@ func _process(delta: float) -> void:
 		while day_accum >= SimConstants.TICK_DAYS:
 			sim.tick(SimConstants.TICK_DAYS)
 			day_accum -= SimConstants.TICK_DAYS
-	if view_system_id == -1:
-		_border_timer -= delta
-		if _border_timer <= 0.0:
-			_border_timer = BORDER_REFRESH
-			_recompute_borders()
+	_border_timer -= delta
+	if _border_timer <= 0.0:
+		_border_timer = BORDER_REFRESH
+		_recompute_borders()
 	_apply_camera()
 	_refresh_ui()
 	queue_redraw()
@@ -314,20 +317,16 @@ func _ms_segments(p: Array, m: Array) -> Array:
 	return []
 
 
-# Galaxy view: free pan/zoom (persisted). System view: locked so SYSTEM_CENTER
-# drawing maps 1:1 to the screen (camera position = screen centre at zoom 1).
+# One always-on galaxy camera now (the old orbital system view is gone —
+# clicking a system just opens its planet list in the side panel).
 func _apply_camera() -> void:
-	if view_system_id == -1:
-		cam.position = _galaxy_cam_pos
-		cam.zoom = Vector2(_galaxy_cam_zoom, _galaxy_cam_zoom)
-	else:
-		cam.position = get_viewport_rect().size * 0.5
-		cam.zoom = Vector2.ONE
+	cam.position = _galaxy_cam_pos
+	cam.zoom = Vector2(_galaxy_cam_zoom, _galaxy_cam_zoom)
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	# Galaxy view only: right-drag to pan, wheel to zoom.
-	if view_system_id == -1 and event is InputEventMouseButton:
+	# Right-drag to pan, wheel to zoom (always active now).
+	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_RIGHT:
 			_panning = event.pressed
 			return
@@ -337,7 +336,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 			_galaxy_cam_zoom = clampf(_galaxy_cam_zoom / 1.1, ZOOM_MIN, ZOOM_MAX)
 			return
-	if view_system_id == -1 and _panning and event is InputEventMouseMotion:
+	if _panning and event is InputEventMouseMotion:
 		_galaxy_cam_pos -= event.relative / _galaxy_cam_zoom
 		return
 
@@ -360,39 +359,30 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _select_at(pos: Vector2) -> void:
-	if view_system_id == -1:
-		# 1. With a fleet selected, a click on a known system orders it there.
-		if selected_fleet_id != -1:
-			for sys in sim.systems.values():
-				if pos.distance_to(sys.map_pos) <= 20.0 and _sys_known(sys.id):
-					sim.order_fleet(selected_fleet_id, sys.id)
-					selected_fleet_id = -1
-					return
-		# 2. Click near one of your fleets (drawn above its system) to select it.
-		for f in sim.fleets:
-			if f.empire_id == player_empire_id \
-					and pos.distance_to(sim.fleet_position(f) + FLEET_ICON_OFF) <= 12.0:
-				selected_fleet_id = f.id
-				return
-		# 3. Click a known system to inspect it (never-seen ones aren't clickable).
+	# 1. With a fleet selected, a click on a known system orders it there.
+	if selected_fleet_id != -1:
 		for sys in sim.systems.values():
 			if pos.distance_to(sys.map_pos) <= 20.0 and _sys_known(sys.id):
-				view_system_id = sys.id
-				selected_planet_id = -1
+				sim.order_fleet(selected_fleet_id, sys.id)
 				selected_fleet_id = -1
 				return
-		selected_fleet_id = -1   # clicked empty space -> deselect
-		return
-	selected_planet_id = -1
-	for pid in sim.systems[view_system_id].planet_ids:
-		var planet: Planet = sim.planets[pid]
-		if pos.distance_to(_planet_pos(planet)) <= 16.0:
-			selected_planet_id = planet.id
+	# 2. Click near one of your fleets (drawn above its system) to select it.
+	for f in sim.fleets:
+		if f.empire_id == player_empire_id \
+				and pos.distance_to(sim.fleet_position(f) + FLEET_ICON_OFF) <= 12.0:
+			selected_fleet_id = f.id
+			view_system_id = -1
 			return
-
-
-func _planet_pos(planet: Planet) -> Vector2:
-	return SYSTEM_CENTER + Vector2.from_angle(planet.orbit_angle) * planet.orbit_radius
+	# 3. Click a known system to open its planet-list menu (side panel).
+	for sys in sim.systems.values():
+		if pos.distance_to(sys.map_pos) <= 20.0 and _sys_known(sys.id):
+			view_system_id = sys.id
+			selected_planet_id = -1
+			selected_fleet_id = -1
+			return
+	# Empty space -> close panel / deselect.
+	view_system_id = -1
+	selected_fleet_id = -1
 
 
 var _fog_disabled := false   # debug/screenshot only
@@ -407,10 +397,11 @@ func _sys_known(sid: int) -> bool:    # full/partial VR now OR explored before
 
 
 func _draw() -> void:
-	if view_system_id == -1:
-		_draw_galaxy()
-	else:
-		_draw_system(sim.systems[view_system_id])
+	_draw_galaxy()
+	# Ring the system whose planet-list menu is open.
+	if view_system_id != -1 and sim.systems.has(view_system_id):
+		draw_arc(sim.systems[view_system_id].map_pos, 16.0, 0.0, TAU, 32,
+			Color(1, 1, 1, 0.6), 1.5)
 
 
 func _draw_galaxy() -> void:
@@ -495,35 +486,6 @@ func _draw_galaxy() -> void:
 					Color(1, 1, 1, 0.4), 1.0)
 
 
-func _draw_system(sys: StarSystem) -> void:
-	var font := ThemeDB.fallback_font
-	draw_circle(SYSTEM_CENTER, 18.0, Color(1.0, 0.85, 0.35))
-	draw_string(font, SYSTEM_CENTER + Vector2(-60.0, -30.0), sys.name,
-		HORIZONTAL_ALIGNMENT_CENTER, 120, 13, Color(1, 1, 1, 0.5))
-	for pid in sys.planet_ids:
-		var planet: Planet = sim.planets[pid]
-		draw_arc(SYSTEM_CENTER, planet.orbit_radius, 0.0, TAU, 96,
-			Color(1, 1, 1, 0.08), 1.0)
-		var pos := _planet_pos(planet)
-		draw_circle(pos, 7.0, Color(0.55, 0.6, 0.7))
-		if planet.has_deposit():
-			var dep_col := Color(0.4, 0.85, 1.0) \
-				if planet.deposit_type == SimConstants.Deposit.WATER \
-				else Color(0.9, 0.6, 0.35)
-			draw_circle(pos + Vector2(9.0, -9.0), 3.0, dep_col)
-		if planet.has_mine():
-			draw_rect(Rect2(pos + Vector2(-14.0, -14.0), Vector2(6.0, 6.0)),
-				Color(0.95, 0.8, 0.35))
-		if planet.colony != null:
-			var ring := Color(0.35, 1.0, 0.5) if planet.colony.established \
-				else Color(1.0, 0.7, 0.25)
-			draw_arc(pos, 11.0, 0.0, TAU, 32, ring, 2.0)
-		if planet.id == selected_planet_id:
-			draw_arc(pos, 14.5, 0.0, TAU, 32, Color.WHITE, 1.2)
-		draw_string(font, pos + Vector2(-60.0, 26.0), planet.name,
-			HORIZONTAL_ALIGNMENT_CENTER, 120, 11, Color(1, 1, 1, 0.65))
-
-
 func _build_ui() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
@@ -569,13 +531,15 @@ func _build_ui() -> void:
 	panel.anchor_bottom = 0.5
 	panel.offset_left = -292.0
 	panel.offset_right = -12.0
-	panel.offset_top = -120.0
-	panel.offset_bottom = 120.0
+	panel.offset_top = -170.0
+	panel.offset_bottom = 170.0
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 8)
+	vbox.add_theme_constant_override("separation", 6)
 	panel.add_child(vbox)
 	panel_title = Label.new()
-	panel_body = Label.new()
+	planet_list = VBoxContainer.new()   # one selectable row per planet
+	planet_list.add_theme_constant_override("separation", 2)
+	panel_body = Label.new()            # detail for the selected planet / fleet
 	panel_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	colonize_btn = Button.new()
@@ -589,12 +553,21 @@ func _build_ui() -> void:
 	fleet_btn = Button.new()
 	fleet_btn.text = "Build fleet (%d alloys)" % int(SimConstants.FLEET_COST_ALLOYS)
 	fleet_btn.pressed.connect(_on_build_fleet)
+	merge_btn = Button.new()
+	merge_btn.text = "Merge fleets here"
+	merge_btn.pressed.connect(_on_merge)
+	split_btn = Button.new()
+	split_btn.text = "Split fleet"
+	split_btn.pressed.connect(_on_split)
 	vbox.add_child(panel_title)
+	vbox.add_child(planet_list)
 	vbox.add_child(panel_body)
 	vbox.add_child(colonize_btn)
 	vbox.add_child(mine_btn)
 	vbox.add_child(emigrate_btn)
 	vbox.add_child(fleet_btn)
+	vbox.add_child(merge_btn)
+	vbox.add_child(split_btn)
 
 
 func _on_colonize() -> void:
@@ -617,21 +590,116 @@ func _on_build_fleet() -> void:
 		sim.build_fleet(player_empire_id, view_system_id)
 
 
+func _on_merge() -> void:
+	if selected_fleet_id != -1:
+		sim.merge_fleets_into(selected_fleet_id)
+
+
+func _on_split() -> void:
+	if selected_fleet_id != -1:
+		var g := sim.split_fleet(selected_fleet_id)
+		if g != null:
+			selected_fleet_id = g.id
+
+
+# Rebuild the per-planet selectable rows for the open system.
+func _rebuild_planet_list(sys_id: int) -> void:
+	for row in _planet_rows:
+		(row[0] as Button).queue_free()
+	_planet_rows.clear()
+	for pid in sim.systems[sys_id].planet_ids:
+		var b := Button.new()
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.pressed.connect(func() -> void: selected_planet_id = pid)
+		planet_list.add_child(b)
+		_planet_rows.append([b, pid])
+
+
+func _planet_row_text(planet: Planet) -> String:
+	var tag := planet.name
+	if planet.colony != null:
+		tag += "  ● %.0f%s" % [planet.colony.population,
+			"" if planet.colony.established else " (growing)"]
+	elif planet.has_deposit():
+		tag += "  ◆ %s" % ["", "water", "minerals"][planet.deposit_type]
+	return tag
+
+
 func _refresh_ui() -> void:
 	var player: Empire = sim.empires[player_empire_id]
 	raw_label.text = "Water %.0f · Minerals %.0f" % [player.water, player.minerals]
 	goods_label.text = "Food %.0f · Alloys %.0f" % [player.food, player.alloys]
 	day_label.text = "Day %.1f" % sim.day
-	hint_label.text = "Right-drag pan · wheel zoom · click a system" \
-		if view_system_id == -1 else "Esc — back to galaxy"
 	for i in speed_buttons.size():
 		speed_buttons[i].button_pressed = (i == speed_idx)
 
-	var planet: Planet = sim.planets.get(selected_planet_id)
-	panel.visible = planet != null and view_system_id != -1
-	if not panel.visible:
+	var fleet: Fleet = sim.get_fleet(selected_fleet_id) if selected_fleet_id != -1 \
+		else null
+	if fleet != null:
+		hint_label.text = "Click a system to send the fleet · Esc to deselect"
+		_show_fleet_panel(fleet)
 		return
-	panel_title.text = planet.name
+	if view_system_id != -1 and sim.systems.has(view_system_id):
+		hint_label.text = "Pick a planet · Esc to close"
+		_show_system_panel(view_system_id)
+		return
+	hint_label.text = "Right-drag pan · wheel zoom · click a system or fleet"
+	panel.visible = false
+	_panel_system = -1
+
+
+func _show_fleet_panel(fleet: Fleet) -> void:
+	panel.visible = true
+	planet_list.visible = false
+	_panel_system = -1
+	panel_title.text = "Fleet"
+	var loc: String = sim.systems[fleet.system_id].name
+	panel_body.text = "Strength: %.0f\nAt: %s%s" % [fleet.strength, loc,
+		"\n→ moving" if fleet.is_moving() else ""]
+	for b in [colonize_btn, mine_btn, emigrate_btn, fleet_btn]:
+		b.visible = false
+	merge_btn.visible = true
+	merge_btn.disabled = fleet.is_moving() \
+		or not _another_fleet_here(fleet)
+	split_btn.visible = true
+	split_btn.disabled = fleet.is_moving() \
+		or fleet.strength < 2.0 * SimConstants.FLEET_MIN_SPLIT
+
+
+func _another_fleet_here(fleet: Fleet) -> bool:
+	for f in sim.fleets:
+		if f != fleet and f.empire_id == fleet.empire_id and not f.is_moving() \
+				and f.system_id == fleet.system_id:
+			return true
+	return false
+
+
+func _show_system_panel(sys_id: int) -> void:
+	panel.visible = true
+	planet_list.visible = true
+	merge_btn.visible = false
+	split_btn.visible = false
+	panel_title.text = sim.systems[sys_id].name
+	if _panel_system != sys_id:
+		_rebuild_planet_list(sys_id)
+		_panel_system = sys_id
+	# Refresh row labels and highlight the selected planet.
+	for row in _planet_rows:
+		var b: Button = row[0]
+		var pid: int = row[1]
+		b.text = _planet_row_text(sim.planets[pid])
+		b.modulate = Color.WHITE if pid == selected_planet_id \
+			else Color(1, 1, 1, 0.7)
+
+	var planet: Planet = sim.planets.get(selected_planet_id)
+	if planet == null or planet.system_id != sys_id:
+		panel_body.text = "Select a planet."
+		for b in [colonize_btn, mine_btn, emigrate_btn]:
+			b.visible = false
+		fleet_btn.visible = sim._empire_has_colony_in(player_empire_id, sys_id)
+		fleet_btn.disabled = not sim.can_build_fleet(player_empire_id, sys_id)
+		return
+
 	var dep_name: String = ["none", "water", "minerals"][planet.deposit_type]
 	var deposit_line := "Deposit: %s" % dep_name
 	if planet.has_deposit():
@@ -643,7 +711,7 @@ func _refresh_ui() -> void:
 	var influence_note := "" if sim.is_under_influence(planet.system_id,
 		player_empire_id) else "\nOutside your influence."
 	if planet.colony == null:
-		panel_body.text = "Uncolonized. %s%s\n\nFounding a colony costs %d alloys. It eats food (a drain) until it grows to %d population and becomes a city that refines resources." \
+		panel_body.text = "%s%s\n\nFounding costs %d alloys; the colony eats food until it reaches %d pop and becomes a refining city." \
 			% [deposit_line, influence_note, int(SimConstants.FOUND_COST_ALLOYS),
 				int(SimConstants.ACTIVATION_POP)]
 		colonize_btn.visible = true
@@ -652,27 +720,25 @@ func _refresh_ui() -> void:
 		var c := planet.colony
 		var status := "ESTABLISHED CITY" if c.established \
 			else "growing… %d%% to activation" % int(c.activation_progress() * 100.0)
-		var neighbor_mult := sim.neighbor_growth_multiplier(c)
+		var nb := sim.neighbor_growth_multiplier(c)
 		var refine := ""
 		if c.established:
-			refine = "\nRefines ≤%.1f food/day, ≤%.1f alloys/day (if input)" \
+			refine = "\nRefines ≤%.1f food, ≤%.1f alloys /day" \
 				% [c.food_capacity(), c.alloy_capacity()]
-		panel_body.text = "Owner: %s\nStatus: %s\nPopulation: %.1f\nNeighbor bonus: +%d%% growth%s\n%s" \
+		panel_body.text = "Owner: %s\n%s\nPop: %.1f · neighbor +%d%%%s\n%s" \
 			% [sim.empires[c.empire_id].name, status, c.population,
-				int((neighbor_mult - 1.0) * 100.0), refine, deposit_line]
+				int((nb - 1.0) * 100.0), refine, deposit_line]
 		colonize_btn.visible = false
 	mine_btn.visible = planet.has_deposit() and not planet.has_mine()
 	mine_btn.disabled = not sim.can_build_mine(player_empire_id, planet.id)
-	# Emigration toggle: only for the player's own colonies.
 	var own_colony: bool = planet.colony != null \
 		and planet.colony.empire_id == player_empire_id
 	emigrate_btn.visible = own_colony
 	if own_colony:
-		emigrate_btn.text = "Encourage immigration: ON" if planet.colony.emigrating \
-			else "Encourage immigration: off"
-	# Build fleet: available when the player has any colony in this system.
-	fleet_btn.visible = sim._empire_has_colony_in(player_empire_id, view_system_id)
-	fleet_btn.disabled = not sim.can_build_fleet(player_empire_id, view_system_id)
+		emigrate_btn.text = "Immigration: ON" if planet.colony.emigrating \
+			else "Immigration: off"
+	fleet_btn.visible = sim._empire_has_colony_in(player_empire_id, sys_id)
+	fleet_btn.disabled = not sim.can_build_fleet(player_empire_id, sys_id)
 
 
 # Debug hook for automated visual verification: found a colony, run fast for a
