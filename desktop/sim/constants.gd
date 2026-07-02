@@ -78,6 +78,7 @@ const AI_ACTION_INTERVAL_DAYS := 8.0
 # population kill (vision: no single decisive fight), destroying it near zero.
 const FLEET_COST_ALLOYS := 150.0
 const FLEET_STRENGTH := 100.0
+const FLEET_MIN_SPLIT := 10.0   # a fleet won't split below this per-half strength
 const FLEET_SPEED := 60.0
 const BOMBARD_FLAT := 1.0
 const BOMBARD_FRAC := 0.02

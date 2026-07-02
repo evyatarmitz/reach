@@ -556,6 +556,22 @@ func _test_fleets() -> void:
 	check(sim.planets[enemy.planet_id].colony == null,
 		"sustained bombardment eventually destroys the colony")
 
+	# Merge: build two more at A, merge them into one (strengths add).
+	var g1 := sim.build_fleet(e.id, a.id)
+	var g2 := sim.build_fleet(e.id, a.id)
+	var total: float = g1.strength + g2.strength
+	var absorbed := sim.merge_fleets_into(g1.id)
+	check(absorbed == 1 and is_equal_approx(g1.strength, total)
+		and sim.get_fleet(g2.id) == null,
+		"merging combines same-system fleets' strength into one")
+
+	# Split it back into two halves.
+	var half := g1.strength * 0.5
+	var g3 := sim.split_fleet(g1.id)
+	check(g3 != null and is_equal_approx(g1.strength, half)
+		and is_equal_approx(g3.strength, half),
+		"splitting halves a fleet's strength into a new fleet")
+
 
 func _test_determinism() -> void:
 	var a := Sim.new_demo()

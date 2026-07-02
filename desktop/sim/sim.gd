@@ -541,6 +541,40 @@ func fleet_position(f: Fleet) -> Vector2:
 	return systems[f.system_id].map_pos.lerp(systems[f.path[0]].map_pos, f.progress)
 
 
+# Merge every other stationary same-empire fleet in this fleet's system into it
+# (strengths add). Returns how many were absorbed.
+func merge_fleets_into(fleet_id: int) -> int:
+	var keep := get_fleet(fleet_id)
+	if keep == null or keep.is_moving():
+		return 0
+	var absorbed: Array[Fleet] = []
+	for f in fleets:
+		if f != keep and f.empire_id == keep.empire_id and not f.is_moving() \
+				and f.system_id == keep.system_id:
+			keep.strength += f.strength
+			absorbed.append(f)
+	for f in absorbed:
+		fleets.erase(f)
+	return absorbed.size()
+
+
+# Split a stationary fleet in two (half strength each). Returns the new fleet.
+func split_fleet(fleet_id: int) -> Fleet:
+	var f := get_fleet(fleet_id)
+	if f == null or f.is_moving() or f.strength < 2.0 * SimConstants.FLEET_MIN_SPLIT:
+		return null
+	var half := f.strength * 0.5
+	f.strength -= half
+	var g := Fleet.new()
+	g.id = _next_id
+	_next_id += 1
+	g.empire_id = f.empire_id
+	g.system_id = f.system_id
+	g.strength = half
+	fleets.append(g)
+	return g
+
+
 # --- tick ---------------------------------------------------------------------
 
 func tick(dt_days: float) -> void:
