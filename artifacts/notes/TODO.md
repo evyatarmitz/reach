@@ -73,9 +73,38 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — through 0.22.0 (2026-07-02, Godot 4.7)
+
+**81 headless test assertions, all passing.** Batch 0.19.0–0.22.0:
+- **0.19.0** Pacing (GROWTH_RATE 0.01→0.004 so the first center stops ballooning
+  past expansion); fleet icon drawn above the system (system stays clickable);
+  borders drawn side-by-side at a seam (each empire's curve nudged into its own
+  side) instead of overlapping.
+- **0.20.0** Topology VR: visibility follows the SYSTEMS you hold (full VR) + a
+  one-lane-jump partial ring, not a raw influence radius. Fleets grant full VR at
+  their system + partial one jump. (Fixes the "VR expands with influence value"
+  bug; retreat already worked.)
+- **0.21.0** Fleet merge (strengths add) / split (halve). Build is repeatable.
+- **0.22.0** Clicking a system opens a planet-LIST side menu (galaxy stays up); no
+  more orbital view. Fleet selection shows a fleet panel with merge/split.
+- Neighbor bonus "showed 0": not a bug — it's 0 only with all colonies in one
+  system; the pacing fix lets multi-system expansion happen so it shows (+11% seen).
+
+STILL CORE-MISSING (correcting "all systems implemented"): the anti-snowball COMBAT
+pillar is only half done — bombardment exists, but fleet-vs-fleet combat,
+percentage-of-strength attrition, and the hard ship-power ceiling do NOT. Those are
+core design pillars, not content. Everything economic/spatial is largely in.
+
+VISION features not yet built (content + the combat tail): observation post, supply
+depot, transportation infra; construction/civ vessel to build structures (instead of
+instant press) — vision says construction vessels can't cross borders; national vs
+civilian resource split + higher-tier production needing resource VARIETY; cosmic
+anomalies blocking influence+visibility. Balance knobs still open: influence reach
+(A2·pop) scaling, mine richness vs conversion capacity (T0 stockpiles balloon).
+
 ## Status — through 0.18.0 (2026-07-02, Godot 4.7)
 
-**79 headless test assertions, all passing.** Latest batch (0.13.0–0.18.0):
+Batch 0.13.0–0.18.0:
 - **0.13.0** Neighbor bonus recomputed as Σ A·influence/R (A=0.1) — reward for being
   near a major center; multiplicative on growth; growth retuned (base ~1%, softcap
   ~2000 so a lone colony flattens there but the bonus carries a cluster past it).
