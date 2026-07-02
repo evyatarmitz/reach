@@ -346,12 +346,18 @@ func _test_mining() -> void:
 	mp.deposit_type = SimConstants.Deposit.MINERAL
 	mp.mine_empire_id = w.id
 	run_days(sim2, 10.0)
-	check(is_equal_approx(w.water, SimConstants.MINE_RATE * 10.0),
-		"water-deposit mine yields water at the exact rate")
-	check(is_equal_approx(w.minerals, SimConstants.MINE_RATE * 10.0),
-		"mineral-deposit mine yields minerals at the exact rate")
+	check(is_equal_approx(w.water, wp.mine_output() * 10.0),
+		"water-deposit mine yields water at this deposit's richness")
+	check(is_equal_approx(w.minerals, mp.mine_output() * 10.0),
+		"mineral-deposit mine yields minerals at this deposit's richness")
 	check(other.water == 0.0 and other.minerals == 0.0,
 		"other empires get nothing from a rival's mines")
+	# Richness varies by deposit and its estimate bracket contains the truth.
+	check(wp.mine_output() != mp.mine_output(),
+		"different deposits have different richness")
+	var est := wp.output_estimate()
+	check(wp.mine_output() >= est.x and wp.mine_output() <= est.y,
+		"the pre-build estimate bracket contains the true output")
 
 
 func _test_conversion() -> void:

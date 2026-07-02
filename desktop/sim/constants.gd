@@ -57,8 +57,13 @@ const NEIGHBOR_COEF := 0.1
 # shift population — and thus influence — toward where it matters.
 const IMMIGRATION_RATE := 0.01
 
-# Mining: one structure, extracts MINE_RATE/day of the deposit's T0 resource.
-const MINE_RATE := 5.0
+# Mining: one structure, but each DEPOSIT has its own fixed richness (output/day,
+# constant over time, varies by deposit) so later mine upgrades have a reason to
+# prefer some deposits. The exact richness is hidden until a mine is built — the
+# planet view shows only an ESTIMATE_BAND-wide bracket before building.
+const MINE_RICHNESS_MIN := 25.0
+const MINE_RICHNESS_MAX := 65.0
+const ESTIMATE_BAND := 15.0
 
 # How often an AI empire re-evaluates (sim days). Gradual, deterministic; not
 # tied to framerate or the speed dial.

@@ -502,8 +502,13 @@ func _refresh_ui() -> void:
 		return
 	panel_title.text = planet.name
 	var dep_name: String = ["none", "water", "minerals"][planet.deposit_type]
-	var deposit_line := "Deposit: %s%s" % [
-		dep_name, " (mined)" if planet.has_mine() else ""]
+	var deposit_line := "Deposit: %s" % dep_name
+	if planet.has_deposit():
+		if planet.has_mine():
+			deposit_line += " · %.1f/day" % planet.mine_output()
+		else:
+			var est := planet.output_estimate()
+			deposit_line += " · est. %d-%d/day" % [int(est.x), int(est.y)]
 	var influence_note := "" if sim.is_under_influence(planet.system_id,
 		player_empire_id) else "\nOutside your influence."
 	if planet.colony == null:

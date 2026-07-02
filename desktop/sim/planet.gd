@@ -19,3 +19,19 @@ func has_deposit() -> bool:
 
 func has_mine() -> bool:
 	return mine_empire_id != -1
+
+
+# This deposit's true output/day — deterministic per planet (no RNG), constant
+# over time, varying between deposits.
+func mine_output() -> float:
+	var n: float = abs(sin(id * 12.9898 + 78.233))
+	return SimConstants.MINE_RICHNESS_MIN \
+		+ n * (SimConstants.MINE_RICHNESS_MAX - SimConstants.MINE_RICHNESS_MIN)
+
+
+# The pre-build estimate: the ESTIMATE_BAND-wide bracket the true output falls in
+# (e.g. 30-45). Returns [low, high].
+func output_estimate() -> Vector2:
+	var band: float = SimConstants.ESTIMATE_BAND
+	var low: float = floor(mine_output() / band) * band
+	return Vector2(low, low + band)

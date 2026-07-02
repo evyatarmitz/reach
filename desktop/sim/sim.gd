@@ -371,14 +371,16 @@ func tick(dt_days: float) -> void:
 	for ai in ais:
 		ai.maybe_act(self)
 
-	# 1. Mines extract their deposit's T0 resource into the empire stockpile.
+	# 1. Mines extract their deposit's T0 resource (at the deposit's own richness)
+	#    into the empire stockpile.
 	for p in planets.values():
 		if p.has_mine():
 			var e: Empire = empires[p.mine_empire_id]
+			var out: float = p.mine_output() * dt_days
 			if p.deposit_type == SimConstants.Deposit.WATER:
-				e.water += SimConstants.MINE_RATE * dt_days
+				e.water += out
 			elif p.deposit_type == SimConstants.Deposit.MINERAL:
-				e.minerals += SimConstants.MINE_RATE * dt_days
+				e.minerals += out
 
 	# 2. Established cities refine T0 -> T1, capped by available input (partial
 	#    is fine). Earlier colonies draw first — deterministic by colony order.
