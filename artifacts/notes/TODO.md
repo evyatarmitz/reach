@@ -6,10 +6,21 @@ embodied player and direct entity control, and Reach has neither.
 
 ## Status
 
-Nothing built yet. `desktop/` is empty. This is the starting point, and unlike Legend
-and WWS, there isn't an existing Rust/Bevy foundation to lean on — the whole simulation
-core (colony growth curves, influence-bubble math, neighbor-bonus propagation, border
-contest resolution, attrition combat) needs to be designed and built from scratch.
+First playable slice built (2026-07-02, Godot 4.7): one system, four planets, colony
+founding (flat cost) → drain phase → activation at pop threshold → tapering upkeep +
+tier-1 production. Real-time with speed dial (pause/1x/3x/10x, space+number keys).
+Sim core is pure GDScript (`desktop/sim/`, no engine deps), render/UI layer reads it
+(`desktop/game/`). 21 headless tests in `desktop/tests/run_tests.gd` — run with:
+`godot --headless --path desktop --script res://tests/run_tests.gd` (after a one-time
+`--import`). Visual verification via `godot --path desktop -- --autoshot`.
+
+Still to build from scratch: everything else — influence bubbles, neighbor bonus,
+borders, mining/conversion chain, combat (see build order below).
+
+Known limitations (deliberate, this slice): production consumes no input (raw→goods
+conversion chain is build-order step 3); starved colonies stall but don't decline
+(vision doesn't specify decline — decide when populations can die via bombardment);
+planets have no deposits yet.
 
 ## What MIGHT transfer, loosely
 

@@ -5,3 +5,6 @@
 # Raw source + converted glTF live here, gitignored. Keep RON data (goods/universe) tracked.
 /desktop/assets/models/
 /desktop/assets/synty_atlas/
+
+# Godot import cache
+desktop/.godot/
