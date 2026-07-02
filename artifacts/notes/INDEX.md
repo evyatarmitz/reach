@@ -11,10 +11,16 @@ between AI sessions on this specific game.
   `empire_ai.gd` is a rival brain that uses the same public API; `constants.gd` holds
   every tunable. **Never import Godot rendering/Node here** — the engine is swappable.
 - `desktop/game/main.gd` — the only Godot-facing file: reads sim state, draws the
-  galaxy/system views, forwards input. Knows no game rules.
-- `desktop/tests/run_tests.gd` — 65 headless test assertions. Run:
+  galaxy/system views, camera pan/zoom, the sampled deformed-border field, and fog
+  of war. Forwards input. Knows no game rules.
+- `desktop/tests/run_tests.gd` — 77 headless test assertions. Run:
   `godot --headless --path desktop --script res://tests/run_tests.gd`.
 - `run.bat` — launches the game (finds the winget Godot).
+
+Key sim entry points: `point_owner`/`empire_claim_at` (deformed-border influence
+field), `system_owner`/`claim_strength` (per-system logic queries), `sight_positions`/
+`is_point_visible` (fog), `neighbor_growth_multiplier`, `found_colony`/`build_mine`
+(the shared player+AI command API).
 
 ## Files
 

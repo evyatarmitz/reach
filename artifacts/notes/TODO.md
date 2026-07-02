@@ -4,7 +4,16 @@ New project, split from To Infinity (2026-07-02). This game is genuinely novel �
 nothing from the old codebase transfers directly, because the old build assumed an
 embodied player and direct entity control, and Reach has neither.
 
-## NEXT MAJOR SYSTEM — border collision / deformation (discussed 2026-07-02)
+## Border collision / deformation — IMPLEMENTED in 0.8.0 (spec kept for reference)
+
+STATUS: built as specced below. Resolution of the open same-system question: went
+with reading (a) — same-system colonies stay non-stacking (system_influence = max),
+and only different systems ADD (friction). The field naturally does this because
+sources are per-system system_influence values. Fog of war (0.9.0) gates where the
+border is visible. Remaining polish: marching-squares smoothing (edge is blocky at
+cell resolution), fragment-shader upgrade if the CPU grid ever hitches.
+
+Original spec ↓
 
 Current influence is wrong per the user: bubbles just grow and OVERLAP. They must
 instead **collide and deform** — an empire's influence fills free space up to a
@@ -64,15 +73,15 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
-## Status — through 0.6.0 (2026-07-02, Godot 4.7)
+## Status — through 0.9.0 (2026-07-02, Godot 4.7)
 
 The economic + spatial foundation is built, tested, and playable. Both core design
 pillars are in and covered by tests. Build/run: `run.bat`, or `godot --path desktop`.
 Tests: `godot --headless --path desktop --script res://tests/run_tests.gd` (after a
 one-time `--import`). Visual: `godot --path desktop -- --autoshot` (saves galaxy +
-system PNGs to the Godot user dir). **65 headless test assertions, all passing.**
+system PNGs to the Godot user dir). **77 headless test assertions, all passing.**
 
-Done so far (one commit each, 0.1.0 → 0.6.0):
+Done so far (one commit each, 0.1.0 → 0.9.0):
 - **0.1.0** Colony lifecycle: founding (flat cost) → drain phase → activation at a pop
   threshold → tapering upkeep → tier-1 production. Growth uses a power-law
   diminishing-returns curve (uncapped, only asymptotically flattening). Real-time
@@ -89,6 +98,18 @@ Done so far (one commit each, 0.1.0 → 0.6.0):
 - **0.6.0** AI rival empire — plays through the *same* command methods and gating as
   the player, deterministic, expands on a day-cadence. Demo has a red rival on the
   far side; the border between the two empires is live and unscripted.
+- **0.7.0** 50-system map (deterministic 10×5 grid, generated names) + camera
+  pan/zoom (right-drag/wheel in galaxy, locked in system view) + slower pacing
+  (growth 0.02, clock 0.4 days/s).
+- **0.8.0** Deformed influence borders: influence is a sampled scalar field; where
+  hostile bubbles overlap the border sits at r1/r2=i1/i2, friendly sources ADD
+  (friction) across systems, range never adds (reach-gated), same-system stays
+  non-stacking. Drawn as a bold two-colour edge (each empire's frontier in its
+  colour), on a 0.3s-refreshed CPU grid.
+- **0.9.0** Fog of war: player sees within SIGHT_RANGE of presence (colony/mine),
+  separate from influence. Unseen systems dim to "unknown", borders only drawn where
+  seen, selection gated to sensor range, faint vision discs mark the seen area. AI
+  is full-info for now.
 
 Architecture as built: sim core in `desktop/sim/` is pure engine-free GDScript
 (`sim.gd` orchestrates; `empire.gd`/`star_system.gd`/`planet.gd`/`colony.gd` are
@@ -108,6 +129,11 @@ Deliberate limitations / open design calls (not bugs):
   climbs; a lone empire can blanket a wide region. This is faithful to the formula
   and the check on it is rival contest + growth flattening, not a smaller bubble —
   but it wants a real playtest pass once combat exists to confirm it feels right.
+- Border render is blocky at cell resolution (marching-squares smoothing later) and
+  recomputed on a 0.3s CPU-grid timer (fragment-shader upgrade if it hitches).
+- Fog is a soft dim, not a hard pixel overlay (shader later); unseen systems can't be
+  opened; no "explored-but-stale" memory yet (unseen = unknown live state).
+- AI empires are full-info (fog is player-only) — revisit if AI should scout.
 
 ## What MIGHT transfer, loosely
 
@@ -134,13 +160,19 @@ Deliberate limitations / open design calls (not bugs):
 7. **Specialization** (resource-type bonus, inertia on change, partial propagation
    via neighbor bonus) — NEXT
 8. **National vs. civilian resource split**, tier-gated resource-type requirements
-9. ~~Border contest resolution (relative-influence-weighted position)~~ ✅ 0.4.0
+9. ~~Border contest resolution~~ ✅ 0.4.0 (per-system) + ✅ 0.8.0 (deformed field
+   borders, r1/r2=i1/i2 with friendly friction-add)
 10. **Combat**: pop-killing bombardment, percentage-of-strength attrition with grace
     period, ship-tier power ceiling, throughput-limited production (throughput limit
     ✅ 0.2.0). The big remaining pillar — makes borders more than influence.
-11. **Support structures**: observation post, supply depot, transportation (the last
-    strengthens the neighbor bonus — hook already noted in constants.gd).
-12. **Cosmic anomalies** blocking influence + visibility.
+11. **Support structures**: observation post (extends the SIGHT_RANGE added in 0.9.0,
+    doubles influence), supply depot, transportation (strengthens the neighbor bonus —
+    hook noted in constants.gd).
+12. **Cosmic anomalies** blocking influence + visibility (visibility/fog now exists as
+    of 0.9.0, so anomalies have something to block).
+
+Also done outside the numbered list: 50-system map + camera pan/zoom (0.7.0),
+fog of war / player sight range (0.9.0).
 
 Suggested next session order: 7 (specialization) or 8 (resource split) are low-risk
 economic depth; 10 (combat) is the highest-value remaining pillar but the largest —
