@@ -11,6 +11,22 @@ instead **collide and deform** — an empire's influence fills free space up to 
 contested border, and where two empires meet the border is *pushed* to the point
 where distance-from-source ratio reflects influence ratio.
 
+How bubbles interact (user clarification 2026-07-02):
+- Each source's bubble grows to its OWN individual reach radius (A2·i). Range never
+  adds — combining influence changes push (friction) at a contested border, never how
+  far a bubble reaches.
+- Two FRIENDLY bubbles touching → just overlap, same empire owns the union, no border,
+  no color change, no calc.
+- Two HOSTILE bubbles touching → border calc (the r1/r2=i1/i2 rule below).
+- A further friendly bubble reaching that same hostile border → 2v1: the two friendly
+  sources' influences ADD against the single hostile one, pushing the border. This
+  "adding" is friction at the contested front, gated by each bubble actually reaching
+  the point.
+- KEY: these are not separate code paths — they all emerge from one field calc (see
+  processing approach). Do NOT implement as collision-event detection ("two bubbles
+  touched → make a border → third arrived → switch to 2v1"); that's the version that
+  IS too complicated. The field read gives all three for free.
+
 Core rule (matches vision's contested formula):
 - Border between source 1 and source 2 sits where **r1/r2 = i1/i2** (r = distance
   from source to the border point). Equivalently r1/i1 = r2/i2 → each point belongs
