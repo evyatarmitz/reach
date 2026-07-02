@@ -5,6 +5,7 @@ extends RefCounted
 # stockpile, banking production) lives in Sim so state classes stay cycle-free.
 
 var planet_id: int = -1
+var empire_id: int = -1
 var population: float = 0.0
 var established: bool = false
 var days_since_established: float = 0.0

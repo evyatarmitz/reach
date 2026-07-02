@@ -42,8 +42,9 @@ const PROD_COEF := 0.05
 const PROD_EXP := 0.8
 const GOODS_RAW_PER_GOOD := 2.0
 
-# Influence (vision.md core formulas — not used by this slice yet, pinned here so
-# the constants exist next to their siblings): influence = A1 * pop_count,
-# uncontested border_length = A2 * influence.
+# Influence (vision.md core formulas): influence = A1 * pop_count; a system's
+# uncontested reach = A2 * influence; contested borders sit at the
+# influence-ratio point (claim = influence / distance, strongest claim wins).
+# A2 tuned so a pop-150 homeworld (reach 270) just covers its ~245-260 neighbors.
 const INFLUENCE_A1 := 1.0
-const BORDER_A2 := 1.0
+const BORDER_A2 := 1.8

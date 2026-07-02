@@ -7,6 +7,7 @@ const DAYS_PER_REAL_SECOND := 1.0
 const SYSTEM_CENTER := Vector2(510.0, 380.0)
 
 var sim: Sim
+var player_empire_id := -1
 var speed_idx := 1
 var day_accum := 0.0
 var selected_planet_id := -1
@@ -25,6 +26,7 @@ var mine_btn: Button
 
 func _ready() -> void:
 	sim = Sim.new_demo()
+	player_empire_id = sim.empires.keys()[0]  # demo convention: first = human
 	_build_ui()
 	if "--autoshot" in OS.get_cmdline_user_args():
 		_autoshot()
@@ -91,23 +93,32 @@ func _draw() -> void:
 
 func _draw_galaxy() -> void:
 	var font := ThemeDB.fallback_font
+	# Influence bubbles first, under everything else.
+	for sys in sim.systems.values():
+		for e in sim.empires.values():
+			var reach: float = sim.influence_reach(sys.id, e.id)
+			if reach > 0.0:
+				var fill: Color = e.color
+				fill.a = 0.08
+				draw_circle(sys.map_pos, reach, fill)
 	for lane in sim.lanes:
 		draw_line(sim.systems[lane[0]].map_pos, sim.systems[lane[1]].map_pos,
 			Color(1, 1, 1, 0.13), 1.5)
 	for sys in sim.systems.values():
-		var colony_count := 0
-		var established_count := 0
-		for pid in sys.planet_ids:
-			var c: Colony = sim.planets[pid].colony
-			if c != null:
-				colony_count += 1
-				if c.established:
-					established_count += 1
 		draw_circle(sys.map_pos, 9.0, Color(1.0, 0.85, 0.35))
+		# Live border contest result: ring in the current owner's color.
+		var owner: int = sim.system_owner(sys.id)
+		if owner != -1:
+			draw_arc(sys.map_pos, 13.0, 0.0, TAU, 32,
+				sim.empires[owner].color, 2.0)
+		var colony_count := 0
+		for pid in sys.planet_ids:
+			if sim.planets[pid].colony != null:
+				colony_count += 1
 		if colony_count > 0:
-			var ring := Color(0.35, 1.0, 0.5) if established_count > 0 \
-				else Color(1.0, 0.7, 0.25)
-			draw_arc(sys.map_pos, 13.0, 0.0, TAU, 32, ring, 2.0)
+			draw_string(font, sys.map_pos + Vector2(14.0, -12.0),
+				str(colony_count), HORIZONTAL_ALIGNMENT_LEFT, -1, 11,
+				Color(0.35, 1.0, 0.5))
 		draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
 			HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.65))
 	draw_string(font, Vector2(16.0, 52.0), "Click a system to inspect it",
@@ -127,7 +138,7 @@ func _draw_system(sys: StarSystem) -> void:
 		draw_circle(pos, 7.0, Color(0.55, 0.6, 0.7))
 		if planet.has_deposit:
 			draw_circle(pos + Vector2(9.0, -9.0), 3.0, Color(0.4, 0.85, 1.0))
-		if planet.has_mine:
+		if planet.has_mine():
 			draw_rect(Rect2(pos + Vector2(-14.0, -14.0), Vector2(6.0, 6.0)),
 				Color(0.95, 0.8, 0.35))
 		if planet.colony != null:
@@ -205,17 +216,18 @@ func _build_ui() -> void:
 
 func _on_colonize() -> void:
 	if selected_planet_id != -1:
-		sim.found_colony(selected_planet_id)
+		sim.found_colony(player_empire_id, selected_planet_id)
 
 
 func _on_build_mine() -> void:
 	if selected_planet_id != -1:
-		sim.build_mine(selected_planet_id)
+		sim.build_mine(player_empire_id, selected_planet_id)
 
 
 func _refresh_ui() -> void:
-	raw_label.text = "Raw: %.0f" % sim.raw
-	goods_label.text = "Goods: %.1f" % sim.goods
+	var player: Empire = sim.empires[player_empire_id]
+	raw_label.text = "Raw: %.0f" % player.raw
+	goods_label.text = "Goods: %.1f" % player.goods
 	day_label.text = "Day %.1f" % sim.day
 	for i in speed_buttons.size():
 		speed_buttons[i].button_pressed = (i == speed_idx)
@@ -227,30 +239,33 @@ func _refresh_ui() -> void:
 	panel_title.text = planet.name
 	var deposit_line := "Deposit: %s%s" % [
 		"yes" if planet.has_deposit else "none",
-		" (mined)" if planet.has_mine else ""]
+		" (mined)" if planet.has_mine() else ""]
+	var influence_note := "" if sim.is_under_influence(planet.system_id,
+		player_empire_id) else "\nOutside your influence."
 	if planet.colony == null:
-		panel_body.text = "Uncolonized. %s\n\nFounding a colony costs a flat %d raw, then drains %.1f raw/day until it activates at %d population." \
-			% [deposit_line, int(SimConstants.FOUND_COST),
+		panel_body.text = "Uncolonized. %s%s\n\nFounding a colony costs a flat %d raw, then drains %.1f raw/day until it activates at %d population." \
+			% [deposit_line, influence_note, int(SimConstants.FOUND_COST),
 				SimConstants.COLONY_UPKEEP_BASE, int(SimConstants.ACTIVATION_POP)]
 		colonize_btn.visible = true
-		colonize_btn.disabled = not sim.can_found_colony(planet.id)
+		colonize_btn.disabled = not sim.can_found_colony(player_empire_id, planet.id)
 	else:
 		var c := planet.colony
 		var status := "ESTABLISHED" if c.established \
 			else "growing… %d%% to activation" % int(c.activation_progress() * 100.0)
-		panel_body.text = "Status: %s\nPopulation: %.1f\nUpkeep: %.2f raw/day\nProduction: %.2f goods/day\n%s" \
-			% [status, c.population, c.upkeep_per_day(), c.production_per_day(),
-				deposit_line]
+		panel_body.text = "Owner: %s\nStatus: %s\nPopulation: %.1f\nUpkeep: %.2f raw/day\nProduction: %.2f goods/day\n%s" \
+			% [sim.empires[c.empire_id].name, status, c.population,
+				c.upkeep_per_day(), c.production_per_day(), deposit_line]
 		colonize_btn.visible = false
-	mine_btn.visible = planet.has_deposit and not planet.has_mine
-	mine_btn.disabled = not sim.can_build_mine(planet.id)
+	mine_btn.visible = planet.has_deposit and not planet.has_mine()
+	mine_btn.disabled = not sim.can_build_mine(player_empire_id, planet.id)
 
 
 # Debug hook for automated visual verification: found a colony, run fast for a
 # couple of real seconds, save galaxy + system screenshots, quit.
 func _autoshot() -> void:
 	var home: StarSystem = sim.systems.values()[0]
-	sim.found_colony(home.planet_ids[0])
+	sim.build_mine(player_empire_id, home.planet_ids[0])
+	sim.found_colony(player_empire_id, home.planet_ids[1])
 	speed_idx = 3
 	await get_tree().create_timer(2.0).timeout
 	await RenderingServer.frame_post_draw
