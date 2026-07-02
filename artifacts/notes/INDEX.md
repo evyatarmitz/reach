@@ -19,6 +19,14 @@ between AI sessions on this specific game.
   abstract. Keep for reference in case indirect population modeling wants to borrow
   concepts, but don't assume it transfers.
 
+## Inherited historical note
+
+- [FEATURE_DESIGN.md](FEATURE_DESIGN.md) — the full feature analysis (X4/Stellaris/NMS/
+  etc.) that produced the three-game split. Reach's slice is distilled in vision.md.
+  Kept here as origin context only — most of this list describes the embodied, direct-
+  control games (Legend/WWS), NOT Reach. The code-state notes (GAPS/DECISIONS) were
+  deliberately NOT copied here because Reach inherits no code from the old build.
+
 ## How to use these
 
 At the start of any session, read `CLAUDE.md` in this game's root first — it bootstraps
