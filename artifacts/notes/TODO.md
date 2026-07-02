@@ -73,6 +73,33 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — through 0.18.0 (2026-07-02, Godot 4.7)
+
+**79 headless test assertions, all passing.** Latest batch (0.13.0–0.18.0):
+- **0.13.0** Neighbor bonus recomputed as Σ A·influence/R (A=0.1) — reward for being
+  near a major center; multiplicative on growth; growth retuned (base ~1%, softcap
+  ~2000 so a lone colony flattens there but the bonus carries a cluster past it).
+- **0.14.0** Encourage-immigration toggle — a colony sheds 0.1%/tick to the empire's
+  other colonies, shifting population/influence where it matters.
+- **0.15.0** Variable mine richness (25–65/day, per-deposit, hidden) — planet view
+  shows an estimate band before building, actual output after.
+- **0.16.0** Procedural map — density-heatmap scatter, MST-guaranteed connectivity,
+  N empires (default 4), seeded/deterministic, all knobs in default_map_config for
+  future game-settings.
+- **0.17.0** Fog rework: three states (live / gray-explored-with-stale-data / black
+  never-seen), VR rides ~1.5× the actual border, half-lanes into the fog; plus the
+  border-curve fix (bubble-vs-empty edges now draw).
+- **0.18.0** Fleets — build at a shipyard (alloys), lane-only movement (BFS path),
+  bombardment kills/destroys enemy colonies parked over. Foundation + bombardment;
+  fleet-vs-fleet combat + attrition + ship-ceiling are the next combat pass.
+
+**OPEN BALANCE ISSUE (needs a design decision):** influence reach = A2·pop is linear
+over a ~13× pop range (150→2000+), so a mature colony's reach (~3600) exceeds the map
+and one big colony "reaches" everywhere, making fog/borders coarse. Options: sublinear
+reach, lower pop ceiling, bigger map, or a reach cap — a design call, deferred per
+"tune after testing". Also: mine richness >> city conversion capacity, so raw T0
+stockpiles balloon (another tuning knob).
+
 ## Status — through 0.12.0 (2026-07-02, Godot 4.7)
 
 The economic + spatial foundation is built, tested, and playable. Both core design
