@@ -21,47 +21,67 @@ var ais: Array[EmpireAI] = []  # rival brains; step deterministically in tick()
 var _next_id := 1
 
 
+# Deterministic COLS x ROWS grid map — a bigger testbed than the original 7, so
+# influence/border behavior has room to show. NOT the eventual procedural
+# generator (that comes later); just a larger hand-parameterized map. No RNG:
+# jitter is index-based sin so runs stay bit-identical.
+const MAP_COLS := 5
+const MAP_ROWS := 3
+const _MAP_NAMES := ["Meridian", "Harrow", "Cinder", "Vale", "Tessa", "Oro",
+	"Locke", "Ashen", "Perrin", "Quill", "Ryn", "Sable", "Thorn", "Umber", "Wex"]
+
+
 static func new_demo() -> Sim:
 	var sim := Sim.new()
-	# [name, map position, planet count]. Hand-authored, deterministic.
-	var defs := [
-		["Meridian", Vector2(250, 360), 4],
-		["Harrow", Vector2(450, 220), 3],
-		["Cinder", Vector2(470, 500), 2],
-		["Vale", Vector2(660, 340), 3],
-		["Tessa", Vector2(850, 200), 3],
-		["Oro", Vector2(880, 480), 2],
-		["Locke", Vector2(1080, 350), 4],
-	]
 	var numerals := ["I", "II", "III", "IV"]
 	var radii := [70.0, 115.0, 165.0, 220.0]
-	for si in defs.size():
-		var sys := sim.add_system(defs[si][0])
-		sys.map_pos = defs[si][1]
-		for pi in int(defs[si][2]):
-			var p := sim.add_planet(sys.id, "%s %s" % [sys.name, numerals[pi]])
-			p.orbit_radius = radii[pi]
-			p.orbit_angle = fmod(0.9 + pi * 1.9 + si * 1.3, TAU)
-			# Scattered deterministically; guarantees the home system's first
-			# planet has one.
-			p.has_deposit = (si + pi) % 3 == 0
-	var sys_ids: Array = sim.systems.keys()
-	for l in [[0, 1], [0, 2], [1, 3], [2, 3], [1, 4], [3, 4], [3, 5], [2, 5],
-			[4, 6], [5, 6]]:
-		sim.add_lane(sys_ids[l[0]], sys_ids[l[1]])
-	# By convention the demo's first empire is the one the UI controls.
+	var grid: Array[int] = []  # system id per grid index, row-major
+	for row in MAP_ROWS:
+		for col in MAP_COLS:
+			var idx := row * MAP_COLS + col
+			var sys := sim.add_system(_MAP_NAMES[idx])
+			sys.map_pos = Vector2(140.0 + col * 250.0, 150.0 + row * 200.0) \
+				+ Vector2(sin(idx * 12.9898) * 32.0, sin(idx * 4.1414) * 26.0)
+			grid.append(sys.id)
+			var planet_count := 2 + idx % 3
+			for pi in planet_count:
+				var p := sim.add_planet(sys.id, "%s %s" % [sys.name, numerals[pi]])
+				p.orbit_radius = radii[pi]
+				p.orbit_angle = fmod(0.9 + pi * 1.9 + idx * 1.3, TAU)
+				p.has_deposit = (idx + pi) % 3 == 0
+	# Lanes: grid adjacency (right, down) + a down-right diagonal for chokepoint
+	# variety. Right/down adjacency guarantees a fully connected graph.
+	for row in MAP_ROWS:
+		for col in MAP_COLS:
+			var here: int = grid[row * MAP_COLS + col]
+			if col + 1 < MAP_COLS:
+				sim.add_lane(here, grid[row * MAP_COLS + col + 1])
+			if row + 1 < MAP_ROWS:
+				sim.add_lane(here, grid[(row + 1) * MAP_COLS + col])
+			if col + 1 < MAP_COLS and row + 1 < MAP_ROWS and idx_even(col, row):
+				sim.add_lane(here, grid[(row + 1) * MAP_COLS + col + 1])
+	# Two empires at opposite corners; both homeworlds get a deposit so each can
+	# mine at home. By convention the first empire is the one the UI controls.
 	var player := sim.add_empire("Meridian Compact", Color(0.35, 0.8, 1.0))
+	var rival := sim.add_empire("Wex Ascendancy", Color(1.0, 0.4, 0.35))
+	var player_home_sys: int = grid[0]                      # top-left
+	var rival_home_sys: int = grid[grid.size() - 1]         # bottom-right
+	for sys_id in [player_home_sys, rival_home_sys]:
+		sim.planets[sim.systems[sys_id].planet_ids[0]].has_deposit = true
 	var home := sim.inject_colony(player.id,
-		sim.systems[sys_ids[0]].planet_ids[0], 150.0, true)
+		sim.systems[player_home_sys].planet_ids[0], 150.0, true)
 	home.days_since_established = 60.0
-	# A rival on the far side (Locke) that expands toward the player under the
-	# same rules — the border between them is a live contest, not scripted.
-	var rival := sim.add_empire("Locke Ascendancy", Color(1.0, 0.4, 0.35))
 	var rival_home := sim.inject_colony(rival.id,
-		sim.systems[sys_ids[6]].planet_ids[0], 150.0, true)
+		sim.systems[rival_home_sys].planet_ids[0], 150.0, true)
 	rival_home.days_since_established = 60.0
+	# Rival plays under the same rules; the border between them is a live
+	# contest, not scripted.
 	sim.add_ai(rival.id)
 	return sim
+
+
+static func idx_even(col: int, row: int) -> bool:
+	return (col + row) % 2 == 0
 
 
 func add_ai(empire_id: int) -> void:
