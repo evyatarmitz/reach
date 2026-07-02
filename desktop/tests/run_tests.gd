@@ -27,6 +27,8 @@ func first_planet_id(sim: Sim) -> int:
 
 func _init() -> void:
 	_test_founding()
+	_test_mining()
+	_test_production_input()
 	_test_drain_and_growth()
 	_test_activation_taper_production()
 	_test_diminishing_returns()
@@ -53,6 +55,55 @@ func _test_founding() -> void:
 		"founding fails when stockpile is short")
 	check(sim2.raw == SimConstants.FOUND_COST - 1.0,
 		"failed founding costs nothing")
+
+
+func _test_mining() -> void:
+	var sim := Sim.new_demo()
+	var pid := first_planet_id(sim)  # Meridian I has a deposit in the demo
+	check(not sim.can_build_mine(pid),
+		"mine requires a colony in the system (reach)")
+	sim.found_colony(pid)
+	var no_deposit_pid: int = sim.systems.values()[0].planet_ids[1]
+	check(not sim.can_build_mine(no_deposit_pid),
+		"mine requires a deposit")
+	var raw_before := sim.raw
+	check(sim.build_mine(pid), "mine builds on reachable deposit")
+	check(sim.raw == raw_before - SimConstants.MINE_COST,
+		"mine deducts its cost")
+	check(not sim.can_build_mine(pid), "no second mine on the same planet")
+	raw_before = sim.raw
+	run_days(sim, 10.0)
+	# Only flows: mine income, colony upkeep (unestablished → no production).
+	check(is_equal_approx(sim.raw, raw_before
+		+ (SimConstants.MINE_RAW_PER_DAY - SimConstants.COLONY_UPKEEP_BASE) * 10.0),
+		"mine income rate is exact")
+
+
+func _test_production_input() -> void:
+	var sim := Sim.new_demo()
+	sim.found_colony(first_planet_id(sim))
+	var c: Colony = sim.colonies[0]
+	c.established = true
+	c.population = 200.0
+	c.days_since_established = 100000.0  # upkeep fully tapered → only production
+	# Starved factory: capacity exists but no input, so no output.
+	sim.raw = 0.0
+	run_days(sim, 5.0)
+	check(sim.goods == 0.0, "production without raw input yields nothing")
+	# Limited input: exactly raw/ratio goods come out, then it dries up.
+	sim.raw = 10.0
+	run_days(sim, 50.0)
+	check(is_equal_approx(sim.goods, 10.0 / SimConstants.GOODS_RAW_PER_GOOD),
+		"limited raw converts at exactly the input ratio")
+	check(sim.raw == 0.0, "production consumed the whole stockpile")
+	# Unthrottled: conservation holds — raw consumed == goods gained × ratio.
+	sim.raw = 1000000.0
+	var raw_0 := sim.raw
+	var goods_0 := sim.goods
+	run_days(sim, 20.0)
+	check(is_equal_approx(raw_0 - sim.raw,
+		(sim.goods - goods_0) * SimConstants.GOODS_RAW_PER_GOOD),
+		"raw consumed matches goods produced times the ratio")
 
 
 func _test_drain_and_growth() -> void:

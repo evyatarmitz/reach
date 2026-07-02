@@ -23,10 +23,12 @@ static func new_demo() -> Sim:
 	var sys := sim.add_system("Meridian")
 	var radii := [70.0, 115.0, 165.0, 220.0]
 	var angles := [0.7, 2.4, 4.1, 5.5]
+	var deposits := [true, false, true, false]
 	for i in radii.size():
 		var p := sim.add_planet(sys.id, "Meridian %s" % ["I", "II", "III", "IV"][i])
 		p.orbit_radius = radii[i]
 		p.orbit_angle = angles[i]
+		p.has_deposit = deposits[i]
 	return sim
 
 
@@ -68,8 +70,35 @@ func found_colony(planet_id: int) -> bool:
 	return true
 
 
+func system_has_colony(system_id: int) -> bool:
+	for c in colonies:
+		if planets[c.planet_id].system_id == system_id:
+			return true
+	return false
+
+
+func can_build_mine(planet_id: int) -> bool:
+	var p: Planet = planets.get(planet_id)
+	# "Within reach" is a colony in the same system for now; becomes
+	# influence-gated once influence bubbles exist.
+	return p != null and p.has_deposit and not p.has_mine \
+		and raw >= SimConstants.MINE_COST and system_has_colony(p.system_id)
+
+
+func build_mine(planet_id: int) -> bool:
+	if not can_build_mine(planet_id):
+		return false
+	raw -= SimConstants.MINE_COST
+	planets[planet_id].has_mine = true
+	return true
+
+
 func tick(dt_days: float) -> void:
 	day += dt_days
+	# Income first, so a tick's own mining output can feed its upkeep/production.
+	for p in planets.values():
+		if p.has_mine:
+			raw += SimConstants.MINE_RAW_PER_DAY * dt_days
 	for c in colonies:
 		# Drain first: growth is throttled by how much of the upkeep was
 		# actually covered, so an empty stockpile stalls colonies instead of
@@ -86,4 +115,9 @@ func tick(dt_days: float) -> void:
 
 		if c.established:
 			c.days_since_established += dt_days
-			goods += c.production_per_day() * dt_days
+			# Production is capped by actual raw input, not by capacity.
+			var raw_wanted := c.production_per_day() * dt_days \
+				* SimConstants.GOODS_RAW_PER_GOOD
+			var raw_used: float = minf(raw_wanted, raw)
+			raw -= raw_used
+			goods += raw_used / SimConstants.GOODS_RAW_PER_GOOD

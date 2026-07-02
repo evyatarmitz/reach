@@ -31,9 +31,16 @@ const GROWTH_RATE := 0.08
 const GROWTH_SOFTCAP := 500.0
 const GROWTH_EXP := 2.0
 
-# Tier-1 production of an established colony: goods/day = PROD_COEF * pop^PROD_EXP.
+# Mining: the only raw income. A mine sits on a deposit planet within reach.
+const MINE_COST := 50.0
+const MINE_RAW_PER_DAY := 5.0
+
+# Tier-1 production of an established colony: goods/day = PROD_COEF * pop^PROD_EXP,
+# but every good consumes GOODS_RAW_PER_GOOD raw — production is throughput-limited
+# by real resource input (anti-snowball pillar), never by theoretical maximums.
 const PROD_COEF := 0.05
 const PROD_EXP := 0.8
+const GOODS_RAW_PER_GOOD := 2.0
 
 # Influence (vision.md core formulas — not used by this slice yet, pinned here so
 # the constants exist next to their siblings): influence = A1 * pop_count,

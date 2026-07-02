@@ -19,6 +19,7 @@ var panel: PanelContainer
 var panel_title: Label
 var panel_body: Label
 var colonize_btn: Button
+var mine_btn: Button
 
 
 func _ready() -> void:
@@ -80,6 +81,11 @@ func _draw() -> void:
 			Color(1, 1, 1, 0.08), 1.0)
 		var pos := _planet_pos(planet)
 		draw_circle(pos, 7.0, Color(0.55, 0.6, 0.7))
+		if planet.has_deposit:
+			draw_circle(pos + Vector2(9.0, -9.0), 3.0, Color(0.4, 0.85, 1.0))
+		if planet.has_mine:
+			draw_rect(Rect2(pos + Vector2(-14.0, -14.0), Vector2(6.0, 6.0)),
+				Color(0.95, 0.8, 0.35))
 		if planet.colony != null:
 			var ring := Color(0.35, 1.0, 0.5) if planet.colony.established \
 				else Color(1.0, 0.7, 0.25)
@@ -142,14 +148,23 @@ func _build_ui() -> void:
 	colonize_btn = Button.new()
 	colonize_btn.text = "Found colony (%d raw)" % int(SimConstants.FOUND_COST)
 	colonize_btn.pressed.connect(_on_colonize)
+	mine_btn = Button.new()
+	mine_btn.text = "Build mine (%d raw)" % int(SimConstants.MINE_COST)
+	mine_btn.pressed.connect(_on_build_mine)
 	vbox.add_child(panel_title)
 	vbox.add_child(panel_body)
 	vbox.add_child(colonize_btn)
+	vbox.add_child(mine_btn)
 
 
 func _on_colonize() -> void:
 	if selected_planet_id != -1:
 		sim.found_colony(selected_planet_id)
+
+
+func _on_build_mine() -> void:
+	if selected_planet_id != -1:
+		sim.build_mine(selected_planet_id)
 
 
 func _refresh_ui() -> void:
@@ -164,19 +179,25 @@ func _refresh_ui() -> void:
 	if planet == null:
 		return
 	panel_title.text = planet.name
+	var deposit_line := "Deposit: %s%s" % [
+		"yes" if planet.has_deposit else "none",
+		" (mined)" if planet.has_mine else ""]
 	if planet.colony == null:
-		panel_body.text = "Uncolonized.\n\nFounding a colony costs a flat %d raw, then drains %.1f raw/day until it activates at %d population." \
-			% [int(SimConstants.FOUND_COST), SimConstants.COLONY_UPKEEP_BASE,
-				int(SimConstants.ACTIVATION_POP)]
+		panel_body.text = "Uncolonized. %s\n\nFounding a colony costs a flat %d raw, then drains %.1f raw/day until it activates at %d population." \
+			% [deposit_line, int(SimConstants.FOUND_COST),
+				SimConstants.COLONY_UPKEEP_BASE, int(SimConstants.ACTIVATION_POP)]
 		colonize_btn.visible = true
 		colonize_btn.disabled = not sim.can_found_colony(planet.id)
 	else:
 		var c := planet.colony
 		var status := "ESTABLISHED" if c.established \
 			else "growing… %d%% to activation" % int(c.activation_progress() * 100.0)
-		panel_body.text = "Status: %s\nPopulation: %.1f\nUpkeep: %.2f raw/day\nProduction: %.2f goods/day" \
-			% [status, c.population, c.upkeep_per_day(), c.production_per_day()]
+		panel_body.text = "Status: %s\nPopulation: %.1f\nUpkeep: %.2f raw/day\nProduction: %.2f goods/day\n%s" \
+			% [status, c.population, c.upkeep_per_day(), c.production_per_day(),
+				deposit_line]
 		colonize_btn.visible = false
+	mine_btn.visible = planet.has_deposit and not planet.has_mine
+	mine_btn.disabled = not sim.can_build_mine(planet.id)
 
 
 # Debug hook for automated visual verification: found a colony, run fast for a
