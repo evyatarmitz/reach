@@ -47,6 +47,7 @@ func make_scenario() -> Dictionary:
 
 func _init() -> void:
 	_test_topology()
+	_test_procedural()
 	_test_founding()
 	_test_influence_nonstacking()
 	_test_influence_gating()
@@ -93,6 +94,40 @@ func _test_topology() -> void:
 	check(visited.size() == sim.systems.size(), "lane graph is fully connected")
 	check(sim.empires.size() >= 1 and sim.colonies.size() >= 1,
 		"demo starts with an empire and a homeworld")
+
+
+func _is_connected(sim: Sim) -> bool:
+	var visited := {}
+	var queue: Array = [sim.systems.keys()[0]]
+	while not queue.is_empty():
+		var sid: int = queue.pop_front()
+		if visited.has(sid):
+			continue
+		visited[sid] = true
+		for nb in sim.lane_neighbors(sid):
+			queue.append(nb)
+	return visited.size() == sim.systems.size()
+
+
+func _test_procedural() -> void:
+	var cfg: Dictionary = Sim.default_map_config()
+	cfg.empire_count = 5
+	var a := Sim.generate_map(cfg)
+	check(a.empires.size() == 5, "generator honors the requested empire count")
+	check(_is_connected(a), "procedural map is fully connected (no islands)")
+	check(a.systems.size() >= 20, "procedural map places a substantial map")
+	# Determinism: same config -> identical map (system count + positions).
+	var b := Sim.generate_map(cfg)
+	var same := a.systems.size() == b.systems.size()
+	for sid in a.systems:
+		if not b.systems.has(sid) or a.systems[sid].map_pos != b.systems[sid].map_pos:
+			same = false
+	check(same, "same config produces an identical map (seeded, deterministic)")
+	# A different seed produces a different layout.
+	var cfg2: Dictionary = Sim.default_map_config()
+	cfg2.seed = 999
+	var c := Sim.generate_map(cfg2)
+	check(_is_connected(c), "a different seed is also fully connected")
 
 
 func _test_founding() -> void:

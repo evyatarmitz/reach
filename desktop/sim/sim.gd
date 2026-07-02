@@ -21,87 +21,181 @@ var ais: Array[EmpireAI] = []  # rival brains; step deterministically in tick()
 var _next_id := 1
 
 
-# Deterministic COLS x ROWS grid map — a big testbed (50 systems) so influence
-# and border behavior has room to show. NOT the eventual procedural generator
-# (that comes later); just a larger hand-parameterized map. No RNG: jitter is
-# index-based sin so runs stay bit-identical.
-const MAP_COLS := 10
-const MAP_ROWS := 5
-const _SYL_A := ["Ka", "Me", "Or", "Ve", "Ta", "Sy", "Lo", "Ne", "Ro", "Ai"]
-const _SYL_B := ["ron", "dis", "lex", "mos", "tia", "var", "nyx", "del"]
+# Name syllables — combined by index for readable, unique system names.
+const _SYL_A := ["Ka", "Me", "Or", "Ve", "Ta", "Sy", "Lo", "Ne", "Ro", "Ai",
+	"Zu", "Cy", "Da", "Fe", "Gi", "Ha"]
+const _SYL_B := ["ron", "dis", "lex", "mos", "tia", "var", "nyx", "del", "sor",
+	"pel"]
+const _EMPIRE_SUFFIX := ["Compact", "Ascendancy", "Union", "Dominion", "League",
+	"Accord", "Pact", "Reach"]
+const _EMPIRE_COLORS := [
+	Color(0.35, 0.8, 1.0), Color(1.0, 0.4, 0.35), Color(0.5, 1.0, 0.45),
+	Color(1.0, 0.82, 0.3), Color(0.75, 0.5, 1.0), Color(1.0, 0.6, 0.25)]
 
 
 static func _system_name(idx: int) -> String:
-	# Unique for idx 0..79: prefix cycles every 10, suffix every 80.
 	return _SYL_A[idx % _SYL_A.size()] + _SYL_B[(idx / _SYL_A.size()) % _SYL_B.size()]
 
 
+# All procedural-generation knobs live here so future game-settings can override
+# them. Passed straight into generate_map.
+static func default_map_config() -> Dictionary:
+	return {
+		"seed": 20260702,
+		"system_count": 50,
+		"size": Vector2(2000.0, 1120.0),
+		"empire_count": 4,
+		"density_blobs": 5,       # heatmap: number of high-density clusters
+		"density_spread": 360.0,  # heatmap: blob radius (bigger = smoother)
+		"min_separation": 95.0,   # min distance between systems
+		"extra_lane_neighbors": 2,# lanes beyond the spanning tree (loops/chokepoints)
+	}
+
+
 static func new_demo() -> Sim:
+	return generate_map(default_map_config())
+
+
+# Procedural map: systems scattered by a variable-density heatmap, connected by a
+# minimum spanning tree (guarantees NO disconnected parts) plus a few nearest-
+# neighbor lanes for loops/chokepoints, then N empires placed far apart. Seeded
+# RNG only — same config -> identical map, so the sim stays deterministic.
+static func generate_map(cfg: Dictionary) -> Sim:
 	var sim := Sim.new()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = cfg.seed
+	var size: Vector2 = cfg.size
 	var numerals := ["I", "II", "III", "IV"]
 	var radii := [70.0, 115.0, 165.0, 220.0]
-	var grid: Array[int] = []  # system id per grid index, row-major
-	for row in MAP_ROWS:
-		for col in MAP_COLS:
-			var idx := row * MAP_COLS + col
-			var sys := sim.add_system(_system_name(idx))
-			sys.map_pos = Vector2(160.0 + col * 200.0, 150.0 + row * 190.0) \
-				+ Vector2(sin(idx * 12.9898) * 30.0, sin(idx * 4.1414) * 24.0)
-			grid.append(sys.id)
-			var planet_count := 2 + idx % 3
-			for pi in planet_count:
-				var p := sim.add_planet(sys.id, "%s %s" % [sys.name, numerals[pi]])
-				p.orbit_radius = radii[pi]
-				p.orbit_angle = fmod(0.9 + pi * 1.9 + idx * 1.3, TAU)
-				# ~1/3 of planets have a deposit; alternate water/mineral so
-				# both T0 types are scattered across the map.
-				if (idx + pi) % 3 == 0:
-					p.deposit_type = SimConstants.Deposit.WATER \
-						if ((idx + pi) / 3) % 2 == 0 \
-						else SimConstants.Deposit.MINERAL
-	# Lanes: grid adjacency (right, down) + a down-right diagonal for chokepoint
-	# variety. Right/down adjacency guarantees a fully connected graph.
-	for row in MAP_ROWS:
-		for col in MAP_COLS:
-			var here: int = grid[row * MAP_COLS + col]
-			if col + 1 < MAP_COLS:
-				sim.add_lane(here, grid[row * MAP_COLS + col + 1])
-			if row + 1 < MAP_ROWS:
-				sim.add_lane(here, grid[(row + 1) * MAP_COLS + col])
-			if col + 1 < MAP_COLS and row + 1 < MAP_ROWS and idx_even(col, row):
-				sim.add_lane(here, grid[(row + 1) * MAP_COLS + col + 1])
-	# Two empires at opposite corners; both homeworlds get a deposit so each can
-	# mine at home. By convention the first empire is the one the UI controls.
-	var player_home_sys: int = grid[0]                      # top-left
-	var rival_home_sys: int = grid[grid.size() - 1]         # bottom-right
-	var player := sim.add_empire(
-		"%s Compact" % sim.systems[player_home_sys].name, Color(0.35, 0.8, 1.0))
-	var rival := sim.add_empire(
-		"%s Ascendancy" % sim.systems[rival_home_sys].name, Color(1.0, 0.4, 0.35))
-	# Bootstrap each home: a mineral deposit + free mine (alloys) and a water
-	# deposit + free mine (food) so the capital city is self-sustaining from
-	# tick 1 instead of instantly starving.
-	sim.inject_colony(player.id,
-		sim.systems[player_home_sys].planet_ids[0], 150.0, true)
-	sim.inject_colony(rival.id,
-		sim.systems[rival_home_sys].planet_ids[0], 150.0, true)
-	for e in [player, rival]:
-		var hsys: int = player_home_sys if e == player else rival_home_sys
-		var pids: Array = sim.systems[hsys].planet_ids
-		var mineral_p: Planet = sim.planets[pids[0]]
-		var water_p: Planet = sim.planets[pids[1]]
-		mineral_p.deposit_type = SimConstants.Deposit.MINERAL
-		mineral_p.mine_empire_id = e.id
-		water_p.deposit_type = SimConstants.Deposit.WATER
-		water_p.mine_empire_id = e.id
-	# Rival plays under the same rules; the border between them is a live
-	# contest, not scripted.
-	sim.add_ai(rival.id)
+
+	# Density heatmap = sum of Gaussian blobs; systems are placed where it's high.
+	var blobs: Array = []
+	for i in int(cfg.density_blobs):
+		blobs.append(Vector2(rng.randf_range(0.0, size.x),
+			rng.randf_range(0.0, size.y)))
+	var spread: float = cfg.density_spread
+	var min_sep: float = cfg.min_separation
+
+	var positions: Array = []
+	var target: int = cfg.system_count
+	var attempts := 0
+	while positions.size() < target and attempts < target * 500:
+		attempts += 1
+		var p := Vector2(rng.randf_range(0.0, size.x), rng.randf_range(0.0, size.y))
+		var dens := 0.0
+		for b in blobs:
+			var d: float = p.distance_to(b)
+			dens += exp(-(d * d) / (spread * spread))
+		if rng.randf() > clampf(dens, 0.0, 1.0):
+			continue   # weight placement by local density
+		var ok := true
+		for q in positions:
+			if p.distance_to(q) < min_sep:
+				ok = false
+				break
+		if ok:
+			positions.append(p)
+
+	var sys_ids: Array = []
+	for i in positions.size():
+		var sys := sim.add_system(_system_name(i))
+		sys.map_pos = positions[i]
+		sys_ids.append(sys.id)
+		var pc := 2 + rng.randi_range(0, 2)
+		for pi in pc:
+			var pl := sim.add_planet(sys.id, "%s %s" % [sys.name, numerals[pi]])
+			pl.orbit_radius = radii[pi]
+			pl.orbit_angle = rng.randf_range(0.0, TAU)
+			if rng.randf() < 0.35:
+				pl.deposit_type = SimConstants.Deposit.WATER if rng.randf() < 0.5 \
+					else SimConstants.Deposit.MINERAL
+
+	_connect_systems(sim, sys_ids, positions, int(cfg.extra_lane_neighbors))
+	_place_empires(sim, sys_ids, positions, int(cfg.empire_count))
 	return sim
 
 
-static func idx_even(col: int, row: int) -> bool:
-	return (col + row) % 2 == 0
+# Minimum spanning tree (Prim) so the whole map is one connected component, plus
+# each system's nearest few extra lanes for loops and chokepoints.
+static func _connect_systems(sim: Sim, sys_ids: Array, positions: Array,
+		extra: int) -> void:
+	var n := sys_ids.size()
+	if n < 2:
+		return
+	var added := {0: true}
+	while added.size() < n:
+		var best_i := -1
+		var best_j := -1
+		var best_d := INF
+		for i in added:
+			for j in n:
+				if added.has(j):
+					continue
+				var d: float = positions[i].distance_to(positions[j])
+				if d < best_d:
+					best_d = d
+					best_i = i
+					best_j = j
+		sim.add_lane(sys_ids[best_i], sys_ids[best_j])
+		added[best_j] = true
+
+	var laneset := {}
+	for l in sim.lanes:
+		var ia: int = sys_ids.find(l[0])
+		var ib: int = sys_ids.find(l[1])
+		laneset["%d-%d" % [mini(ia, ib), maxi(ia, ib)]] = true
+	for i in n:
+		var order: Array = []
+		for j in n:
+			if j != i:
+				order.append([positions[i].distance_to(positions[j]), j])
+		order.sort()
+		for k in mini(extra, order.size()):
+			var j: int = order[k][1]
+			var key := "%d-%d" % [mini(i, j), maxi(i, j)]
+			if not laneset.has(key):
+				laneset[key] = true
+				sim.add_lane(sys_ids[i], sys_ids[j])
+
+
+# Place empires at maximally-separated systems (greedy farthest-point). First
+# empire is the player; the rest get an AI. Each homeworld gets a mineral mine +
+# water mine (free) so its capital is self-sustaining from tick 1.
+static func _place_empires(sim: Sim, sys_ids: Array, positions: Array,
+		count: int) -> void:
+	var n := sys_ids.size()
+	var chosen: Array = [0]
+	while chosen.size() < count and chosen.size() < n:
+		var best := -1
+		var best_d := -1.0
+		for j in n:
+			if chosen.has(j):
+				continue
+			var mind := INF
+			for c in chosen:
+				mind = minf(mind, positions[j].distance_to(positions[c]))
+			if mind > best_d:
+				best_d = mind
+				best = j
+		if best == -1:
+			break
+		chosen.append(best)
+
+	for e_i in chosen.size():
+		var sid: int = sys_ids[chosen[e_i]]
+		var ename := "%s %s" % [sim.systems[sid].name,
+			_EMPIRE_SUFFIX[e_i % _EMPIRE_SUFFIX.size()]]
+		var emp := sim.add_empire(ename, _EMPIRE_COLORS[e_i % _EMPIRE_COLORS.size()])
+		var pids: Array = sim.systems[sid].planet_ids
+		var mineral_p: Planet = sim.planets[pids[0]]
+		var water_p: Planet = sim.planets[pids[1]]
+		mineral_p.deposit_type = SimConstants.Deposit.MINERAL
+		mineral_p.mine_empire_id = emp.id
+		water_p.deposit_type = SimConstants.Deposit.WATER
+		water_p.mine_empire_id = emp.id
+		sim.inject_colony(emp.id, pids[0], 150.0, true)
+		if e_i > 0:   # first empire is the human player
+			sim.add_ai(emp.id)
 
 
 func add_ai(empire_id: int) -> void:
