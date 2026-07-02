@@ -24,6 +24,8 @@ const ZOOM_MAX := 2.5
 # edge sits inside its territory and hostile seams show BOTH colours.
 const BORDER_CELL := 14.0
 const BORDER_REFRESH := 0.4
+const BORDER_EPS := 0.01     # tiny rival-claim floor so bubble-vs-empty edges draw
+const FOG_DISC := 170.0      # lit/gray halo radius around a known system
 
 var cam: Camera2D
 var _panning := false
@@ -33,8 +35,10 @@ var _map_lo := Vector2.ZERO
 var _map_hi := Vector2.ZERO
 var _border_segments: Array = []   # [a, b, color] line segments
 var _border_timer := 0.0
-var _system_owner := {}   # system_id -> empire_id, cached with the border field
-var _sight: Array = []   # player's sight-source world positions, refreshed per frame
+var _system_owner := {}     # system_id -> empire_id, cached with the border field
+var _system_visible := {}   # system_id -> bool, currently in the player's VR
+var _explored := {}         # system_id -> true, ever seen (gray once out of VR)
+var _stale := {}            # system_id -> {owner, colonies}, last-seen snapshot
 
 var raw_label: Label
 var goods_label: Label
@@ -88,7 +92,6 @@ func _process(delta: float) -> void:
 		while day_accum >= SimConstants.TICK_DAYS:
 			sim.tick(SimConstants.TICK_DAYS)
 			day_accum -= SimConstants.TICK_DAYS
-	_sight = sim.sight_sources(player_empire_id)
 	if view_system_id == -1:
 		_border_timer -= delta
 		if _border_timer <= 0.0:
@@ -130,8 +133,32 @@ func _recompute_borders() -> void:
 			infl.append(iv)
 			reach.append(rv)
 
+	var pk := ids.find(player_empire_id)   # player's index in the arrays, or -1
+
+	# Per-system: current owner, whether it's in the player's VR (visible), and
+	# a stale snapshot for the fog memory. VR = the player reaches the point and
+	# isn't yet dominated by 1.5x (so it extends past the contested border and
+	# retreats as a rival grows). Once seen, a system stays "explored" (gray).
 	for sys in sim.systems.values():
-		_system_owner[sys.id] = _owner_at(sys.map_pos, ids, pos, infl, reach)
+		var owner := _owner_at(sys.map_pos, ids, pos, infl, reach)
+		_system_owner[sys.id] = owner
+		var vis := false
+		if pk != -1:
+			var pcl := _claim_at(sys.map_pos, pos[pk], infl[pk], reach[pk])
+			if pcl > 0.0:
+				var bo := 0.0
+				for k in ids.size():
+					if k != pk:
+						bo = maxf(bo, _claim_at(sys.map_pos, pos[k], infl[k], reach[k]))
+				vis = pcl * SimConstants.SIGHT_INFLUENCE_FACTOR >= bo
+		_system_visible[sys.id] = vis
+		if vis:
+			_explored[sys.id] = true
+			var cc := 0
+			for pid in sys.planet_ids:
+				if sim.planets[pid].colony != null:
+					cc += 1
+			_stale[sys.id] = {"owner": owner, "colonies": cc}
 
 	# Sample each empire's claim on a grid of POINTS (cell corners), then trace a
 	# smooth marching-squares contour of every empire's dominance margin
@@ -152,6 +179,26 @@ func _recompute_borders() -> void:
 					Vector2(lo.x + gx * BORDER_CELL, lo.y + gy * BORDER_CELL),
 					pos[k], infl[k], reach[k])
 		claims.append(arr)
+
+	# VR per corner point (same rule as per-system), to fog-gate border segments.
+	var vrgrid := PackedByteArray()
+	vrgrid.resize(pcols * prows)
+	for pi in pcols * prows:
+		var vis := false
+		if pk != -1:
+			var pcl: float = claims[pk][pi]
+			if pcl > 0.0:
+				vis = pcl * SimConstants.SIGHT_INFLUENCE_FACTOR \
+					>= _best_other(claims, pk, pi)
+		vrgrid[pi] = 1 if vis else 0
+
+	# Live system positions — borders are only drawn near them, so a border can't
+	# float in black space far from any visible system (which happens because a
+	# mature colony's raw reach can exceed the whole map — see balance note).
+	var live_pos: Array = []
+	for sys in sim.systems.values():
+		if _sys_live(sys.id):
+			live_pos.append(sys.map_pos)
 
 	# Draw rivals first, the player's own empire last, so at a coincident seam
 	# (where both empires' margin=0 curves overlap) the player sees its own colour.
@@ -180,15 +227,22 @@ func _recompute_borders() -> void:
 				var p_tr := p_tl + Vector2(BORDER_CELL, 0)
 				var p_br := p_tl + Vector2(BORDER_CELL, BORDER_CELL)
 				var p_bl := p_tl + Vector2(0, BORDER_CELL)
-				var m_tl := ck[i_tl] - _best_other(claims, k, i_tl)
-				var m_tr := ck[i_tr] - _best_other(claims, k, i_tr)
-				var m_br := ck[i_br] - _best_other(claims, k, i_br)
-				var m_bl := ck[i_bl] - _best_other(claims, k, i_bl)
+				# Subtract a small floor from the rival claim so an empire's edge
+				# against EMPTY space (both claims ~0) still crosses zero and draws
+				# a contour — otherwise a lone/uncontested bubble showed no curve.
+				var m_tl := ck[i_tl] - maxf(_best_other(claims, k, i_tl), BORDER_EPS)
+				var m_tr := ck[i_tr] - maxf(_best_other(claims, k, i_tr), BORDER_EPS)
+				var m_br := ck[i_br] - maxf(_best_other(claims, k, i_br), BORDER_EPS)
+				var m_bl := ck[i_bl] - maxf(_best_other(claims, k, i_bl), BORDER_EPS)
+				if vrgrid[i_tl] == 0:   # fog: only draw border where the player sees
+					continue
 				for seg in _ms_segments([p_tl, p_tr, p_br, p_bl],
 						[m_tl, m_tr, m_br, m_bl]):
-					# Fog of war: only draw the border where the player can see.
-					if _visible((seg[0] + seg[1]) * 0.5):
-						_border_segments.append([seg[0], seg[1], col])
+					var mid: Vector2 = (seg[0] + seg[1]) * 0.5
+					for lp in live_pos:
+						if mid.distance_squared_to(lp) <= FOG_DISC * FOG_DISC:
+							_border_segments.append([seg[0], seg[1], col])
+							break
 
 
 # One empire's combined claim at a world point: (Σi)² / Σ(d·i) over its sources
@@ -298,8 +352,9 @@ func _unhandled_input(event: InputEvent) -> void:
 func _select_at(pos: Vector2) -> void:
 	if view_system_id == -1:
 		for sys in sim.systems.values():
-			# Fog of war: only systems in sensor range can be inspected.
-			if pos.distance_to(sys.map_pos) <= 20.0 and _visible(sys.map_pos):
+			# Fog of war: only known systems (currently visible or explored) can
+			# be inspected; never-seen ones aren't there to click.
+			if pos.distance_to(sys.map_pos) <= 20.0 and _sys_known(sys.id):
 				view_system_id = sys.id
 				selected_planet_id = -1
 				return
@@ -319,13 +374,12 @@ func _planet_pos(planet: Planet) -> Vector2:
 var _fog_disabled := false   # debug/screenshot only
 
 
-func _visible(pos: Vector2) -> bool:
-	if _fog_disabled:
-		return true
-	for src in _sight:   # each src = [Vector2 pos, float radius]
-		if pos.distance_to(src[0]) <= src[1]:
-			return true
-	return false
+func _sys_live(sid: int) -> bool:     # currently in the player's VR
+	return _fog_disabled or _system_visible.get(sid, false)
+
+
+func _sys_known(sid: int) -> bool:    # visible now OR explored before (gray)
+	return _fog_disabled or _system_visible.get(sid, false) or _explored.has(sid)
 
 
 func _draw() -> void:
@@ -337,40 +391,66 @@ func _draw() -> void:
 
 func _draw_galaxy() -> void:
 	var font := ThemeDB.fallback_font
-	# Fog of war: the background is black. First lift the SEEN area to a dim lit
-	# grey with a disc around each sight source; everything unseen stays pure
-	# black (not a dim-grey map). Nothing outside the lit area is drawn.
-	for src in _sight:   # [pos, radius]
-		draw_circle(src[0], src[1], Color(0.12, 0.12, 0.14))
-	# Deformed influence borders (already fog-gated in _recompute_borders).
+	# Fog halos on the black background: a lit grey disc under LIVE systems, a
+	# darker grey disc under EXPLORED (out-of-VR) systems, nothing under
+	# never-seen. So the lost-VR area reads as grey, unexplored as black.
+	for sys in sim.systems.values():
+		if _sys_live(sys.id):
+			draw_circle(sys.map_pos, FOG_DISC, Color(0.13, 0.13, 0.15))
+		elif _sys_known(sys.id):
+			draw_circle(sys.map_pos, FOG_DISC, Color(0.07, 0.07, 0.08))
+	# Deformed influence borders (already fog-gated to VR in _recompute_borders).
 	for seg in _border_segments:
 		draw_line(seg[0], seg[1], seg[2], 2.0)
-	# Lanes only where both ends are seen — no topology leaks into the dark.
+	# Lanes: full between two known systems; HALF (out to the midpoint) when one
+	# end is known and the other is never-seen; nothing when neither is known.
+	var lane_col := Color(1, 1, 1, 0.13)
 	for lane in sim.lanes:
 		var a: Vector2 = sim.systems[lane[0]].map_pos
 		var b: Vector2 = sim.systems[lane[1]].map_pos
-		if _visible(a) and _visible(b):
-			draw_line(a, b, Color(1, 1, 1, 0.13), 1.5)
+		var ka := _sys_known(lane[0])
+		var kb := _sys_known(lane[1])
+		if ka and kb:
+			draw_line(a, b, lane_col, 1.5)
+		elif ka:
+			draw_line(a, (a + b) * 0.5, lane_col, 1.5)
+		elif kb:
+			draw_line(b, (a + b) * 0.5, lane_col, 1.5)
 	for sys in sim.systems.values():
-		if not _visible(sys.map_pos):
-			continue   # unseen systems are hidden in the dark entirely
-		draw_circle(sys.map_pos, 9.0, Color(1.0, 0.85, 0.35))
-		# Live border contest result: ring in the current owner's color
-		# (cached in the border recompute, not recomputed per frame).
-		var owner: int = _system_owner.get(sys.id, -1)
-		if owner != -1:
-			draw_arc(sys.map_pos, 13.0, 0.0, TAU, 32,
-				sim.empires[owner].color, 2.0)
-		var colony_count := 0
-		for pid in sys.planet_ids:
-			if sim.planets[pid].colony != null:
-				colony_count += 1
-		if colony_count > 0:
-			draw_string(font, sys.map_pos + Vector2(14.0, -12.0),
-				str(colony_count), HORIZONTAL_ALIGNMENT_LEFT, -1, 11,
-				Color(0.35, 1.0, 0.5))
-		draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
-			HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.65))
+		var live := _sys_live(sys.id)
+		if not (live or _sys_known(sys.id)):
+			continue   # never seen -> stays black
+		if live:
+			# Live: bright, current owner ring + current colony count.
+			draw_circle(sys.map_pos, 9.0, Color(1.0, 0.85, 0.35))
+			var owner: int = _system_owner.get(sys.id, -1)
+			if owner != -1:
+				draw_arc(sys.map_pos, 13.0, 0.0, TAU, 32,
+					sim.empires[owner].color, 2.0)
+			var cc := 0
+			for pid in sys.planet_ids:
+				if sim.planets[pid].colony != null:
+					cc += 1
+			if cc > 0:
+				draw_string(font, sys.map_pos + Vector2(14.0, -12.0), str(cc),
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.35, 1.0, 0.5))
+			draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
+				HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.65))
+		else:
+			# Explored but out of VR: grey, with the STALE last-seen snapshot.
+			draw_circle(sys.map_pos, 7.0, Color(0.45, 0.45, 0.5))
+			var snap: Dictionary = _stale.get(sys.id, {})
+			var sowner: int = snap.get("owner", -1)
+			if sowner != -1:
+				var gc: Color = sim.empires[sowner].color
+				gc.a = 0.4
+				draw_arc(sys.map_pos, 13.0, 0.0, TAU, 32, gc, 1.5)
+			var scc: int = snap.get("colonies", 0)
+			if scc > 0:
+				draw_string(font, sys.map_pos + Vector2(14.0, -12.0), str(scc),
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.5, 0.7, 0.55, 0.6))
+			draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
+				HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.35))
 
 
 func _draw_system(sys: StarSystem) -> void:
@@ -556,9 +636,10 @@ func _autoshot() -> void:
 	speed_idx = 0
 	for i in 3000:  # 300 days
 		sim.tick(SimConstants.TICK_DAYS)
-	# Fog stays ON for the galaxy shot so the dark fog + lit explored region show;
-	# the expanded player has a border inside its sight.
-	_sight = sim.sight_sources(player_empire_id)
+		if i % 200 == 0:   # build up the explored/stale memory as territory shifts
+			_recompute_borders()
+	# Fog stays ON for the galaxy shot so the live / gray-explored / black states
+	# and the border inside the player's VR all show.
 	_recompute_borders()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
