@@ -4,6 +4,50 @@ New project, split from To Infinity (2026-07-02). This game is genuinely novel �
 nothing from the old codebase transfers directly, because the old build assumed an
 embodied player and direct entity control, and Reach has neither.
 
+## NEXT MAJOR SYSTEM — border collision / deformation (discussed 2026-07-02)
+
+Current influence is wrong per the user: bubbles just grow and OVERLAP. They must
+instead **collide and deform** — an empire's influence fills free space up to a
+contested border, and where two empires meet the border is *pushed* to the point
+where distance-from-source ratio reflects influence ratio.
+
+Core rule (matches vision's contested formula):
+- Border between source 1 and source 2 sits where **r1/r2 = i1/i2** (r = distance
+  from source to the border point). Equivalently r1/i1 = r2/i2 → each point belongs
+  to the source with the smaller r/i (i.e. the larger claim i/r). This is a
+  multiplicatively-weighted (Apollonius) Voronoi boundary.
+
+Multi-source merge (an empire with several sources pushing one border region):
+- combined influence  i1 = Σ i_k  (sum of contributing sources)
+- combined distance    r1 = Σ(r_k · i_k) / Σ i_k  (influence-weighted mean distance)
+- then use r1/i1 in the ratio rule above.
+
+OPEN QUESTION (user to confirm; proceeding on the first reading meanwhile):
+"if in same system i1=i11+i12" — does "same system" mean (a) the same EMPIRE's set of
+sources merged for a border, regardless of star system [LEANING: yes — the weighted-
+mean r formula is pointless for co-located sources, so it's meant for sources at
+different positions; and this preserves the "spread out within a system" pillar], or
+(b) literally two colonies in the same STAR system now SUM influence [this would
+override the 0.4.0 non-stacking rule and weaken the spread-within pillar]?
+
+PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sample):
+- Represent influence as a scalar field; assign each point to the max-claim empire
+  (per-empire effective (i,r) via the merge rule above, claim = i/r, only among
+  sources whose reach A2·i covers the point; points beyond all reach = neutral).
+  The deformed border is just where the argmax changes (marching-squares for a smooth
+  line, or draw differing cell edges).
+- Start with a coarse CPU grid (cells × empires × sources — cheap); upgrade the
+  per-cell function to a fragment shader if resolution/perf demands. Trivially handles
+  any number of sources/empires.
+- Do NOT trace border curves analytically or integrate: closed-form Apollonius is only
+  clean for two single sources; the merge rule + N empires make the curve arrangement
+  fiddly. Sampling sidesteps all of it.
+- Keep the existing analytic per-system claim (sim.claim_strength/system_owner) for
+  discrete LOGIC queries (who owns system X, can I colonize/mine here) — exact at the
+  system center and cheap. Two representations: analytic for logic, sampled field for
+  the visual border + "is this free-space point mine." Prereq for going bigger than
+  one screen: camera pan/zoom (not built yet).
+
 ## Status — through 0.6.0 (2026-07-02, Godot 4.7)
 
 The economic + spatial foundation is built, tested, and playable. Both core design
