@@ -85,7 +85,7 @@ func _process(delta: float) -> void:
 		while day_accum >= SimConstants.TICK_DAYS:
 			sim.tick(SimConstants.TICK_DAYS)
 			day_accum -= SimConstants.TICK_DAYS
-	_sight = sim.sight_positions(player_empire_id)
+	_sight = sim.sight_sources(player_empire_id)
 	if view_system_id == -1:
 		_border_timer -= delta
 		if _border_timer <= 0.0:
@@ -266,8 +266,8 @@ var _fog_disabled := false   # debug/screenshot only
 func _visible(pos: Vector2) -> bool:
 	if _fog_disabled:
 		return true
-	for src in _sight:
-		if pos.distance_to(src) <= SimConstants.SIGHT_RANGE:
+	for src in _sight:   # each src = [Vector2 pos, float radius]
+		if pos.distance_to(src[0]) <= src[1]:
 			return true
 	return false
 
@@ -326,8 +326,11 @@ func _draw_system(sys: StarSystem) -> void:
 			Color(1, 1, 1, 0.08), 1.0)
 		var pos := _planet_pos(planet)
 		draw_circle(pos, 7.0, Color(0.55, 0.6, 0.7))
-		if planet.has_deposit:
-			draw_circle(pos + Vector2(9.0, -9.0), 3.0, Color(0.4, 0.85, 1.0))
+		if planet.has_deposit():
+			var dep_col := Color(0.4, 0.85, 1.0) \
+				if planet.deposit_type == SimConstants.Deposit.WATER \
+				else Color(0.9, 0.6, 0.35)
+			draw_circle(pos + Vector2(9.0, -9.0), 3.0, dep_col)
 		if planet.has_mine():
 			draw_rect(Rect2(pos + Vector2(-14.0, -14.0), Vector2(6.0, 6.0)),
 				Color(0.95, 0.8, 0.35))
@@ -396,10 +399,10 @@ func _build_ui() -> void:
 	panel_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	colonize_btn = Button.new()
-	colonize_btn.text = "Found colony (%d raw)" % int(SimConstants.FOUND_COST)
+	colonize_btn.text = "Found colony (%d alloys)" % int(SimConstants.FOUND_COST_ALLOYS)
 	colonize_btn.pressed.connect(_on_colonize)
 	mine_btn = Button.new()
-	mine_btn.text = "Build mine (%d raw)" % int(SimConstants.MINE_COST)
+	mine_btn.text = "Build mine (%d alloys)" % int(SimConstants.MINE_COST_ALLOYS)
 	mine_btn.pressed.connect(_on_build_mine)
 	vbox.add_child(panel_title)
 	vbox.add_child(panel_body)
@@ -419,8 +422,8 @@ func _on_build_mine() -> void:
 
 func _refresh_ui() -> void:
 	var player: Empire = sim.empires[player_empire_id]
-	raw_label.text = "Raw: %.0f" % player.raw
-	goods_label.text = "Goods: %.1f" % player.goods
+	raw_label.text = "Water %.0f · Minerals %.0f" % [player.water, player.minerals]
+	goods_label.text = "Food %.0f · Alloys %.0f" % [player.food, player.alloys]
 	day_label.text = "Day %.1f" % sim.day
 	hint_label.text = "Right-drag pan · wheel zoom · click a system" \
 		if view_system_id == -1 else "Esc — back to galaxy"
@@ -432,28 +435,31 @@ func _refresh_ui() -> void:
 	if not panel.visible:
 		return
 	panel_title.text = planet.name
+	var dep_name: String = ["none", "water", "minerals"][planet.deposit_type]
 	var deposit_line := "Deposit: %s%s" % [
-		"yes" if planet.has_deposit else "none",
-		" (mined)" if planet.has_mine() else ""]
+		dep_name, " (mined)" if planet.has_mine() else ""]
 	var influence_note := "" if sim.is_under_influence(planet.system_id,
 		player_empire_id) else "\nOutside your influence."
 	if planet.colony == null:
-		panel_body.text = "Uncolonized. %s%s\n\nFounding a colony costs a flat %d raw, then drains %.1f raw/day until it activates at %d population." \
-			% [deposit_line, influence_note, int(SimConstants.FOUND_COST),
-				SimConstants.COLONY_UPKEEP_BASE, int(SimConstants.ACTIVATION_POP)]
+		panel_body.text = "Uncolonized. %s%s\n\nFounding a colony costs %d alloys. It eats food (a drain) until it grows to %d population and becomes a city that refines resources." \
+			% [deposit_line, influence_note, int(SimConstants.FOUND_COST_ALLOYS),
+				int(SimConstants.ACTIVATION_POP)]
 		colonize_btn.visible = true
 		colonize_btn.disabled = not sim.can_found_colony(player_empire_id, planet.id)
 	else:
 		var c := planet.colony
-		var status := "ESTABLISHED" if c.established \
+		var status := "ESTABLISHED CITY" if c.established \
 			else "growing… %d%% to activation" % int(c.activation_progress() * 100.0)
 		var neighbor_mult := sim.neighbor_growth_multiplier(c)
-		panel_body.text = "Owner: %s\nStatus: %s\nPopulation: %.1f\nUpkeep: %.2f raw/day\nProduction: %.2f goods/day\nNeighbor bonus: +%d%% growth\n%s" \
+		var refine := ""
+		if c.established:
+			refine = "\nRefines ≤%.1f food/day, ≤%.1f alloys/day (if input)" \
+				% [c.food_capacity(), c.alloy_capacity()]
+		panel_body.text = "Owner: %s\nStatus: %s\nPopulation: %.1f\nNeighbor bonus: +%d%% growth%s\n%s" \
 			% [sim.empires[c.empire_id].name, status, c.population,
-				c.upkeep_per_day(), c.production_per_day(),
-				int((neighbor_mult - 1.0) * 100.0), deposit_line]
+				int((neighbor_mult - 1.0) * 100.0), refine, deposit_line]
 		colonize_btn.visible = false
-	mine_btn.visible = planet.has_deposit and not planet.has_mine()
+	mine_btn.visible = planet.has_deposit() and not planet.has_mine()
 	mine_btn.disabled = not sim.can_build_mine(player_empire_id, planet.id)
 
 

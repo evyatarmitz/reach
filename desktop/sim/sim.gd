@@ -53,7 +53,12 @@ static func new_demo() -> Sim:
 				var p := sim.add_planet(sys.id, "%s %s" % [sys.name, numerals[pi]])
 				p.orbit_radius = radii[pi]
 				p.orbit_angle = fmod(0.9 + pi * 1.9 + idx * 1.3, TAU)
-				p.has_deposit = (idx + pi) % 3 == 0
+				# ~1/3 of planets have a deposit; alternate water/mineral so
+				# both T0 types are scattered across the map.
+				if (idx + pi) % 3 == 0:
+					p.deposit_type = SimConstants.Deposit.WATER \
+						if ((idx + pi) / 3) % 2 == 0 \
+						else SimConstants.Deposit.MINERAL
 	# Lanes: grid adjacency (right, down) + a down-right diagonal for chokepoint
 	# variety. Right/down adjacency guarantees a fully connected graph.
 	for row in MAP_ROWS:
@@ -73,14 +78,22 @@ static func new_demo() -> Sim:
 		"%s Compact" % sim.systems[player_home_sys].name, Color(0.35, 0.8, 1.0))
 	var rival := sim.add_empire(
 		"%s Ascendancy" % sim.systems[rival_home_sys].name, Color(1.0, 0.4, 0.35))
-	for sys_id in [player_home_sys, rival_home_sys]:
-		sim.planets[sim.systems[sys_id].planet_ids[0]].has_deposit = true
-	var home := sim.inject_colony(player.id,
+	# Bootstrap each home: a mineral deposit + free mine (alloys) and a water
+	# deposit + free mine (food) so the capital city is self-sustaining from
+	# tick 1 instead of instantly starving.
+	sim.inject_colony(player.id,
 		sim.systems[player_home_sys].planet_ids[0], 150.0, true)
-	home.days_since_established = 60.0
-	var rival_home := sim.inject_colony(rival.id,
+	sim.inject_colony(rival.id,
 		sim.systems[rival_home_sys].planet_ids[0], 150.0, true)
-	rival_home.days_since_established = 60.0
+	for e in [player, rival]:
+		var hsys: int = player_home_sys if e == player else rival_home_sys
+		var pids: Array = sim.systems[hsys].planet_ids
+		var mineral_p: Planet = sim.planets[pids[0]]
+		var water_p: Planet = sim.planets[pids[1]]
+		mineral_p.deposit_type = SimConstants.Deposit.MINERAL
+		mineral_p.mine_empire_id = e.id
+		water_p.deposit_type = SimConstants.Deposit.WATER
+		water_p.mine_empire_id = e.id
 	# Rival plays under the same rules; the border between them is a live
 	# contest, not scripted.
 	sim.add_ai(rival.id)
@@ -281,44 +294,47 @@ func neighbor_growth_multiplier(colony: Colony) -> float:
 
 
 # --- visibility (fog of war) --------------------------------------------------
-# An empire sees within SIGHT_RANGE of any point of presence (a colony or a
-# mine). Separate from influence — you can hold ground you can't see. AI empires
-# are full-info for now; fog is a player-facing concern.
-func sight_positions(empire_id: int) -> Array:
-	var seen := {}   # system_id -> true, so one colony per system isn't counted twice
+# An empire sees within a sight radius of each point of presence. A colony sees
+# SIGHT_INFLUENCE_FACTOR × its influence reach (scales with its strength); a mine
+# has no influence, so it grants a flat SIGHT_MINE_RANGE. Separate from influence
+# — you can hold ground you can't see. AI empires are full-info; fog is
+# player-facing. Returns [ [Vector2 pos, float radius], ... ].
+func sight_sources(empire_id: int) -> Array:
+	var out: Array = []
 	for c in colonies:
 		if c.empire_id == empire_id:
-			seen[planets[c.planet_id].system_id] = true
+			var sys_id: int = planets[c.planet_id].system_id
+			var r := SimConstants.SIGHT_INFLUENCE_FACTOR \
+				* influence_reach(sys_id, empire_id)
+			out.append([systems[sys_id].map_pos, r])
 	for p in planets.values():
 		if p.has_mine() and p.mine_empire_id == empire_id:
-			seen[p.system_id] = true
-	var out: Array = []
-	for sid in seen:
-		out.append(systems[sid].map_pos)
+			out.append([systems[p.system_id].map_pos, SimConstants.SIGHT_MINE_RANGE])
 	return out
 
 
 func is_point_visible(pos: Vector2, empire_id: int) -> bool:
-	for src in sight_positions(empire_id):
-		if pos.distance_to(src) <= SimConstants.SIGHT_RANGE:
+	for src in sight_sources(empire_id):
+		if pos.distance_to(src[0]) <= src[1]:
 			return true
 	return false
 
 
 # --- commands (same gating for every empire) ----------------------------------
+# Construction is paid in alloys (T1 refined from minerals).
 
 func can_found_colony(empire_id: int, planet_id: int) -> bool:
 	var p: Planet = planets.get(planet_id)
 	var e: Empire = empires.get(empire_id)
 	return p != null and e != null and p.colony == null \
-		and e.raw >= SimConstants.FOUND_COST \
+		and e.alloys >= SimConstants.FOUND_COST_ALLOYS \
 		and is_under_influence(p.system_id, empire_id)
 
 
 func found_colony(empire_id: int, planet_id: int) -> bool:
 	if not can_found_colony(empire_id, planet_id):
 		return false
-	empires[empire_id].raw -= SimConstants.FOUND_COST
+	empires[empire_id].alloys -= SimConstants.FOUND_COST_ALLOYS
 	var c := inject_colony(empire_id, planet_id, SimConstants.START_POP, false)
 	return c != null
 
@@ -328,15 +344,15 @@ func can_build_mine(empire_id: int, planet_id: int) -> bool:
 	var e: Empire = empires.get(empire_id)
 	# "Wherever deposits exist within reach" — influence-gated, a colony in the
 	# system is not required.
-	return p != null and e != null and p.has_deposit and not p.has_mine() \
-		and e.raw >= SimConstants.MINE_COST \
+	return p != null and e != null and p.has_deposit() and not p.has_mine() \
+		and e.alloys >= SimConstants.MINE_COST_ALLOYS \
 		and is_under_influence(p.system_id, empire_id)
 
 
 func build_mine(empire_id: int, planet_id: int) -> bool:
 	if not can_build_mine(empire_id, planet_id):
 		return false
-	empires[empire_id].raw -= SimConstants.MINE_COST
+	empires[empire_id].alloys -= SimConstants.MINE_COST_ALLOYS
 	planets[planet_id].mine_empire_id = empire_id
 	return true
 
@@ -348,31 +364,55 @@ func tick(dt_days: float) -> void:
 	# Rival decisions run on their own day-cadence, before the economy advances.
 	for ai in ais:
 		ai.maybe_act(self)
-	# Income first, so a tick's own mining output can feed its upkeep/production.
+
+	# 1. Mines extract their deposit's T0 resource into the empire stockpile.
 	for p in planets.values():
 		if p.has_mine():
-			empires[p.mine_empire_id].raw += SimConstants.MINE_RAW_PER_DAY * dt_days
+			var e: Empire = empires[p.mine_empire_id]
+			if p.deposit_type == SimConstants.Deposit.WATER:
+				e.water += SimConstants.MINE_RATE * dt_days
+			elif p.deposit_type == SimConstants.Deposit.MINERAL:
+				e.minerals += SimConstants.MINE_RATE * dt_days
+
+	# 2. Established cities refine T0 -> T1, capped by available input (partial
+	#    is fine). Earlier colonies draw first — deterministic by colony order.
 	for c in colonies:
+		if not c.established:
+			continue
 		var e: Empire = empires[c.empire_id]
-		# Drain first: growth is throttled by how much of the upkeep was
-		# actually covered, so an empty stockpile stalls colonies instead of
-		# going negative.
-		var need := c.upkeep_per_day() * dt_days
-		var paid: float = minf(need, e.raw)
-		e.raw -= paid
-		var supplied := 1.0 if need <= 0.0 else paid / need
+		var food_made: float = minf(c.food_capacity() * dt_days, e.water)
+		e.water -= food_made
+		e.food += food_made
+		var alloy_made: float = minf(c.alloy_capacity() * dt_days, e.minerals)
+		e.minerals -= alloy_made
+		e.alloys += alloy_made
 
-		c.population += Colony.growth_per_day(c.population) * supplied \
-			* neighbor_growth_multiplier(c) * dt_days
+	# 3. Food is empire-wide: the sign of the end-of-tick balance (food produced
+	#    this tick minus what the whole population eats) sets growth direction.
+	var grow_sign := {}
+	for e in empires.values():
+		var total_pop := 0.0
+		for c in colonies:
+			if c.empire_id == e.id:
+				total_pop += c.population
+		var consumption := total_pop * SimConstants.FOOD_PER_POP * dt_days
+		var balance: float = e.food - consumption
+		if balance > 0.0:
+			e.food = balance
+			grow_sign[e.id] = 1
+		else:
+			e.food = 0.0
+			grow_sign[e.id] = 0 if balance == 0.0 else -1
 
-		if not c.established and c.population >= SimConstants.ACTIVATION_POP:
-			c.established = true
-
-		if c.established:
-			c.days_since_established += dt_days
-			# Production is capped by actual raw input, not by capacity.
-			var raw_wanted := c.production_per_day() * dt_days \
-				* SimConstants.GOODS_RAW_PER_GOOD
-			var raw_used: float = minf(raw_wanted, e.raw)
-			e.raw -= raw_used
-			e.goods += raw_used / SimConstants.GOODS_RAW_PER_GOOD
+	# 4. Apply population change. Surplus -> grow by the diminishing-returns curve
+	#    × neighbor bonus; deficit -> shrink (pops CAN decrease now); zero -> hold.
+	for c in colonies:
+		var sign: int = grow_sign.get(c.empire_id, 0)
+		if sign > 0:
+			c.population += Colony.growth_per_day(c.population) \
+				* neighbor_growth_multiplier(c) * dt_days
+			if not c.established and c.population >= SimConstants.ACTIVATION_POP:
+				c.established = true
+		elif sign < 0:
+			c.population = maxf(SimConstants.MIN_POP,
+				c.population - SimConstants.SHRINK_RATE * c.population * dt_days)

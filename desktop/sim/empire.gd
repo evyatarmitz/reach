@@ -3,9 +3,16 @@ extends RefCounted
 
 # An empire is any population-driving actor — human or AI, same rules, same
 # code paths (multiplayer-shaped by design; no player-only special cases).
+#
+# Four stockpiles: two T0 raw (water, minerals) filled by mines, two T1 goods
+# (food, alloys) refined by established cities. Food drives population; alloys
+# pay for construction.
 
 var id: int = -1
 var name: String = ""
 var color: Color = Color.WHITE
-var raw: float = SimConstants.START_RAW
-var goods: float = 0.0
+
+var water: float = SimConstants.START_WATER
+var minerals: float = SimConstants.START_MINERALS
+var food: float = SimConstants.START_FOOD
+var alloys: float = SimConstants.START_ALLOYS

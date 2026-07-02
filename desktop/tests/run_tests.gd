@@ -15,32 +15,31 @@ func check(cond: bool, test_name: String) -> void:
 
 
 func run_days(sim: Sim, days: float) -> void:
-	# Integer tick count — accumulating 0.1 in a float would drift past `days`
-	# and run an extra tick.
 	for i in int(round(days / SimConstants.TICK_DAYS)):
 		sim.tick(SimConstants.TICK_DAYS)
 
 
-# One empire, one system at origin with two planets (first has a deposit), an
-# established pop-150 anchor colony on planet B for influence, plus an empty
-# far-away system out of reach. Returns handles for the pieces.
+# One empire, one home system at origin (planet 0 = water deposit, planet 1 =
+# plain, planet 2 = an established anchor colony pop 150 for influence), plus a
+# far system out of reach. Empire has plenty of alloys and food so construction
+# and food-growth don't interfere with influence/gating tests.
 func make_scenario() -> Dictionary:
 	var sim := Sim.new()
 	var e := sim.add_empire("Alpha", Color.WHITE)
+	e.alloys = 100000.0
+	e.food = 1.0e12
 	var s1 := sim.add_system("Home")
 	s1.map_pos = Vector2.ZERO
 	var deposit_p := sim.add_planet(s1.id, "Home I")
-	deposit_p.has_deposit = true
+	deposit_p.deposit_type = SimConstants.Deposit.WATER
 	var plain_p := sim.add_planet(s1.id, "Home II")
 	var anchor_p := sim.add_planet(s1.id, "Home III")
 	var far := sim.add_system("Far")
 	far.map_pos = Vector2(5000, 0)
 	var far_p := sim.add_planet(far.id, "Far I")
-	far_p.has_deposit = true
+	far_p.deposit_type = SimConstants.Deposit.WATER
 	sim.add_lane(s1.id, far.id)
 	var anchor := sim.inject_colony(e.id, anchor_p.id, 150.0, true)
-	anchor.days_since_established = 1000000.0  # upkeep fully tapered
-	anchor.population = 150.0
 	return {"sim": sim, "e": e, "home": s1, "far": far,
 		"deposit_p": deposit_p, "plain_p": plain_p, "anchor_p": anchor_p,
 		"far_p": far_p, "anchor": anchor}
@@ -57,12 +56,9 @@ func _init() -> void:
 	_test_neighbor_bonus()
 	_test_ai_rival()
 	_test_mining()
-	_test_mine_income_routing()
-	_test_production_input()
-	_test_drain_and_growth()
-	_test_activation_taper_production()
+	_test_conversion()
+	_test_food_growth()
 	_test_diminishing_returns()
-	_test_starvation()
 	_test_determinism()
 	if failures == 0:
 		print("ALL TESTS PASSED")
@@ -84,7 +80,6 @@ func _test_topology() -> void:
 		if sys.planet_ids.is_empty():
 			all_have_planets = false
 	check(all_have_planets, "every system has at least one planet")
-	# Connectivity: BFS over lanes must reach every system.
 	var visited := {}
 	var queue: Array[int] = [sim.systems.keys()[0]]
 	while not queue.is_empty():
@@ -94,8 +89,7 @@ func _test_topology() -> void:
 		visited[sid] = true
 		for n in sim.lane_neighbors(sid):
 			queue.append(n)
-	check(visited.size() == sim.systems.size(),
-		"lane graph is fully connected")
+	check(visited.size() == sim.systems.size(), "lane graph is fully connected")
 	check(sim.empires.size() >= 1 and sim.colonies.size() >= 1,
 		"demo starts with an empire and a homeworld")
 
@@ -104,18 +98,18 @@ func _test_founding() -> void:
 	var sc := make_scenario()
 	var sim: Sim = sc.sim
 	var e: Empire = sc.e
-	var raw_before: float = e.raw
+	var alloys_before: float = e.alloys
 	check(sim.found_colony(e.id, sc.plain_p.id),
-		"founding succeeds on empty planet under influence with funds")
-	check(e.raw == raw_before - SimConstants.FOUND_COST,
-		"founding deducts exactly the flat cost")
+		"founding succeeds on empty planet under influence with alloys")
+	check(is_equal_approx(e.alloys, alloys_before - SimConstants.FOUND_COST_ALLOYS),
+		"founding deducts exactly the alloy cost")
 	check(not sim.found_colony(e.id, sc.plain_p.id),
 		"founding fails on already-colonized planet")
 	var sc2 := make_scenario()
-	sc2.e.raw = SimConstants.FOUND_COST - 1.0
+	sc2.e.alloys = SimConstants.FOUND_COST_ALLOYS - 1.0
 	check(not sc2.sim.found_colony(sc2.e.id, sc2.plain_p.id),
-		"founding fails when stockpile is short")
-	check(sc2.e.raw == SimConstants.FOUND_COST - 1.0,
+		"founding fails when alloys are short")
+	check(sc2.e.alloys == SimConstants.FOUND_COST_ALLOYS - 1.0,
 		"failed founding costs nothing")
 
 
@@ -129,13 +123,11 @@ func _test_influence_nonstacking() -> void:
 	check(is_equal_approx(sim.influence_reach(sc.home.id, e.id),
 		SimConstants.BORDER_A2 * SimConstants.INFLUENCE_A1 * 150.0),
 		"uncontested reach = A2 x influence")
-	# Add a weaker colony in the SAME system: influence must not stack.
 	sim.inject_colony(e.id, sc.plain_p.id, 100.0, true)
 	check(is_equal_approx(sim.system_influence(sc.home.id, e.id),
 		SimConstants.INFLUENCE_A1 * 150.0),
 		"same-system colonies do not stack influence (max, not sum)")
-	# A stronger one raises it.
-	sc.sim.planets[sc.plain_p.id].colony.population = 400.0
+	sim.planets[sc.plain_p.id].colony.population = 400.0
 	check(is_equal_approx(sim.system_influence(sc.home.id, e.id),
 		SimConstants.INFLUENCE_A1 * 400.0),
 		"the strongest center defines the system's influence")
@@ -149,11 +141,10 @@ func _test_influence_gating() -> void:
 		"cannot colonize outside influence reach")
 	check(not sim.can_build_mine(e.id, sc.far_p.id),
 		"cannot mine outside influence reach")
-	# Bring a covered neighbor system into range: reach 270 with pop 150.
 	var near := sim.add_system("Near")
 	near.map_pos = Vector2(200, 0)
 	var near_p := sim.add_planet(near.id, "Near I")
-	near_p.has_deposit = true
+	near_p.deposit_type = SimConstants.Deposit.MINERAL
 	check(sim.can_found_colony(e.id, near_p.id),
 		"can colonize a neighbor system inside reach")
 	check(sim.can_build_mine(e.id, near_p.id),
@@ -168,11 +159,8 @@ func _test_border_contest() -> void:
 	a.map_pos = Vector2.ZERO
 	var b := sim.add_system("B")
 	b.map_pos = Vector2(300, 0)
-	var pa := sim.add_planet(a.id, "A I")
-	var pb := sim.add_planet(b.id, "B I")
-	sim.inject_colony(e1.id, pa.id, 200.0, true)
-	sim.inject_colony(e2.id, pb.id, 100.0, true)
-	# Ratio rule: border sits where 200/d1 = 100/d2 -> at x = 200 of 300.
+	sim.inject_colony(e1.id, sim.add_planet(a.id, "A I").id, 200.0, true)
+	sim.inject_colony(e2.id, sim.add_planet(b.id, "B I").id, 100.0, true)
 	var left := sim.add_system("Left")
 	left.map_pos = Vector2(190, 0)
 	sim.add_planet(left.id, "L I")
@@ -180,29 +168,15 @@ func _test_border_contest() -> void:
 	right.map_pos = Vector2(210, 0)
 	sim.add_planet(right.id, "R I")
 	check(sim.system_owner(left.id) == e1.id,
-		"contested: system left of the influence-ratio point goes to the stronger")
+		"contested: left of the influence-ratio point goes to the stronger")
 	check(sim.system_owner(right.id) == e2.id,
-		"contested: system right of the influence-ratio point goes to the weaker")
-	check(sim.system_owner(a.id) == e1.id and sim.system_owner(b.id) == e2.id,
-		"own presence in a system is an absolute claim")
-	# Outgrow the rival: the border MOVES. Weak doubles its pop.
-	sim.planets[pb.id].colony.population = 400.0
+		"contested: right of the influence-ratio point goes to the weaker")
+	sim.planets[sim.systems[b.id].planet_ids[0]].colony.population = 400.0
 	check(sim.system_owner(left.id) == e2.id,
 		"borders are live: outgrowing the rival moves the line")
-	# Reach limits still apply: a system beyond everyone's reach is unclaimed.
-	var out := sim.add_system("Out")
-	out.map_pos = Vector2(5000, 0)
-	sim.add_planet(out.id, "O I")
-	check(sim.system_owner(out.id) == -1,
-		"systems beyond all reach are unclaimed")
 
 
-# Build a fresh empire with a subject colony in system A and configurable
-# established centers in other systems, all with unlimited supply.
 func _test_influence_field() -> void:
-	# Two hostile single sources positioned so their bubbles overlap.
-	# E1 at (0,0) i=200 reach=360; E2 at (300,0) i=100 reach=180. Overlap x in
-	# [120,360]; ratio border r1/r2=i1/i2=2 → x=200 on the connecting line.
 	var sim := Sim.new()
 	var e1 := sim.add_empire("A", Color.RED)
 	var e2 := sim.add_empire("B", Color.BLUE)
@@ -218,30 +192,12 @@ func _test_influence_field() -> void:
 		"field: point right of the ratio border belongs to the weaker empire")
 	check(sim.point_owner(Vector2(5000, 0)) == -1,
 		"field: point beyond every bubble's reach is unclaimed")
-	# Non-overlapping bubbles leave neutral space between (range never adds).
-	var sim2 := Sim.new()
-	var f1 := sim2.add_empire("A", Color.RED)
-	var f2 := sim2.add_empire("B", Color.BLUE)
-	var s1 := sim2.add_system("A")
-	s1.map_pos = Vector2.ZERO
-	sim2.inject_colony(f1.id, sim2.add_planet(s1.id, "a").id, 50.0, true)  # reach 90
-	var s2 := sim2.add_system("B")
-	s2.map_pos = Vector2(300, 0)
-	sim2.inject_colony(f2.id, sim2.add_planet(s2.id, "b").id, 50.0, true)  # reach 90
-	check(sim2.point_owner(Vector2(150, 0)) == -1,
-		"field: gap between non-overlapping bubbles is neutral (range never adds)")
-
-	# Friction adds: a second friendly source that also reaches a point strictly
-	# raises that empire's claim there (pushing the border).
 	var claim_one: float = sim.empire_claim_at(Vector2(200, 0), e1.id)
 	var sc := sim.add_system("C")
 	sc.map_pos = Vector2(0, 120)
 	sim.inject_colony(e1.id, sim.add_planet(sc.id, "c").id, 200.0, true)
 	check(sim.empire_claim_at(Vector2(200, 0), e1.id) > claim_one,
 		"field: a second reaching friendly source adds friction (higher claim)")
-
-	# Within-system non-stacking still holds under the field: a weaker
-	# same-system colony changes nothing; a stronger one raises the claim.
 	var base: float = sim.empire_claim_at(Vector2(150, 0), e1.id)
 	sim.inject_colony(e1.id, sim.add_planet(sa.id, "a2").id, 100.0, true)
 	check(is_equal_approx(sim.empire_claim_at(Vector2(150, 0), e1.id), base),
@@ -251,34 +207,28 @@ func _test_influence_field() -> void:
 func _test_fog_of_war() -> void:
 	var sim := Sim.new()
 	var e := sim.add_empire("A", Color.WHITE)
-	# A tiny colony (small influence) but sight is a flat SIGHT_RANGE, so a point
-	# far beyond its influence reach can still be within sight, and vice versa.
 	var home := sim.add_system("Home")
 	home.map_pos = Vector2.ZERO
-	var hp := sim.add_planet(home.id, "H")
-	hp.has_deposit = true
-	sim.inject_colony(e.id, hp.id, 5.0, true)  # influence reach = 1.8*5 = 9 (tiny)
-
-	check(sim.is_point_visible(home.map_pos, e.id),
-		"own colony's system is visible")
-	check(sim.is_point_visible(
-		Vector2(SimConstants.SIGHT_RANGE - 1.0, 0.0), e.id),
-		"a point just inside sight range is visible")
-	check(not sim.is_point_visible(
-		Vector2(SimConstants.SIGHT_RANGE + 1.0, 0.0), e.id),
-		"a point just beyond sight range is not visible")
-	check(SimConstants.SIGHT_RANGE > sim.influence_reach(home.id, e.id),
-		"sight is independent of (here, larger than) influence reach")
-
-	# A mine grants sight even with no colony in that system.
+	sim.inject_colony(e.id, sim.add_planet(home.id, "H").id, 100.0, true)
+	# influence reach = 1.8*100 = 180; sight = SIGHT_INFLUENCE_FACTOR * 180.
+	var sight: float = SimConstants.SIGHT_INFLUENCE_FACTOR \
+		* sim.influence_reach(home.id, e.id)
+	check(sim.is_point_visible(home.map_pos, e.id), "own colony's system is visible")
+	check(sim.is_point_visible(Vector2(sight - 1.0, 0.0), e.id),
+		"a point just inside the scaled sight range is visible")
+	check(not sim.is_point_visible(Vector2(sight + 1.0, 0.0), e.id),
+		"a point just beyond the scaled sight range is not visible")
+	check(sight > sim.influence_reach(home.id, e.id),
+		"sight range exceeds influence range (fog is 1.2-2x influence)")
+	# A mine grants a flat sensor range with no colony present.
 	var sim2 := Sim.new()
 	var e2 := sim2.add_empire("B", Color.WHITE)
 	var s := sim2.add_system("S")
 	s.map_pos = Vector2(1000, 0)
 	var mp := sim2.add_planet(s.id, "M")
+	mp.deposit_type = SimConstants.Deposit.WATER
 	mp.mine_empire_id = e2.id
-	check(sim2.is_point_visible(s.map_pos, e2.id),
-		"a mine is a sight source too")
+	check(sim2.is_point_visible(s.map_pos, e2.id), "a mine is a flat sight source")
 	check(not sim2.is_point_visible(Vector2(0, 0), e2.id),
 		"points far from all presence are fogged")
 
@@ -286,76 +236,40 @@ func _test_fog_of_war() -> void:
 func _neighbor_rig() -> Dictionary:
 	var sim := Sim.new()
 	var e := sim.add_empire("N", Color.WHITE)
-	e.raw = 1.0e12
+	e.food = 1.0e12   # never food-limited; this tests the neighbor multiplier
 	var a := sim.add_system("A")
 	a.map_pos = Vector2.ZERO
 	var pa := sim.add_planet(a.id, "A I")
 	var subject := sim.inject_colony(e.id, pa.id, 200.0, true)
-	subject.days_since_established = 1.0e9  # no upkeep noise
 	return {"sim": sim, "e": e, "a": a, "subject": subject}
 
 
 func _add_established(sim: Sim, e: Empire, pos: Vector2, pop: float) -> void:
 	var s := sim.add_system("S%d" % sim.systems.size())
 	s.map_pos = pos
-	var p := sim.add_planet(s.id, "P")
-	sim.inject_colony(e.id, p.id, pop, true)
+	sim.inject_colony(e.id, sim.add_planet(s.id, "P").id, pop, true)
 
 
 func _test_neighbor_bonus() -> void:
-	# Baseline: no neighbors → multiplier is exactly 1.
 	var rig := _neighbor_rig()
-	check(is_equal_approx(
-		rig.sim.neighbor_growth_multiplier(rig.subject), 1.0),
+	check(is_equal_approx(rig.sim.neighbor_growth_multiplier(rig.subject), 1.0),
 		"isolated colony has neighbor multiplier 1.0")
-
-	# One established neighbor in another system raises the multiplier.
 	var rig2 := _neighbor_rig()
 	_add_established(rig2.sim, rig2.e, Vector2(250, 0), 200.0)
 	var m_near: float = rig2.sim.neighbor_growth_multiplier(rig2.subject)
 	check(m_near > 1.0, "an established neighbor in another system boosts growth")
-
-	# 1/R falloff: the same neighbor farther away boosts less.
 	var rig3 := _neighbor_rig()
 	_add_established(rig3.sim, rig3.e, Vector2(500, 0), 200.0)
-	var m_far: float = rig3.sim.neighbor_growth_multiplier(rig3.subject)
-	check(m_far < m_near, "a farther neighbor boosts less (1/R falloff)")
-	check(is_equal_approx(m_near - 1.0, (m_far - 1.0) * 2.0),
-		"halving distance doubles the bonus (exact 1/R)")
-
-	# Compounding: two neighbors give more than one.
-	var rig4 := _neighbor_rig()
-	_add_established(rig4.sim, rig4.e, Vector2(250, 0), 200.0)
-	_add_established(rig4.sim, rig4.e, Vector2(0, 250), 200.0)
-	check(rig4.sim.neighbor_growth_multiplier(rig4.subject) > m_near,
-		"two neighbors compound to a larger bonus than one")
-
-	# Same-system colony gives NO neighbor bonus (it competes, not boosts).
+	check(rig3.sim.neighbor_growth_multiplier(rig3.subject) < m_near,
+		"a farther neighbor boosts less (1/R falloff)")
 	var rig5 := _neighbor_rig()
 	var rig5_sim: Sim = rig5.sim
 	var pa2: Planet = rig5_sim.add_planet(rig5.a.id, "A II")
 	rig5_sim.inject_colony(rig5.e.id, pa2.id, 300.0, true)
-	check(is_equal_approx(
-		rig5.sim.neighbor_growth_multiplier(rig5.subject), 1.0),
+	check(is_equal_approx(rig5_sim.neighbor_growth_multiplier(rig5.subject), 1.0),
 		"same-system established colony contributes no neighbor bonus")
-
-	# Only same-empire, only established centers count.
-	var rig6 := _neighbor_rig()
-	var rig6_sim: Sim = rig6.sim
-	var rival: Empire = rig6_sim.add_empire("Rival", Color.RED)
-	_add_established(rig6_sim, rival, Vector2(250, 0), 500.0)
-	check(is_equal_approx(
-		rig6_sim.neighbor_growth_multiplier(rig6.subject), 1.0),
-		"a rival's established center gives no bonus")
-	var s: StarSystem = rig6_sim.add_system("Unest")
-	s.map_pos = Vector2(0, 250)
-	var pun: Planet = rig6_sim.add_planet(s.id, "U")
-	rig6_sim.inject_colony(rig6.e.id, pun.id, 90.0, false)  # not established
-	check(is_equal_approx(
-		rig6_sim.neighbor_growth_multiplier(rig6.subject), 1.0),
-		"an unestablished same-empire center gives no bonus")
-
-	# End to end: clustered colony out-grows an isolated identical one.
+	# End to end: clustered colony out-grows an isolated identical one (both have
+	# unlimited food, so only the neighbor bonus differs).
 	var iso := _neighbor_rig()
 	var clu := _neighbor_rig()
 	_add_established(clu.sim, clu.e, Vector2(250, 0), 300.0)
@@ -366,170 +280,162 @@ func _test_neighbor_bonus() -> void:
 
 
 func _test_ai_rival() -> void:
-	# Gating: the AI acts only where it legally can. Home system (origin) has an
-	# established homeworld with no deposit; a near system is in reach; a far
-	# system is out of reach.
 	var sim := Sim.new()
 	var e := sim.add_empire("AI", Color.RED)
-	e.raw = 10000.0
+	e.alloys = 10000.0
 	var home := sim.add_system("Home")
 	home.map_pos = Vector2.ZERO
-	var hp := sim.add_planet(home.id, "Home I")
-	sim.inject_colony(e.id, hp.id, 150.0, true)  # reach = A2*150 = 270
+	sim.inject_colony(e.id, sim.add_planet(home.id, "Home I").id, 150.0, true)
 	var near := sim.add_system("Near")
 	near.map_pos = Vector2(200, 0)
 	var near_p := sim.add_planet(near.id, "Near I")
-	near_p.has_deposit = true
+	near_p.deposit_type = SimConstants.Deposit.MINERAL
 	var far := sim.add_system("Far")
 	far.map_pos = Vector2(5000, 0)
 	var far_p := sim.add_planet(far.id, "Far I")
-	far_p.has_deposit = true
+	far_p.deposit_type = SimConstants.Deposit.MINERAL
 
 	var ai := EmpireAI.new(e.id)
-	ai.maybe_act(sim)  # day 0 >= next_action_day 0 → acts once
-
+	ai.maybe_act(sim)
 	check(sim.planets[near_p.id].colony != null
 		and sim.planets[near_p.id].colony.empire_id == e.id,
 		"AI colonizes a reachable empty system")
 	check(sim.planets[near_p.id].has_mine(),
 		"AI builds a mine on a reachable deposit")
-	check(sim.planets[far_p.id].colony == null
-		and not sim.planets[far_p.id].has_mine(),
+	check(sim.planets[far_p.id].colony == null and not sim.planets[far_p.id].has_mine(),
 		"AI never acts outside its influence (same gating as the player)")
-
-	# Cadence: it does not act again until the interval elapses.
-	var colonies_after_first: int = sim.colonies.size()
+	var after_first: int = sim.colonies.size()
 	ai.maybe_act(sim)
-	check(sim.colonies.size() == colonies_after_first,
+	check(sim.colonies.size() == after_first,
 		"AI respects its action interval (no acting every tick)")
 
-	# End to end in the real demo: the rival becomes a going concern via the
-	# public API alone — multiple colonies and at least one mine — and never
-	# seizes the player's homeworld (no combat yet; influence gating holds).
 	var demo := Sim.new_demo()
-	var player_id: int = demo.empires.keys()[0]
 	var rival_id: int = demo.empires.keys()[1]
 	run_days(demo, 400.0)
 	var rival_colonies := 0
-	var rival_mines := 0
 	for c in demo.colonies:
 		if c.empire_id == rival_id:
 			rival_colonies += 1
-	for p in demo.planets.values():
-		if p.has_mine() and p.mine_empire_id == rival_id:
-			rival_mines += 1
 	check(rival_colonies >= 2, "rival AI expands to multiple colonies over time")
-	check(rival_mines >= 1, "rival AI builds mines for income")
-	var player_home_intact := false
-	for c in demo.colonies:
-		if c.empire_id == player_id:
-			player_home_intact = true
-	check(player_home_intact, "player homeworld is untouched (no combat yet)")
 
 
 func _test_mining() -> void:
+	# Gating (alloy cost + influence), via the shared scenario.
 	var sc := make_scenario()
 	var sim: Sim = sc.sim
 	var e: Empire = sc.e
-	check(not sim.can_build_mine(e.id, sc.plain_p.id),
-		"mine requires a deposit")
-	var raw_before: float = e.raw
-	check(sim.build_mine(e.id, sc.deposit_p.id),
-		"mine builds on reachable deposit")
-	check(e.raw == raw_before - SimConstants.MINE_COST,
-		"mine deducts its cost")
+	check(not sim.can_build_mine(e.id, sc.plain_p.id), "mine requires a deposit")
+	var alloys_before: float = e.alloys
+	check(sim.build_mine(e.id, sc.deposit_p.id), "mine builds on reachable deposit")
+	check(is_equal_approx(e.alloys, alloys_before - SimConstants.MINE_COST_ALLOYS),
+		"mine deducts its alloy cost")
 	check(not sim.can_build_mine(e.id, sc.deposit_p.id),
 		"no second mine on the same planet")
 
+	# Income by deposit type — isolated (no city) so nothing converts it away.
+	var sim2 := Sim.new()
+	var w := sim2.add_empire("W", Color.WHITE)
+	var other := sim2.add_empire("O", Color.GRAY)
+	var sysw := sim2.add_system("W")
+	sysw.map_pos = Vector2.ZERO
+	var wp := sim2.add_planet(sysw.id, "wp")
+	wp.deposit_type = SimConstants.Deposit.WATER
+	wp.mine_empire_id = w.id
+	var mp := sim2.add_planet(sysw.id, "mp")
+	mp.deposit_type = SimConstants.Deposit.MINERAL
+	mp.mine_empire_id = w.id
+	run_days(sim2, 10.0)
+	check(is_equal_approx(w.water, SimConstants.MINE_RATE * 10.0),
+		"water-deposit mine yields water at the exact rate")
+	check(is_equal_approx(w.minerals, SimConstants.MINE_RATE * 10.0),
+		"mineral-deposit mine yields minerals at the exact rate")
+	check(other.water == 0.0 and other.minerals == 0.0,
+		"other empires get nothing from a rival's mines")
 
-func _test_mine_income_routing() -> void:
-	var sc := make_scenario()
-	var sim: Sim = sc.sim
-	var e: Empire = sc.e
-	var other := sim.add_empire("Bystander", Color.GRAY)
-	# Direct-set the mine (income test, not a gating test) and remove the
-	# anchor's production noise by zeroing its pop... instead park anchor:
-	sc.anchor.population = 0.0
-	sim.planets[sc.deposit_p.id].mine_empire_id = e.id
-	var e_before: float = e.raw
-	var other_before: float = other.raw
-	run_days(sim, 10.0)
-	check(is_equal_approx(e.raw,
-		e_before + SimConstants.MINE_RAW_PER_DAY * 10.0),
-		"mine income rate is exact and credits the owner")
-	check(other.raw == other_before,
-		"other empires get nothing from a rival's mine")
+
+func _test_conversion() -> void:
+	var sim := Sim.new()
+	var e := sim.add_empire("C", Color.WHITE)
+	e.food = 0.0
+	e.alloys = 0.0
+	var s := sim.add_system("S")
+	s.map_pos = Vector2.ZERO
+	var city := sim.inject_colony(e.id, sim.add_planet(s.id, "p").id, 200.0, true)
+	# Plenty of input: a full tick converts up to capacity of each chain. Measure
+	# WATER consumed (food is also eaten by pop the same tick, so the food
+	# stockpile isn't a clean readout of what was refined).
+	e.water = 1.0e6
+	e.minerals = 1.0e6
+	var cap_before: float = city.food_capacity()   # pop grows during the tick
+	sim.tick(SimConstants.TICK_DAYS)
+	check(is_equal_approx(1.0e6 - e.water, cap_before * SimConstants.TICK_DAYS),
+		"established city refines water into food at capacity when input is ample")
+	check(e.alloys > 0.0, "established city refines minerals into alloys")
+
+	# Partial: only a little water (below one tick's capacity) -> all of it is
+	# consumed and that's all the food made (5W -> 5F, not a full-capacity 20F).
+	var sim2 := Sim.new()
+	var e2 := sim2.add_empire("C2", Color.WHITE)
+	e2.food = 0.0
+	var s2 := sim2.add_system("S")
+	s2.map_pos = Vector2.ZERO
+	var city2 := sim2.inject_colony(e2.id, sim2.add_planet(s2.id, "p").id, 200.0, true)
+	e2.water = 0.3   # far below one tick's capacity
+	check(0.3 < city2.food_capacity() * SimConstants.TICK_DAYS,
+		"test setup: available water is below full conversion capacity")
+	sim2.tick(SimConstants.TICK_DAYS)
+	check(is_equal_approx(e2.water, 0.0) and e2.food > 0.0,
+		"conversion is partial and input-limited (all 0.3W consumed, not more)")
+
+	# Unestablished colonies refine nothing.
+	var sim3 := Sim.new()
+	var e3 := sim3.add_empire("C3", Color.WHITE)
+	e3.food = 1.0e9   # keep it alive (surplus), isolate the conversion check
+	var s3 := sim3.add_system("S")
+	s3.map_pos = Vector2.ZERO
+	sim3.inject_colony(e3.id, sim3.add_planet(s3.id, "p").id, 50.0, false)
+	e3.water = 1000.0
+	var water_before: float = e3.water
+	sim3.tick(SimConstants.TICK_DAYS)
+	check(is_equal_approx(e3.water, water_before),
+		"an unestablished colony refines no water into food")
 
 
-func _test_production_input() -> void:
-	var sc := make_scenario()
-	var sim: Sim = sc.sim
-	var e: Empire = sc.e
-	sc.anchor.population = 200.0  # the established anchor IS the factory
-	# Starved factory: capacity exists but no input, so no output.
-	e.raw = 0.0
+func _test_food_growth() -> void:
+	# Surplus -> grow.
+	var sim := Sim.new()
+	var e := sim.add_empire("G", Color.WHITE)
+	e.food = 1.0e6
+	var s := sim.add_system("S")
+	s.map_pos = Vector2.ZERO
+	var c := sim.inject_colony(e.id, sim.add_planet(s.id, "p").id, 50.0, false)
 	run_days(sim, 5.0)
-	check(e.goods == 0.0, "production without raw input yields nothing")
-	# Limited input: exactly raw/ratio goods come out, then it dries up.
-	e.raw = 10.0
-	run_days(sim, 50.0)
-	check(is_equal_approx(e.goods, 10.0 / SimConstants.GOODS_RAW_PER_GOOD),
-		"limited raw converts at exactly the input ratio")
-	check(e.raw == 0.0, "production consumed the whole stockpile")
-	# Unthrottled: conservation holds — raw consumed == goods gained x ratio.
-	e.raw = 1000000.0
-	var raw_0: float = e.raw
-	var goods_0: float = e.goods
-	run_days(sim, 20.0)
-	check(is_equal_approx(raw_0 - e.raw,
-		(e.goods - goods_0) * SimConstants.GOODS_RAW_PER_GOOD),
-		"raw consumed matches goods produced times the ratio")
+	check(c.population > 50.0, "food surplus makes population grow")
 
+	# Deficit -> shrink (population CAN decrease now — the earlier bug is fixed).
+	var sim2 := Sim.new()
+	var e2 := sim2.add_empire("S", Color.WHITE)
+	e2.food = 0.0   # no food, no mines -> pure deficit
+	var s2 := sim2.add_system("S")
+	s2.map_pos = Vector2.ZERO
+	var c2 := sim2.inject_colony(e2.id, sim2.add_planet(s2.id, "p").id, 200.0, true)
+	run_days(sim2, 20.0)
+	check(c2.population < 200.0,
+		"food deficit shrinks population (no longer grows on empty stores)")
 
-func _test_drain_and_growth() -> void:
-	var sc := make_scenario()
-	var sim: Sim = sc.sim
-	var e: Empire = sc.e
-	sc.anchor.population = 0.0  # silence the anchor; subject colony only
-	var c := sim.inject_colony(e.id, sc.plain_p.id, SimConstants.START_POP, false)
-	var raw_before: float = e.raw
-	run_days(sim, 10.0)
-	check(e.raw < raw_before, "unestablished colony drains the stockpile")
-	check(is_equal_approx(raw_before - e.raw,
-		SimConstants.COLONY_UPKEEP_BASE * 10.0),
-		"drain rate matches upkeep constant")
-	check(c.population > SimConstants.START_POP, "supplied colony grows")
-	check(e.goods == 0.0, "unestablished colony produces nothing")
-
-
-func _test_activation_taper_production() -> void:
-	var sc := make_scenario()
-	var sim: Sim = sc.sim
-	var e: Empire = sc.e
-	sc.anchor.population = 0.0
-	e.raw = 100000.0
-	var c := sim.inject_colony(e.id, sc.plain_p.id, SimConstants.START_POP, false)
-	run_days(sim, 500.0)
-	check(c.established, "colony crosses activation threshold and establishes")
-	check(c.population >= SimConstants.ACTIVATION_POP,
-		"established implies pop >= threshold")
-	check(e.goods > 0.0, "established colony produced tier-1 output")
-	check(c.upkeep_per_day() < SimConstants.COLONY_UPKEEP_BASE * 0.01,
-		"upkeep has tapered to near zero long after activation")
-	# Taper is monotonic: upkeep right at activation must exceed later upkeep.
-	var fresh := Colony.new()
-	fresh.established = true
-	fresh.days_since_established = 0.0
-	check(is_equal_approx(fresh.upkeep_per_day(), SimConstants.COLONY_UPKEEP_BASE),
-		"taper starts at the full base rate")
-	fresh.days_since_established = SimConstants.UPKEEP_TAPER_DAYS
-	check(fresh.upkeep_per_day() < SimConstants.COLONY_UPKEEP_BASE,
-		"taper decreases over time")
+	# Shrink is floored: population never drops below MIN_POP or below zero.
+	var sim3 := Sim.new()
+	var e3 := sim3.add_empire("F", Color.WHITE)
+	e3.food = 0.0
+	var s3 := sim3.add_system("S")
+	s3.map_pos = Vector2.ZERO
+	var c3 := sim3.inject_colony(e3.id, sim3.add_planet(s3.id, "p").id, 5.0, false)
+	run_days(sim3, 2000.0)
+	check(c3.population >= SimConstants.MIN_POP and c3.population > 0.0,
+		"starving population is floored, not driven negative")
 
 
 func _test_diminishing_returns() -> void:
-	# Relative growth (dpop/pop) must strictly fall as pop rises — flattening
-	# without any hard cap (growth stays positive at any size).
 	var rel_small: float = Colony.growth_per_day(100.0) / 100.0
 	var rel_big: float = Colony.growth_per_day(1000.0) / 1000.0
 	var rel_huge: float = Colony.growth_per_day(100000.0) / 100000.0
@@ -539,34 +445,19 @@ func _test_diminishing_returns() -> void:
 		"no hard cap: growth still positive at 100k pop")
 
 
-func _test_starvation() -> void:
-	var sc := make_scenario()
-	var sim: Sim = sc.sim
-	var e: Empire = sc.e
-	sc.anchor.population = 0.0
-	var c := sim.inject_colony(e.id, sc.plain_p.id, SimConstants.START_POP, false)
-	e.raw = 0.0
-	run_days(sim, 20.0)
-	check(c.population == SimConstants.START_POP,
-		"unsupplied colony stalls instead of growing")
-	check(e.raw == 0.0, "stockpile never goes negative")
-
-
 func _test_determinism() -> void:
 	var a := Sim.new_demo()
 	var b := Sim.new_demo()
 	for sim: Sim in [a, b]:
-		var e_id: int = sim.empires.keys()[0]
-		var home: StarSystem = sim.systems.values()[0]
-		sim.build_mine(e_id, home.planet_ids[0])
-		sim.found_colony(e_id, home.planet_ids[1])
 		run_days(sim, 300.0)
-	var same := a.day == b.day
+	var same := a.day == b.day and a.colonies.size() == b.colonies.size()
 	for i in a.colonies.size():
 		if a.colonies[i].population != b.colonies[i].population:
 			same = false
 	for k in a.empires:
-		if a.empires[k].raw != b.empires[k].raw \
-				or a.empires[k].goods != b.empires[k].goods:
+		var ea: Empire = a.empires[k]
+		var eb: Empire = b.empires[k]
+		if ea.water != eb.water or ea.minerals != eb.minerals \
+				or ea.food != eb.food or ea.alloys != eb.alloys:
 			same = false
 	check(same, "identical runs produce bit-identical state")

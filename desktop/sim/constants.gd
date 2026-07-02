@@ -3,70 +3,79 @@ extends RefCounted
 
 # Every value here is a "tune until it feels right" placeholder (see CLAUDE.md,
 # "A note on numbers"). The SHAPES they parameterize — uncapped-but-self-limiting
-# growth, drain-that-tapers activation — are the design and must be preserved.
+# growth, food-balance-driven population, throughput-limited production — are the
+# design and must be preserved.
+
+# Deposit / T0 resource type. Same mine structure extracts whichever a deposit
+# holds. Water -> Food (grows population); Minerals -> Alloys (builds things).
+enum Deposit { NONE, WATER, MINERAL }
 
 # One sim tick advances this many in-game days. Fixed tick size keeps the sim
 # deterministic; the speed dial changes how many ticks run per real second.
 const TICK_DAYS := 0.1
 
-# National stockpile at game start (tier-0 "raw").
-const START_RAW := 500.0
+# Starting empire stockpiles. A buffer of food + alloys so the opening isn't
+# instant starvation; the homeworld also starts with free mines (see new_demo).
+const START_FOOD := 1500.0
+const START_ALLOYS := 400.0
+const START_WATER := 0.0
+const START_MINERALS := 0.0
 
-# Colony founding: flat, repeatable cost (vision.md).
-const FOUND_COST := 100.0
 const START_POP := 10.0
 
-# Unestablished colonies drain this much raw per day; after activation the same
-# base decays exponentially with this half-life-ish taper (drain-that-tapers).
-const COLONY_UPKEEP_BASE := 2.0
-const UPKEEP_TAPER_DAYS := 30.0
+# Construction is paid in alloys (a T1 good refined from minerals).
+const FOUND_COST_ALLOYS := 100.0
+const MINE_COST_ALLOYS := 50.0
 
-# A colony activates (established, starts producing) at this population.
+# A colony activates (becomes an established city, starts converting) at this pop.
 const ACTIVATION_POP := 100.0
 
-# Growth: dpop/day = GROWTH_RATE * pop / (1 + (pop/GROWTH_SOFTCAP)^GROWTH_EXP),
-# times the neighbor multiplier below. Never a hard cap — growth only
-# asymptotically flattens; the neighbor bonus is the designed way past the wall.
-# GROWTH_RATE lowered again (0.08 -> 0.04 -> 0.02) to slow population — and
-# therefore influence (= A1*pop) — expansion further; still tune-to-taste, and
-# the speed dial covers the boring stretches.
+# Growth curve (unchanged shape): dpop/day = RATE*pop/(1+(pop/SOFTCAP)^EXP), times
+# the neighbor multiplier — but only applied when the empire has a food surplus.
+# Never a hard cap; the ceiling emerges from food throughput + diminishing returns.
 const GROWTH_RATE := 0.02
 const GROWTH_SOFTCAP := 500.0
 const GROWTH_EXP := 2.0
+# Population decline per day while the empire is in food deficit, floored so a
+# colony persists (can regrow) rather than vanishing.
+const SHRINK_RATE := 0.03
+const MIN_POP := 1.0
 
-# Neighbor bonus: an established center boosts a same-empire colony in a
-# DIFFERENT system by NEIGHBOR_COEF * neighbor_pop / R (R = system distance),
-# summed over all such neighbors. Same-system colonies contribute nothing —
-# within a system they compete for influence instead. This is the "cluster
-# across systems" half of the core tension; the sum compounds as the whole
-# cluster grows. Transportation infrastructure (later) will scale this.
+# Neighbor bonus: an established center boosts a same-empire colony in a DIFFERENT
+# system by NEIGHBOR_COEF * neighbor_pop / R (system distance), summed. Same-system
+# gives nothing (they compete for influence instead). The "cluster across systems"
+# half of the core tension.
 const NEIGHBOR_COEF := 0.5
 
-# Mining: the only raw income. A mine sits on a deposit planet within reach.
-const MINE_COST := 50.0
-const MINE_RAW_PER_DAY := 5.0
+# Mining: one structure, extracts MINE_RATE/day of the deposit's T0 resource.
+const MINE_RATE := 5.0
 
 # How often an AI empire re-evaluates (sim days). Gradual, deterministic; not
-# tied to framerate or the speed dial (which only change ticks per real second).
+# tied to framerate or the speed dial.
 const AI_ACTION_INTERVAL_DAYS := 8.0
 
-# Tier-1 production of an established colony: goods/day = PROD_COEF * pop^PROD_EXP,
-# but every good consumes GOODS_RAW_PER_GOOD raw — production is throughput-limited
-# by real resource input (anti-snowball pillar), never by theoretical maximums.
-const PROD_COEF := 0.05
-const PROD_EXP := 0.8
-const GOODS_RAW_PER_GOOD := 2.0
+# Established-city conversion: capacity/day = COEF * pop^EXP for each chain
+# (water->food, minerals->alloys). Actual output is capped by the available T0
+# input — partial is fine (20W wanted but only 5W left -> 5F made). As pop rises,
+# capacity grows sublinearly while food demand grows linearly, so a food ceiling
+# emerges on its own.
+const CONV_EXP := 0.8
+const FOOD_CONV_COEF := 0.05
+const ALLOY_CONV_COEF := 0.05
 
-# Fog of war: how far an empire SEES around each point of presence (colony or
-# mine). Deliberately separate from — and smaller than — influence reach, so you
-# can hold influence over ground you can't currently see. The observation post
-# (later) will extend this. ~1.5 system spacings: you see immediate neighbours,
-# not the far map.
-const SIGHT_RANGE := 320.0
+# Food demand: each pop eats this per day. The sign of the empire's end-of-tick
+# food balance decides population direction: surplus -> grow, exactly zero ->
+# steady, deficit -> shrink.
+const FOOD_PER_POP := 0.01
 
-# Influence (vision.md core formulas): influence = A1 * pop_count; a system's
-# uncontested reach = A2 * influence; contested borders sit at the
-# influence-ratio point (claim = influence / distance, strongest claim wins).
-# A2 tuned so a pop-150 homeworld (reach 270) just covers its ~245-260 neighbors.
+# Fog of war: an empire sees this multiple of a colony's influence reach around
+# it (1.2-2x; separate from influence itself). Mines have no influence, so they
+# grant a small flat sensor range instead.
+const SIGHT_INFLUENCE_FACTOR := 1.5
+const SIGHT_MINE_RANGE := 260.0
+
+# Influence (vision.md core formulas): influence = A1 * pop of the strongest
+# center in a system (non-stacking); uncontested reach = A2 * influence;
+# contested border sits where influence1/influence2 = r1/r2.
 const INFLUENCE_A1 := 1.0
 const BORDER_A2 := 1.8
