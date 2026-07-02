@@ -23,7 +23,7 @@ const ZOOM_MAX := 2.5
 # for a frontier cell — drawn as a dot at the cell's own centre so each empire's
 # edge sits inside its territory and hostile seams show BOTH colours.
 const BORDER_CELL := 14.0
-const BORDER_REFRESH := 0.3
+const BORDER_REFRESH := 0.4
 
 var cam: Camera2D
 var _panning := false
@@ -31,8 +31,9 @@ var _galaxy_cam_pos := Vector2.ZERO   # persisted galaxy pan/zoom across view sw
 var _galaxy_cam_zoom := 1.0
 var _map_lo := Vector2.ZERO
 var _map_hi := Vector2.ZERO
-var _border_segments: Array = []
+var _border_segments: Array = []   # [a, b, color] line segments
 var _border_timer := 0.0
+var _system_owner := {}   # system_id -> empire_id, cached with the border field
 var _sight: Array = []   # player's sight-source world positions, refreshed per frame
 
 var raw_label: Label
@@ -95,11 +96,40 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 
-# Sample the influence field on a world grid and emit bold colored edges where
-# the owning empire changes — the deformed border. Blocky at cell resolution;
-# fine enough here, could be marching-squares-smoothed later.
+# Sample the influence field on a world grid and emit bold colored edge LINES
+# where the owning empire changes — the deformed border.
+#
+# Perf: influence per system is computed ONCE here into flat per-empire arrays;
+# the per-cell owner test is then pure float math over the few systems that
+# actually have colonies (not every system × its planets, per cell). This is
+# what keeps the 0.4s refresh from stalling the main thread / freezing input.
 func _recompute_borders() -> void:
 	_border_segments.clear()
+	_system_owner.clear()
+	# Per-empire sources: parallel packed arrays of (position, influence, reach).
+	var ids: Array = []
+	var pos: Array = []
+	var infl: Array = []
+	var reach: Array = []
+	for e in sim.empires.values():
+		var pv := PackedVector2Array()
+		var iv := PackedFloat32Array()
+		var rv := PackedFloat32Array()
+		for sys in sim.systems.values():
+			var f := sim.system_influence(sys.id, e.id)
+			if f > 0.0:
+				pv.append(sys.map_pos)
+				iv.append(f)
+				rv.append(SimConstants.BORDER_A2 * f)
+		if pv.size() > 0:
+			ids.append(e.id)
+			pos.append(pv)
+			infl.append(iv)
+			reach.append(rv)
+
+	for sys in sim.systems.values():
+		_system_owner[sys.id] = _owner_at(sys.map_pos, ids, pos, infl, reach)
+
 	var lo := _map_lo - Vector2(140, 140)
 	var hi := _map_hi + Vector2(140, 140)
 	var cols := int((hi.x - lo.x) / BORDER_CELL) + 1
@@ -108,27 +138,60 @@ func _recompute_borders() -> void:
 	owner.resize(cols * rows)
 	for gy in rows:
 		for gx in cols:
-			owner[gy * cols + gx] = sim.point_owner(
-				Vector2(lo.x + gx * BORDER_CELL, lo.y + gy * BORDER_CELL))
+			owner[gy * cols + gx] = _owner_at(
+				Vector2(lo.x + gx * BORDER_CELL, lo.y + gy * BORDER_CELL),
+				ids, pos, infl, reach)
+
+	# Emit a short line segment on each cell edge where the owner changes, inset
+	# toward the cell's own centre so a hostile seam shows two thin parallel
+	# lines (one per empire) instead of one colour overwriting the other.
+	var h := BORDER_CELL * 0.5
+	var inset := 3.0
 	for gy in rows:
 		for gx in cols:
 			var o := owner[gy * cols + gx]
 			if o == -1:
 				continue
-			# A frontier cell = owned, with at least one differing IN-GRID
-			# 4-neighbor (enemy or neutral). The grid edge itself is just the
-			# sampling boundary, not a border, so out-of-bounds doesn't count.
-			# Record its own centre in its own colour, so a hostile seam becomes
-			# two parallel colour bands, one per empire.
-			var frontier := \
-				(gx + 1 < cols and owner[gy * cols + gx + 1] != o) or \
-				(gx - 1 >= 0 and owner[gy * cols + gx - 1] != o) or \
-				(gy + 1 < rows and owner[(gy + 1) * cols + gx] != o) or \
-				(gy - 1 >= 0 and owner[(gy - 1) * cols + gx] != o)
 			var c := Vector2(lo.x + gx * BORDER_CELL, lo.y + gy * BORDER_CELL)
-			# Fog of war: only show border where the player can actually see.
-			if frontier and _visible(c):
-				_border_segments.append([c, sim.empires[o].color])
+			if not _visible(c):   # fog of war: only draw border where seen
+				continue
+			var col: Color = sim.empires[o].color
+			if gx + 1 < cols and owner[gy * cols + gx + 1] != o:
+				var x := c.x + h - inset
+				_border_segments.append([Vector2(x, c.y - h), Vector2(x, c.y + h), col])
+			if gx - 1 >= 0 and owner[gy * cols + gx - 1] != o:
+				var x2 := c.x - h + inset
+				_border_segments.append([Vector2(x2, c.y - h), Vector2(x2, c.y + h), col])
+			if gy + 1 < rows and owner[(gy + 1) * cols + gx] != o:
+				var y := c.y + h - inset
+				_border_segments.append([Vector2(c.x - h, y), Vector2(c.x + h, y), col])
+			if gy - 1 >= 0 and owner[(gy - 1) * cols + gx] != o:
+				var y2 := c.y - h + inset
+				_border_segments.append([Vector2(c.x - h, y2), Vector2(c.x + h, y2), col])
+
+
+# Owner of a world point using precomputed per-empire source arrays. Combined
+# claim = (Σi)² / Σ(d·i) over sources within reach; argmax empire, -1 if none.
+func _owner_at(p: Vector2, ids: Array, pos: Array, infl: Array, reach: Array) -> int:
+	var best := -1
+	var best_claim := 0.0
+	for k in ids.size():
+		var pv: PackedVector2Array = pos[k]
+		var iv: PackedFloat32Array = infl[k]
+		var rv: PackedFloat32Array = reach[k]
+		var si := 0.0
+		var sri := 0.0
+		for j in pv.size():
+			var d := p.distance_to(pv[j])
+			if d <= rv[j]:
+				si += iv[j]
+				sri += d * iv[j]
+		if si > 0.0:
+			var claim := INF if sri <= 0.0 else (si * si) / sri
+			if claim > best_claim:
+				best_claim = claim
+				best = ids[k]
+	return best
 
 
 # Galaxy view: free pan/zoom (persisted). System view: locked so SYSTEM_CENTER
@@ -197,7 +260,12 @@ func _planet_pos(planet: Planet) -> Vector2:
 	return SYSTEM_CENTER + Vector2.from_angle(planet.orbit_angle) * planet.orbit_radius
 
 
+var _fog_disabled := false   # debug/screenshot only
+
+
 func _visible(pos: Vector2) -> bool:
+	if _fog_disabled:
+		return true
 	for src in _sight:
 		if pos.distance_to(src) <= SimConstants.SIGHT_RANGE:
 			return true
@@ -213,17 +281,10 @@ func _draw() -> void:
 
 func _draw_galaxy() -> void:
 	var font := ThemeDB.fallback_font
-	# Seen area: faint discs around the player's sight sources (inverse fog —
-	# lightens what you can see rather than needing a full-screen dark overlay).
-	var seen_tint: Color = sim.empires[player_empire_id].color
-	seen_tint.a = 0.05
-	for src in _sight:
-		draw_circle(src, SimConstants.SIGHT_RANGE, seen_tint)
-	# Deformed influence borders (bold, in each empire's colour), under the rest.
-	# Dots at frontier-cell centres; adjacent cells overlap into a solid edge.
-	# Already fog-gated in _recompute_borders.
+	# Deformed influence borders: bold edge LINE in each empire's colour, under
+	# the rest. Already fog-gated in _recompute_borders.
 	for seg in _border_segments:
-		draw_circle(seg[0], BORDER_CELL * 0.6, seg[1])
+		draw_line(seg[0], seg[1], seg[2], 2.0)
 	for lane in sim.lanes:
 		draw_line(sim.systems[lane[0]].map_pos, sim.systems[lane[1]].map_pos,
 			Color(1, 1, 1, 0.13), 1.5)
@@ -236,8 +297,9 @@ func _draw_galaxy() -> void:
 				HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.2))
 			continue
 		draw_circle(sys.map_pos, 9.0, Color(1.0, 0.85, 0.35))
-		# Live border contest result: ring in the current owner's color.
-		var owner: int = sim.system_owner(sys.id)
+		# Live border contest result: ring in the current owner's color
+		# (cached in the border recompute, not recomputed per frame).
+		var owner: int = _system_owner.get(sys.id, -1)
 		if owner != -1:
 			draw_arc(sys.map_pos, 13.0, 0.0, TAU, 32,
 				sim.empires[owner].color, 2.0)
@@ -401,11 +463,16 @@ func _autoshot() -> void:
 	var home: StarSystem = sim.systems.values()[0]
 	sim.build_mine(player_empire_id, home.planet_ids[0])
 	sim.found_colony(player_empire_id, home.planet_ids[1])
+	# For the screenshot only: let the player expand too (via the same AI), so it
+	# meets the rival and the border falls inside player sight — otherwise fog
+	# correctly hides it. Not part of normal play.
+	sim.add_ai(player_empire_id)
 	# Advance the sim directly (deterministic, instant) so both empires expand
 	# and the galaxy shows a real two-color contest.
 	speed_idx = 0
 	for i in 3000:  # 300 days
 		sim.tick(SimConstants.TICK_DAYS)
+	_fog_disabled = true   # screenshot only: reveal the full border line
 	_recompute_borders()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
