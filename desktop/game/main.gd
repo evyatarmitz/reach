@@ -252,9 +252,11 @@ func _refresh_ui() -> void:
 		var c := planet.colony
 		var status := "ESTABLISHED" if c.established \
 			else "growing… %d%% to activation" % int(c.activation_progress() * 100.0)
-		panel_body.text = "Owner: %s\nStatus: %s\nPopulation: %.1f\nUpkeep: %.2f raw/day\nProduction: %.2f goods/day\n%s" \
+		var neighbor_mult := sim.neighbor_growth_multiplier(c)
+		panel_body.text = "Owner: %s\nStatus: %s\nPopulation: %.1f\nUpkeep: %.2f raw/day\nProduction: %.2f goods/day\nNeighbor bonus: +%d%% growth\n%s" \
 			% [sim.empires[c.empire_id].name, status, c.population,
-				c.upkeep_per_day(), c.production_per_day(), deposit_line]
+				c.upkeep_per_day(), c.production_per_day(),
+				int((neighbor_mult - 1.0) * 100.0), deposit_line]
 		colonize_btn.visible = false
 	mine_btn.visible = planet.has_deposit and not planet.has_mine()
 	mine_btn.disabled = not sim.can_build_mine(player_empire_id, planet.id)

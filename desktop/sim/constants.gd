@@ -24,12 +24,20 @@ const UPKEEP_TAPER_DAYS := 30.0
 # A colony activates (established, starts producing) at this population.
 const ACTIVATION_POP := 100.0
 
-# Growth: dpop/day = GROWTH_RATE * pop / (1 + (pop/GROWTH_SOFTCAP)^GROWTH_EXP).
-# Never a hard cap — growth only asymptotically flattens. The neighbor bonus
-# (later) multiplies the rate, which is the designed way past the flattening.
+# Growth: dpop/day = GROWTH_RATE * pop / (1 + (pop/GROWTH_SOFTCAP)^GROWTH_EXP),
+# times the neighbor multiplier below. Never a hard cap — growth only
+# asymptotically flattens; the neighbor bonus is the designed way past the wall.
 const GROWTH_RATE := 0.08
 const GROWTH_SOFTCAP := 500.0
 const GROWTH_EXP := 2.0
+
+# Neighbor bonus: an established center boosts a same-empire colony in a
+# DIFFERENT system by NEIGHBOR_COEF * neighbor_pop / R (R = system distance),
+# summed over all such neighbors. Same-system colonies contribute nothing —
+# within a system they compete for influence instead. This is the "cluster
+# across systems" half of the core tension; the sum compounds as the whole
+# cluster grows. Transportation infrastructure (later) will scale this.
+const NEIGHBOR_COEF := 0.5
 
 # Mining: the only raw income. A mine sits on a deposit planet within reach.
 const MINE_COST := 50.0

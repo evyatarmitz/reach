@@ -176,6 +176,28 @@ func is_under_influence(system_id: int, empire_id: int) -> bool:
 	return system_owner(system_id) == empire_id
 
 
+# --- neighbor bonus (vision.md: cluster-across-systems) ----------------------
+
+# Growth multiplier for a colony from same-empire established centers in OTHER
+# systems, 1/R falloff, summed (compounding). Same-system centers give nothing —
+# they compete via influence instead. This is what lets a clustered colony grow
+# past the diminishing-returns wall an isolated one hits.
+func neighbor_growth_multiplier(colony: Colony) -> float:
+	var sys_id: int = planets[colony.planet_id].system_id
+	var bonus := 0.0
+	for other in colonies:
+		if other == colony or other.empire_id != colony.empire_id \
+				or not other.established:
+			continue
+		var other_sys: int = planets[other.planet_id].system_id
+		if other_sys == sys_id:
+			continue
+		var r := system_distance(sys_id, other_sys)
+		if r > 0.0:
+			bonus += other.population / r
+	return 1.0 + SimConstants.NEIGHBOR_COEF * bonus
+
+
 # --- commands (same gating for every empire) ----------------------------------
 
 func can_found_colony(empire_id: int, planet_id: int) -> bool:
@@ -230,7 +252,8 @@ func tick(dt_days: float) -> void:
 		e.raw -= paid
 		var supplied := 1.0 if need <= 0.0 else paid / need
 
-		c.population += Colony.growth_per_day(c.population) * supplied * dt_days
+		c.population += Colony.growth_per_day(c.population) * supplied \
+			* neighbor_growth_multiplier(c) * dt_days
 
 		if not c.established and c.population >= SimConstants.ACTIVATION_POP:
 			c.established = true

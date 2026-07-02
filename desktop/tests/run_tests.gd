@@ -52,6 +52,7 @@ func _init() -> void:
 	_test_influence_nonstacking()
 	_test_influence_gating()
 	_test_border_contest()
+	_test_neighbor_bonus()
 	_test_mining()
 	_test_mine_income_routing()
 	_test_production_input()
@@ -191,6 +192,90 @@ func _test_border_contest() -> void:
 	sim.add_planet(out.id, "O I")
 	check(sim.system_owner(out.id) == -1,
 		"systems beyond all reach are unclaimed")
+
+
+# Build a fresh empire with a subject colony in system A and configurable
+# established centers in other systems, all with unlimited supply.
+func _neighbor_rig() -> Dictionary:
+	var sim := Sim.new()
+	var e := sim.add_empire("N", Color.WHITE)
+	e.raw = 1.0e12
+	var a := sim.add_system("A")
+	a.map_pos = Vector2.ZERO
+	var pa := sim.add_planet(a.id, "A I")
+	var subject := sim.inject_colony(e.id, pa.id, 200.0, true)
+	subject.days_since_established = 1.0e9  # no upkeep noise
+	return {"sim": sim, "e": e, "a": a, "subject": subject}
+
+
+func _add_established(sim: Sim, e: Empire, pos: Vector2, pop: float) -> void:
+	var s := sim.add_system("S%d" % sim.systems.size())
+	s.map_pos = pos
+	var p := sim.add_planet(s.id, "P")
+	sim.inject_colony(e.id, p.id, pop, true)
+
+
+func _test_neighbor_bonus() -> void:
+	# Baseline: no neighbors → multiplier is exactly 1.
+	var rig := _neighbor_rig()
+	check(is_equal_approx(
+		rig.sim.neighbor_growth_multiplier(rig.subject), 1.0),
+		"isolated colony has neighbor multiplier 1.0")
+
+	# One established neighbor in another system raises the multiplier.
+	var rig2 := _neighbor_rig()
+	_add_established(rig2.sim, rig2.e, Vector2(250, 0), 200.0)
+	var m_near: float = rig2.sim.neighbor_growth_multiplier(rig2.subject)
+	check(m_near > 1.0, "an established neighbor in another system boosts growth")
+
+	# 1/R falloff: the same neighbor farther away boosts less.
+	var rig3 := _neighbor_rig()
+	_add_established(rig3.sim, rig3.e, Vector2(500, 0), 200.0)
+	var m_far: float = rig3.sim.neighbor_growth_multiplier(rig3.subject)
+	check(m_far < m_near, "a farther neighbor boosts less (1/R falloff)")
+	check(is_equal_approx(m_near - 1.0, (m_far - 1.0) * 2.0),
+		"halving distance doubles the bonus (exact 1/R)")
+
+	# Compounding: two neighbors give more than one.
+	var rig4 := _neighbor_rig()
+	_add_established(rig4.sim, rig4.e, Vector2(250, 0), 200.0)
+	_add_established(rig4.sim, rig4.e, Vector2(0, 250), 200.0)
+	check(rig4.sim.neighbor_growth_multiplier(rig4.subject) > m_near,
+		"two neighbors compound to a larger bonus than one")
+
+	# Same-system colony gives NO neighbor bonus (it competes, not boosts).
+	var rig5 := _neighbor_rig()
+	var rig5_sim: Sim = rig5.sim
+	var pa2: Planet = rig5_sim.add_planet(rig5.a.id, "A II")
+	rig5_sim.inject_colony(rig5.e.id, pa2.id, 300.0, true)
+	check(is_equal_approx(
+		rig5.sim.neighbor_growth_multiplier(rig5.subject), 1.0),
+		"same-system established colony contributes no neighbor bonus")
+
+	# Only same-empire, only established centers count.
+	var rig6 := _neighbor_rig()
+	var rig6_sim: Sim = rig6.sim
+	var rival: Empire = rig6_sim.add_empire("Rival", Color.RED)
+	_add_established(rig6_sim, rival, Vector2(250, 0), 500.0)
+	check(is_equal_approx(
+		rig6_sim.neighbor_growth_multiplier(rig6.subject), 1.0),
+		"a rival's established center gives no bonus")
+	var s: StarSystem = rig6_sim.add_system("Unest")
+	s.map_pos = Vector2(0, 250)
+	var pun: Planet = rig6_sim.add_planet(s.id, "U")
+	rig6_sim.inject_colony(rig6.e.id, pun.id, 90.0, false)  # not established
+	check(is_equal_approx(
+		rig6_sim.neighbor_growth_multiplier(rig6.subject), 1.0),
+		"an unestablished same-empire center gives no bonus")
+
+	# End to end: clustered colony out-grows an isolated identical one.
+	var iso := _neighbor_rig()
+	var clu := _neighbor_rig()
+	_add_established(clu.sim, clu.e, Vector2(250, 0), 300.0)
+	run_days(iso.sim, 100.0)
+	run_days(clu.sim, 100.0)
+	check(clu.subject.population > iso.subject.population,
+		"over time, a clustered colony grows past an isolated one")
 
 
 func _test_mining() -> void:
