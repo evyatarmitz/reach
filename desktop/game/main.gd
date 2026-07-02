@@ -132,68 +132,121 @@ func _recompute_borders() -> void:
 	for sys in sim.systems.values():
 		_system_owner[sys.id] = _owner_at(sys.map_pos, ids, pos, infl, reach)
 
+	# Sample each empire's claim on a grid of POINTS (cell corners), then trace a
+	# smooth marching-squares contour of every empire's dominance margin
+	# (claim_E − strongest rival claim). The zero-contour is that empire's border
+	# — the hostile seam AND its bubble edge against empty space — as an
+	# interpolated CURVE, not an axis-aligned staircase.
 	var lo := _map_lo - Vector2(140, 140)
 	var hi := _map_hi + Vector2(140, 140)
-	var cols := int((hi.x - lo.x) / BORDER_CELL) + 1
-	var rows := int((hi.y - lo.y) / BORDER_CELL) + 1
-	var owner := PackedInt32Array()
-	owner.resize(cols * rows)
-	for gy in rows:
-		for gx in cols:
-			owner[gy * cols + gx] = _owner_at(
-				Vector2(lo.x + gx * BORDER_CELL, lo.y + gy * BORDER_CELL),
-				ids, pos, infl, reach)
+	var pcols := int((hi.x - lo.x) / BORDER_CELL) + 2   # +1 cells -> +2 corners
+	var prows := int((hi.y - lo.y) / BORDER_CELL) + 2
+	var claims: Array = []   # claims[k] = PackedFloat32Array over all corner points
+	for k in ids.size():
+		var arr := PackedFloat32Array()
+		arr.resize(pcols * prows)
+		for gy in prows:
+			for gx in pcols:
+				arr[gy * pcols + gx] = _claim_at(
+					Vector2(lo.x + gx * BORDER_CELL, lo.y + gy * BORDER_CELL),
+					pos[k], infl[k], reach[k])
+		claims.append(arr)
 
-	# Emit a short line segment on each cell edge where the owner changes, inset
-	# toward the cell's own centre so a hostile seam shows two thin parallel
-	# lines (one per empire) instead of one colour overwriting the other.
-	var h := BORDER_CELL * 0.5
-	var inset := 3.0
-	for gy in rows:
-		for gx in cols:
-			var o := owner[gy * cols + gx]
-			if o == -1:
-				continue
-			var c := Vector2(lo.x + gx * BORDER_CELL, lo.y + gy * BORDER_CELL)
-			if not _visible(c):   # fog of war: only draw border where seen
-				continue
-			var col: Color = sim.empires[o].color
-			if gx + 1 < cols and owner[gy * cols + gx + 1] != o:
-				var x := c.x + h - inset
-				_border_segments.append([Vector2(x, c.y - h), Vector2(x, c.y + h), col])
-			if gx - 1 >= 0 and owner[gy * cols + gx - 1] != o:
-				var x2 := c.x - h + inset
-				_border_segments.append([Vector2(x2, c.y - h), Vector2(x2, c.y + h), col])
-			if gy + 1 < rows and owner[(gy + 1) * cols + gx] != o:
-				var y := c.y + h - inset
-				_border_segments.append([Vector2(c.x - h, y), Vector2(c.x + h, y), col])
-			if gy - 1 >= 0 and owner[(gy - 1) * cols + gx] != o:
-				var y2 := c.y - h + inset
-				_border_segments.append([Vector2(c.x - h, y2), Vector2(c.x + h, y2), col])
+	# Draw rivals first, the player's own empire last, so at a coincident seam
+	# (where both empires' margin=0 curves overlap) the player sees its own colour.
+	var order: Array = []
+	for k in ids.size():
+		if ids[k] != player_empire_id:
+			order.append(k)
+	for k in ids.size():
+		if ids[k] == player_empire_id:
+			order.append(k)
+	for k in order:
+		var ck: PackedFloat32Array = claims[k]
+		var col: Color = sim.empires[ids[k]].color
+		for cy in prows - 1:
+			for cx in pcols - 1:
+				var i_tl := cy * pcols + cx
+				var i_tr := cy * pcols + cx + 1
+				var i_br := (cy + 1) * pcols + cx + 1
+				var i_bl := (cy + 1) * pcols + cx
+				# Skip cells this empire doesn't reach (avoids tracing a rival's
+				# bubble edge in the wrong colour where both claims are ~0).
+				if ck[i_tl] <= 0.0 and ck[i_tr] <= 0.0 \
+						and ck[i_br] <= 0.0 and ck[i_bl] <= 0.0:
+					continue
+				var p_tl := Vector2(lo.x + cx * BORDER_CELL, lo.y + cy * BORDER_CELL)
+				var p_tr := p_tl + Vector2(BORDER_CELL, 0)
+				var p_br := p_tl + Vector2(BORDER_CELL, BORDER_CELL)
+				var p_bl := p_tl + Vector2(0, BORDER_CELL)
+				var m_tl := ck[i_tl] - _best_other(claims, k, i_tl)
+				var m_tr := ck[i_tr] - _best_other(claims, k, i_tr)
+				var m_br := ck[i_br] - _best_other(claims, k, i_br)
+				var m_bl := ck[i_bl] - _best_other(claims, k, i_bl)
+				for seg in _ms_segments([p_tl, p_tr, p_br, p_bl],
+						[m_tl, m_tr, m_br, m_bl]):
+					# Fog of war: only draw the border where the player can see.
+					if _visible((seg[0] + seg[1]) * 0.5):
+						_border_segments.append([seg[0], seg[1], col])
 
 
-# Owner of a world point using precomputed per-empire source arrays. Combined
-# claim = (Σi)² / Σ(d·i) over sources within reach; argmax empire, -1 if none.
+# One empire's combined claim at a world point: (Σi)² / Σ(d·i) over its sources
+# within reach; 0 if none reach. A large finite stands in for "on a source" so
+# marching-squares interpolation never divides by an infinity.
+func _claim_at(p: Vector2, pv: PackedVector2Array, iv: PackedFloat32Array,
+		rv: PackedFloat32Array) -> float:
+	var si := 0.0
+	var sri := 0.0
+	for j in pv.size():
+		var d := p.distance_to(pv[j])
+		if d <= rv[j]:
+			si += iv[j]
+			sri += d * iv[j]
+	if si <= 0.0:
+		return 0.0
+	return 1.0e9 if sri <= 0.0 else (si * si) / sri
+
+
+func _best_other(claims: Array, k: int, pi: int) -> float:
+	var best := 0.0
+	for j in claims.size():
+		if j != k:
+			var v: float = claims[j][pi]
+			if v > best:
+				best = v
+	return best
+
+
+# Owner of a world point (argmax claim), -1 if none reach. Used for system rings.
 func _owner_at(p: Vector2, ids: Array, pos: Array, infl: Array, reach: Array) -> int:
 	var best := -1
 	var best_claim := 0.0
 	for k in ids.size():
-		var pv: PackedVector2Array = pos[k]
-		var iv: PackedFloat32Array = infl[k]
-		var rv: PackedFloat32Array = reach[k]
-		var si := 0.0
-		var sri := 0.0
-		for j in pv.size():
-			var d := p.distance_to(pv[j])
-			if d <= rv[j]:
-				si += iv[j]
-				sri += d * iv[j]
-		if si > 0.0:
-			var claim := INF if sri <= 0.0 else (si * si) / sri
-			if claim > best_claim:
-				best_claim = claim
-				best = ids[k]
+		var c := _claim_at(p, pos[k], infl[k], reach[k])
+		if c > best_claim:
+			best_claim = c
+			best = ids[k]
 	return best
+
+
+# Marching-squares contour segments of the level set margin=0 inside one cell.
+# Corners in order [TL, TR, BR, BL]; edges connect consecutive corners. Crossings
+# are linearly interpolated for a smooth curve.
+func _ms_segments(p: Array, m: Array) -> Array:
+	var inside := [m[0] >= 0.0, m[1] >= 0.0, m[2] >= 0.0, m[3] >= 0.0]
+	var e := {}   # edge index -> crossing point
+	for edge in 4:
+		var a: int = edge
+		var b: int = (edge + 1) % 4
+		if inside[a] != inside[b]:
+			var t: float = m[a] / (m[a] - m[b])
+			e[edge] = (p[a] as Vector2).lerp(p[b], t)
+	var keys: Array = e.keys()
+	if keys.size() == 2:
+		return [[e[keys[0]], e[keys[1]]]]
+	if keys.size() == 4:   # saddle — connect adjacent edge pairs
+		return [[e[0], e[3]], [e[1], e[2]]]
+	return []
 
 
 # Galaxy view: free pan/zoom (persisted). System view: locked so SYSTEM_CENTER
