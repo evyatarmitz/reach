@@ -92,6 +92,14 @@ const CONV_EXP := 0.8
 const FOOD_CONV_COEF := 0.05
 const ALLOY_CONV_COEF := 0.05
 
+# National MILITARY resources, one per ship tier (1-5). A refining chain: tier 1
+# is made from alloys, each higher tier from the one below it, and each tier is
+# gated by a city population cutoff (higher tiers need bigger cities — "more
+# resources for higher-tier production"). Ships of tier T cost the tier-T resource.
+const MIL_CUTOFF := [100.0, 400.0, 900.0, 1600.0, 2500.0]
+const MIL_COEF := 0.02
+const MIL_EXP := 0.8
+
 # Food demand: each pop eats this per day. The sign of the empire's end-of-tick
 # food balance decides population direction: surplus -> grow, exactly zero ->
 # steady, deficit -> shrink.

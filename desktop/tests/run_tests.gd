@@ -62,6 +62,7 @@ func _init() -> void:
 	_test_diminishing_returns()
 	_test_emigration()
 	_test_fleets()
+	_test_military_resources()
 	_test_determinism()
 	if failures == 0:
 		print("ALL TESTS PASSED")
@@ -571,6 +572,33 @@ func _test_fleets() -> void:
 	check(g3 != null and is_equal_approx(g1.strength, half)
 		and is_equal_approx(g3.strength, half),
 		"splitting halves a fleet's strength into a new fleet")
+
+
+func _test_military_resources() -> void:
+	# A big city refines the whole tier chain; a small one only tier 1.
+	var sim := Sim.new()
+	var e := sim.add_empire("M", Color.WHITE)
+	e.food = 1.0e12
+	e.alloys = 1.0e9   # ample input to the chain
+	var s := sim.add_system("S")
+	s.map_pos = Vector2.ZERO
+	sim.inject_colony(e.id, sim.add_planet(s.id, "big").id, 3000.0, true)
+	run_days(sim, 40.0)
+	# The chain feeds upward, so a maxed city ends holding the TOP tier (lower
+	# tiers get consumed to make the next) — that's the "spread cities for a mix"
+	# pressure. Just confirm it reached tier 5.
+	check(e.nat[4] > 0.0, "a city above the top cutoff refines all the way to tier 5")
+
+	var sim2 := Sim.new()
+	var e2 := sim2.add_empire("M2", Color.WHITE)
+	e2.food = 1.0e12
+	e2.alloys = 1.0e9
+	var s2 := sim2.add_system("S")
+	s2.map_pos = Vector2.ZERO
+	sim2.inject_colony(e2.id, sim2.add_planet(s2.id, "small").id, 150.0, true)
+	run_days(sim2, 40.0)
+	check(e2.nat[0] > 0.0 and e2.nat[1] == 0.0,
+		"a small city (below the tier-2 cutoff) refines only tier 1")
 
 
 func _test_determinism() -> void:

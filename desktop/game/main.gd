@@ -44,6 +44,7 @@ var _stale := {}            # system_id -> {owner, colonies}, last-seen snapshot
 
 var raw_label: Label
 var goods_label: Label
+var mil_label: Label
 var day_label: Label
 var hint_label: Label
 var speed_buttons: Array[Button] = []
@@ -499,8 +500,9 @@ func _build_ui() -> void:
 
 	raw_label = Label.new()
 	goods_label = Label.new()
+	mil_label = Label.new()
 	day_label = Label.new()
-	for l in [raw_label, goods_label, day_label]:
+	for l in [raw_label, goods_label, mil_label, day_label]:
 		bar.add_child(l)
 
 	hint_label = Label.new()
@@ -629,6 +631,8 @@ func _refresh_ui() -> void:
 	var player: Empire = sim.empires[player_empire_id]
 	raw_label.text = "Water %.0f · Minerals %.0f" % [player.water, player.minerals]
 	goods_label.text = "Food %.0f · Alloys %.0f" % [player.food, player.alloys]
+	mil_label.text = "Mil T1-5: %.0f·%.0f·%.0f·%.0f·%.0f" % \
+		[player.nat[0], player.nat[1], player.nat[2], player.nat[3], player.nat[4]]
 	day_label.text = "Day %.1f" % sim.day
 	for i in speed_buttons.size():
 		speed_buttons[i].button_pressed = (i == speed_idx)

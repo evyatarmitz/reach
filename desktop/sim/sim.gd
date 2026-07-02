@@ -606,6 +606,21 @@ func tick(dt_days: float) -> void:
 		var alloy_made: float = minf(c.alloy_capacity() * dt_days, e.minerals)
 		e.minerals -= alloy_made
 		e.alloys += alloy_made
+		# Military refining chain: tier 1 from alloys, each higher tier from the
+		# one below, each gated by a city pop cutoff (cutoffs increase, so a
+		# too-small city stops the chain early).
+		var mil_cap := SimConstants.MIL_COEF \
+			* pow(c.population, SimConstants.MIL_EXP) * dt_days
+		for t in 5:
+			if c.population < SimConstants.MIL_CUTOFF[t]:
+				break
+			var avail: float = e.alloys if t == 0 else e.nat[t - 1]
+			var made: float = minf(mil_cap, avail)
+			if t == 0:
+				e.alloys -= made
+			else:
+				e.nat[t - 1] -= made
+			e.nat[t] += made
 
 	# 3. Food is empire-wide: the sign of the end-of-tick balance (food produced
 	#    this tick minus what the whole population eats) sets growth direction.

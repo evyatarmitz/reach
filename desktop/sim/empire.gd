@@ -16,3 +16,5 @@ var water: float = SimConstants.START_WATER
 var minerals: float = SimConstants.START_MINERALS
 var food: float = SimConstants.START_FOOD
 var alloys: float = SimConstants.START_ALLOYS
+# National military resources, tiers 1-5 (index 0-4), refined in cities.
+var nat: Array[float] = [0.0, 0.0, 0.0, 0.0, 0.0]
