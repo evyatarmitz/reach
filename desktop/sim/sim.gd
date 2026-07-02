@@ -468,6 +468,13 @@ func _empire_has_colony_in(empire_id: int, system_id: int) -> bool:
 	return false
 
 
+func empire_fleet_in_system(empire_id: int, system_id: int) -> bool:
+	for f in fleets:
+		if f.empire_id == empire_id and not f.is_moving() and f.system_id == system_id:
+			return true
+	return false
+
+
 func can_build_fleet(empire_id: int, system_id: int) -> bool:
 	var e: Empire = empires.get(empire_id)
 	return e != null and systems.has(system_id) \

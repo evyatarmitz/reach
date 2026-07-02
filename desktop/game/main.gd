@@ -39,7 +39,7 @@ var _map_hi := Vector2.ZERO
 var _border_segments: Array = []   # [a, b, color] line segments
 var _border_timer := 0.0
 var _system_owner := {}     # system_id -> empire_id, cached with the border field
-var _system_visible := {}   # system_id -> bool, currently in the player's VR
+var _system_vr := {}        # system_id -> 0 none / 1 partial / 2 full VR
 var _explored := {}         # system_id -> true, ever seen (gray once out of VR)
 var _stale := {}            # system_id -> {owner, colonies}, last-seen snapshot
 
@@ -137,32 +137,34 @@ func _recompute_borders() -> void:
 			infl.append(iv)
 			reach.append(rv)
 
-	var pk := ids.find(player_empire_id)   # player's index in the arrays, or -1
-
-	# Per-system: current owner, whether it's in the player's VR (visible), and
-	# a stale snapshot for the fog memory. VR = the player reaches the point and
-	# isn't yet dominated by 1.5x (so it extends past the contested border and
-	# retreats as a rival grows). Once seen, a system stays "explored" (gray).
+	# (player index in the arrays no longer needed — VR is topology-based now)
+	# Topology VR (item 1/4): visibility expands with the SYSTEMS you hold, not
+	# with a raw influence radius. FULL VR (2) in systems you own / have a colony
+	# in / have a fleet in; PARTIAL VR (1, structure only) one lane-jump out. Once
+	# seen, a system stays "explored" (grey). Retreats when you lose a system.
+	_system_vr.clear()
+	var full := {}
 	for sys in sim.systems.values():
-		var owner := _owner_at(sys.map_pos, ids, pos, infl, reach)
-		_system_owner[sys.id] = owner
-		var vis := false
-		if pk != -1:
-			var pcl := _claim_at(sys.map_pos, pos[pk], infl[pk], reach[pk])
-			if pcl > 0.0:
-				var bo := 0.0
-				for k in ids.size():
-					if k != pk:
-						bo = maxf(bo, _claim_at(sys.map_pos, pos[k], infl[k], reach[k]))
-				vis = pcl * SimConstants.SIGHT_INFLUENCE_FACTOR >= bo
-		_system_visible[sys.id] = vis
-		if vis:
+		_system_owner[sys.id] = _owner_at(sys.map_pos, ids, pos, infl, reach)
+		if _system_owner[sys.id] == player_empire_id \
+				or sim._empire_has_colony_in(player_empire_id, sys.id) \
+				or sim.empire_fleet_in_system(player_empire_id, sys.id):
+			full[sys.id] = true
+	for sys in sim.systems.values():
+		_system_vr[sys.id] = 2 if full.has(sys.id) else 0
+	for sid in full:
+		for nb in sim.lane_neighbors(sid):
+			if not full.has(nb):
+				_system_vr[nb] = maxi(_system_vr[nb], 1)
+	for sys in sim.systems.values():
+		if _system_vr[sys.id] >= 1:
 			_explored[sys.id] = true
+		if _system_vr[sys.id] == 2:   # snapshot live state for the fog memory
 			var cc := 0
 			for pid in sys.planet_ids:
 				if sim.planets[pid].colony != null:
 					cc += 1
-			_stale[sys.id] = {"owner": owner, "colonies": cc}
+			_stale[sys.id] = {"owner": _system_owner[sys.id], "colonies": cc}
 
 	# Sample each empire's claim on a grid of POINTS (cell corners), then trace a
 	# smooth marching-squares contour of every empire's dominance margin
@@ -183,18 +185,6 @@ func _recompute_borders() -> void:
 					Vector2(lo.x + gx * BORDER_CELL, lo.y + gy * BORDER_CELL),
 					pos[k], infl[k], reach[k])
 		claims.append(arr)
-
-	# VR per corner point (same rule as per-system), to fog-gate border segments.
-	var vrgrid := PackedByteArray()
-	vrgrid.resize(pcols * prows)
-	for pi in pcols * prows:
-		var vis := false
-		if pk != -1:
-			var pcl: float = claims[pk][pi]
-			if pcl > 0.0:
-				vis = pcl * SimConstants.SIGHT_INFLUENCE_FACTOR \
-					>= _best_other(claims, pk, pi)
-		vrgrid[pi] = 1 if vis else 0
 
 	# Live system positions — borders are only drawn near them, so a border can't
 	# float in black space far from any visible system (which happens because a
@@ -238,8 +228,6 @@ func _recompute_borders() -> void:
 				var m_tr := ck[i_tr] - maxf(_best_other(claims, k, i_tr), BORDER_EPS)
 				var m_br := ck[i_br] - maxf(_best_other(claims, k, i_br), BORDER_EPS)
 				var m_bl := ck[i_bl] - maxf(_best_other(claims, k, i_bl), BORDER_EPS)
-				if vrgrid[i_tl] == 0:   # fog: only draw border where the player sees
-					continue
 				# Centroid of this cell's INSIDE corners (margin >= 0) — the
 				# empire's own side. Each segment is nudged toward it so a shared
 				# seam shows both empires' curves side by side, not overlapping.
@@ -410,12 +398,12 @@ func _planet_pos(planet: Planet) -> Vector2:
 var _fog_disabled := false   # debug/screenshot only
 
 
-func _sys_live(sid: int) -> bool:     # currently in the player's VR
-	return _fog_disabled or _system_visible.get(sid, false)
+func _sys_live(sid: int) -> bool:     # full VR right now
+	return _fog_disabled or _system_vr.get(sid, 0) == 2
 
 
-func _sys_known(sid: int) -> bool:    # visible now OR explored before (gray)
-	return _fog_disabled or _system_visible.get(sid, false) or _explored.has(sid)
+func _sys_known(sid: int) -> bool:    # full/partial VR now OR explored before
+	return _fog_disabled or _system_vr.get(sid, 0) >= 1 or _explored.has(sid)
 
 
 func _draw() -> void:
