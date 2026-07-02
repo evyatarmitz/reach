@@ -3,9 +3,9 @@ extends Node2D
 # Render/UI layer. Reads Sim state, forwards commands. No game rules live here.
 
 const SPEEDS: Array[float] = [0.0, 1.0, 3.0, 10.0]
-# Base clock halved (was 1.0) so the whole sim reads slower in real time; the
-# speed dial multiplies this, so fast-forward is still one click away.
-const DAYS_PER_REAL_SECOND := 0.5
+# Base clock slowed (1.0 -> 0.5 -> 0.4) so the whole sim reads slower in real
+# time; the speed dial multiplies this, so fast-forward is still one click away.
+const DAYS_PER_REAL_SECOND := 0.4
 const SYSTEM_CENTER := Vector2(510.0, 380.0)
 
 var sim: Sim
@@ -15,9 +15,18 @@ var day_accum := 0.0
 var selected_planet_id := -1
 var view_system_id := -1  # -1 = galaxy view, otherwise the focused system
 
+const ZOOM_MIN := 0.35
+const ZOOM_MAX := 2.5
+
+var cam: Camera2D
+var _panning := false
+var _galaxy_cam_pos := Vector2.ZERO   # persisted galaxy pan/zoom across view switches
+var _galaxy_cam_zoom := 1.0
+
 var raw_label: Label
 var goods_label: Label
 var day_label: Label
+var hint_label: Label
 var speed_buttons: Array[Button] = []
 var panel: PanelContainer
 var panel_title: Label
@@ -30,8 +39,26 @@ func _ready() -> void:
 	sim = Sim.new_demo()
 	player_empire_id = sim.empires.keys()[0]  # demo convention: first = human
 	_build_ui()
+	_init_camera()
 	if "--autoshot" in OS.get_cmdline_user_args():
 		_autoshot()
+
+
+func _init_camera() -> void:
+	cam = Camera2D.new()
+	add_child(cam)
+	cam.make_current()
+	# Frame the whole galaxy: center on the map's midpoint, zoom to fit.
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for sys in sim.systems.values():
+		lo = lo.min(sys.map_pos)
+		hi = hi.max(sys.map_pos)
+	var vp := get_viewport_rect().size
+	var span := (hi - lo) + Vector2(240, 240)  # margin so edge systems aren't clipped
+	_galaxy_cam_pos = (lo + hi) * 0.5
+	_galaxy_cam_zoom = clampf(minf(vp.x / span.x, vp.y / span.y),
+		ZOOM_MIN, ZOOM_MAX)
 
 
 func _process(delta: float) -> void:
@@ -43,11 +70,38 @@ func _process(delta: float) -> void:
 		while day_accum >= SimConstants.TICK_DAYS:
 			sim.tick(SimConstants.TICK_DAYS)
 			day_accum -= SimConstants.TICK_DAYS
+	_apply_camera()
 	_refresh_ui()
 	queue_redraw()
 
 
+# Galaxy view: free pan/zoom (persisted). System view: locked so SYSTEM_CENTER
+# drawing maps 1:1 to the screen (camera position = screen centre at zoom 1).
+func _apply_camera() -> void:
+	if view_system_id == -1:
+		cam.position = _galaxy_cam_pos
+		cam.zoom = Vector2(_galaxy_cam_zoom, _galaxy_cam_zoom)
+	else:
+		cam.position = get_viewport_rect().size * 0.5
+		cam.zoom = Vector2.ONE
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	# Galaxy view only: right-drag to pan, wheel to zoom.
+	if view_system_id == -1 and event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_RIGHT:
+			_panning = event.pressed
+			return
+		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
+			_galaxy_cam_zoom = clampf(_galaxy_cam_zoom * 1.1, ZOOM_MIN, ZOOM_MAX)
+			return
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
+			_galaxy_cam_zoom = clampf(_galaxy_cam_zoom / 1.1, ZOOM_MIN, ZOOM_MAX)
+			return
+	if view_system_id == -1 and _panning and event is InputEventMouseMotion:
+		_galaxy_cam_pos -= event.relative / _galaxy_cam_zoom
+		return
+
 	if event is InputEventMouseButton and event.pressed \
 			and event.button_index == MOUSE_BUTTON_LEFT:
 		_select_at(get_global_mouse_position())
@@ -123,8 +177,6 @@ func _draw_galaxy() -> void:
 				Color(0.35, 1.0, 0.5))
 		draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
 			HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.65))
-	draw_string(font, Vector2(16.0, 52.0), "Click a system to inspect it",
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.4))
 
 
 func _draw_system(sys: StarSystem) -> void:
@@ -151,8 +203,6 @@ func _draw_system(sys: StarSystem) -> void:
 			draw_arc(pos, 14.5, 0.0, TAU, 32, Color.WHITE, 1.2)
 		draw_string(font, pos + Vector2(-60.0, 26.0), planet.name,
 			HORIZONTAL_ALIGNMENT_CENTER, 120, 11, Color(1, 1, 1, 0.65))
-	draw_string(font, Vector2(16.0, 52.0), "Esc — back to galaxy",
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.4))
 
 
 func _build_ui() -> void:
@@ -171,6 +221,11 @@ func _build_ui() -> void:
 	day_label = Label.new()
 	for l in [raw_label, goods_label, day_label]:
 		bar.add_child(l)
+
+	hint_label = Label.new()
+	hint_label.modulate = Color(1, 1, 1, 0.5)
+	hint_label.position = Vector2(16.0, 40.0)
+	layer.add_child(hint_label)
 
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -231,6 +286,8 @@ func _refresh_ui() -> void:
 	raw_label.text = "Raw: %.0f" % player.raw
 	goods_label.text = "Goods: %.1f" % player.goods
 	day_label.text = "Day %.1f" % sim.day
+	hint_label.text = "Right-drag pan · wheel zoom · click a system" \
+		if view_system_id == -1 else "Esc — back to galaxy"
 	for i in speed_buttons.size():
 		speed_buttons[i].button_pressed = (i == speed_idx)
 

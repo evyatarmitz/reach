@@ -21,14 +21,19 @@ var ais: Array[EmpireAI] = []  # rival brains; step deterministically in tick()
 var _next_id := 1
 
 
-# Deterministic COLS x ROWS grid map — a bigger testbed than the original 7, so
-# influence/border behavior has room to show. NOT the eventual procedural
-# generator (that comes later); just a larger hand-parameterized map. No RNG:
-# jitter is index-based sin so runs stay bit-identical.
-const MAP_COLS := 5
-const MAP_ROWS := 3
-const _MAP_NAMES := ["Meridian", "Harrow", "Cinder", "Vale", "Tessa", "Oro",
-	"Locke", "Ashen", "Perrin", "Quill", "Ryn", "Sable", "Thorn", "Umber", "Wex"]
+# Deterministic COLS x ROWS grid map — a big testbed (50 systems) so influence
+# and border behavior has room to show. NOT the eventual procedural generator
+# (that comes later); just a larger hand-parameterized map. No RNG: jitter is
+# index-based sin so runs stay bit-identical.
+const MAP_COLS := 10
+const MAP_ROWS := 5
+const _SYL_A := ["Ka", "Me", "Or", "Ve", "Ta", "Sy", "Lo", "Ne", "Ro", "Ai"]
+const _SYL_B := ["ron", "dis", "lex", "mos", "tia", "var", "nyx", "del"]
+
+
+static func _system_name(idx: int) -> String:
+	# Unique for idx 0..79: prefix cycles every 10, suffix every 80.
+	return _SYL_A[idx % _SYL_A.size()] + _SYL_B[(idx / _SYL_A.size()) % _SYL_B.size()]
 
 
 static func new_demo() -> Sim:
@@ -39,9 +44,9 @@ static func new_demo() -> Sim:
 	for row in MAP_ROWS:
 		for col in MAP_COLS:
 			var idx := row * MAP_COLS + col
-			var sys := sim.add_system(_MAP_NAMES[idx])
-			sys.map_pos = Vector2(140.0 + col * 250.0, 150.0 + row * 200.0) \
-				+ Vector2(sin(idx * 12.9898) * 32.0, sin(idx * 4.1414) * 26.0)
+			var sys := sim.add_system(_system_name(idx))
+			sys.map_pos = Vector2(160.0 + col * 200.0, 150.0 + row * 190.0) \
+				+ Vector2(sin(idx * 12.9898) * 30.0, sin(idx * 4.1414) * 24.0)
 			grid.append(sys.id)
 			var planet_count := 2 + idx % 3
 			for pi in planet_count:
@@ -62,10 +67,12 @@ static func new_demo() -> Sim:
 				sim.add_lane(here, grid[(row + 1) * MAP_COLS + col + 1])
 	# Two empires at opposite corners; both homeworlds get a deposit so each can
 	# mine at home. By convention the first empire is the one the UI controls.
-	var player := sim.add_empire("Meridian Compact", Color(0.35, 0.8, 1.0))
-	var rival := sim.add_empire("Wex Ascendancy", Color(1.0, 0.4, 0.35))
 	var player_home_sys: int = grid[0]                      # top-left
 	var rival_home_sys: int = grid[grid.size() - 1]         # bottom-right
+	var player := sim.add_empire(
+		"%s Compact" % sim.systems[player_home_sys].name, Color(0.35, 0.8, 1.0))
+	var rival := sim.add_empire(
+		"%s Ascendancy" % sim.systems[rival_home_sys].name, Color(1.0, 0.4, 0.35))
 	for sys_id in [player_home_sys, rival_home_sys]:
 		sim.planets[sim.systems[sys_id].planet_ids[0]].has_deposit = true
 	var home := sim.inject_colony(player.id,

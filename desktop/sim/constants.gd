@@ -27,10 +27,10 @@ const ACTIVATION_POP := 100.0
 # Growth: dpop/day = GROWTH_RATE * pop / (1 + (pop/GROWTH_SOFTCAP)^GROWTH_EXP),
 # times the neighbor multiplier below. Never a hard cap — growth only
 # asymptotically flattens; the neighbor bonus is the designed way past the wall.
-# GROWTH_RATE was halved (0.08 -> 0.04) to slow population — and therefore
-# influence (= A1*pop) — expansion; still tune-to-taste, and the speed dial
-# covers the boring stretches.
-const GROWTH_RATE := 0.04
+# GROWTH_RATE lowered again (0.08 -> 0.04 -> 0.02) to slow population — and
+# therefore influence (= A1*pop) — expansion further; still tune-to-taste, and
+# the speed dial covers the boring stretches.
+const GROWTH_RATE := 0.02
 const GROWTH_SOFTCAP := 500.0
 const GROWTH_EXP := 2.0
 
@@ -48,7 +48,7 @@ const MINE_RAW_PER_DAY := 5.0
 
 # How often an AI empire re-evaluates (sim days). Gradual, deterministic; not
 # tied to framerate or the speed dial (which only change ticks per real second).
-const AI_ACTION_INTERVAL_DAYS := 5.0
+const AI_ACTION_INTERVAL_DAYS := 8.0
 
 # Tier-1 production of an established colony: goods/day = PROD_COEF * pop^PROD_EXP,
 # but every good consumes GOODS_RAW_PER_GOOD raw — production is throughput-limited
