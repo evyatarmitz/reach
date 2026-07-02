@@ -73,13 +73,28 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
-## Status — through 0.9.0 (2026-07-02, Godot 4.7)
+## Status — through 0.12.0 (2026-07-02, Godot 4.7)
 
 The economic + spatial foundation is built, tested, and playable. Both core design
 pillars are in and covered by tests. Build/run: `run.bat`, or `godot --path desktop`.
 Tests: `godot --headless --path desktop --script res://tests/run_tests.gd` (after a
-one-time `--import`). Visual: `godot --path desktop -- --autoshot` (saves galaxy +
-system PNGs to the Godot user dir). **77 headless test assertions, all passing.**
+one-time `--import`). Visual: `godot --path desktop -- --autoshot`. **61 headless
+test assertions, all passing** (economy suite rewritten for the resource model).
+
+Recent batch (0.10.0–0.12.0):
+- **0.10.0** Two-tier resource economy. Two T0 (water, minerals) from two deposit
+  types (same mine); established cities refine water→food, minerals→alloys (partial
+  if input-limited). Population is food-driven, empire-wide: end-of-tick food balance
+  >0 grow / =0 steady / <0 SHRINK (pops can decrease now — fixed the "empty stockpile
+  but pop climbing" bug). Alloys pay for colonies+mines. Food ceiling emerges from
+  sublinear conversion capacity vs linear demand + mine throughput (homeworld ~500 pop
+  on one water mine vs old unbounded ~3900).
+- **0.11.0** Fog: sight = 1.5× a colony's influence reach (scales with strength;
+  mines a flat sensor range), and unseen space is fully DARK (black bg, seen area lit,
+  unseen systems/lanes not drawn) — not a grey map.
+- **0.12.0** Border is a smooth marching-squares CURVE (per-empire margin zero-contour,
+  interpolated), player's colour on top at the seam. Not a staircase.
+- 0.9.1 (earlier): fixed a border-recompute stall that froze mouse input.
 
 Done so far (one commit each, 0.1.0 → 0.9.0):
 - **0.1.0** Colony lifecycle: founding (flat cost) → drain phase → activation at a pop
