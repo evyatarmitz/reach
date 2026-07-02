@@ -33,6 +33,7 @@ var _map_lo := Vector2.ZERO
 var _map_hi := Vector2.ZERO
 var _border_segments: Array = []
 var _border_timer := 0.0
+var _sight: Array = []   # player's sight-source world positions, refreshed per frame
 
 var raw_label: Label
 var goods_label: Label
@@ -83,6 +84,7 @@ func _process(delta: float) -> void:
 		while day_accum >= SimConstants.TICK_DAYS:
 			sim.tick(SimConstants.TICK_DAYS)
 			day_accum -= SimConstants.TICK_DAYS
+	_sight = sim.sight_positions(player_empire_id)
 	if view_system_id == -1:
 		_border_timer -= delta
 		if _border_timer <= 0.0:
@@ -123,10 +125,10 @@ func _recompute_borders() -> void:
 				(gx - 1 >= 0 and owner[gy * cols + gx - 1] != o) or \
 				(gy + 1 < rows and owner[(gy + 1) * cols + gx] != o) or \
 				(gy - 1 >= 0 and owner[(gy - 1) * cols + gx] != o)
-			if frontier:
-				_border_segments.append([
-					Vector2(lo.x + gx * BORDER_CELL, lo.y + gy * BORDER_CELL),
-					sim.empires[o].color])
+			var c := Vector2(lo.x + gx * BORDER_CELL, lo.y + gy * BORDER_CELL)
+			# Fog of war: only show border where the player can actually see.
+			if frontier and _visible(c):
+				_border_segments.append([c, sim.empires[o].color])
 
 
 # Galaxy view: free pan/zoom (persisted). System view: locked so SYSTEM_CENTER
@@ -177,7 +179,8 @@ func _unhandled_input(event: InputEvent) -> void:
 func _select_at(pos: Vector2) -> void:
 	if view_system_id == -1:
 		for sys in sim.systems.values():
-			if pos.distance_to(sys.map_pos) <= 20.0:
+			# Fog of war: only systems in sensor range can be inspected.
+			if pos.distance_to(sys.map_pos) <= 20.0 and _visible(sys.map_pos):
 				view_system_id = sys.id
 				selected_planet_id = -1
 				return
@@ -194,6 +197,13 @@ func _planet_pos(planet: Planet) -> Vector2:
 	return SYSTEM_CENTER + Vector2.from_angle(planet.orbit_angle) * planet.orbit_radius
 
 
+func _visible(pos: Vector2) -> bool:
+	for src in _sight:
+		if pos.distance_to(src) <= SimConstants.SIGHT_RANGE:
+			return true
+	return false
+
+
 func _draw() -> void:
 	if view_system_id == -1:
 		_draw_galaxy()
@@ -203,14 +213,28 @@ func _draw() -> void:
 
 func _draw_galaxy() -> void:
 	var font := ThemeDB.fallback_font
+	# Seen area: faint discs around the player's sight sources (inverse fog —
+	# lightens what you can see rather than needing a full-screen dark overlay).
+	var seen_tint: Color = sim.empires[player_empire_id].color
+	seen_tint.a = 0.05
+	for src in _sight:
+		draw_circle(src, SimConstants.SIGHT_RANGE, seen_tint)
 	# Deformed influence borders (bold, in each empire's colour), under the rest.
 	# Dots at frontier-cell centres; adjacent cells overlap into a solid edge.
+	# Already fog-gated in _recompute_borders.
 	for seg in _border_segments:
 		draw_circle(seg[0], BORDER_CELL * 0.6, seg[1])
 	for lane in sim.lanes:
 		draw_line(sim.systems[lane[0]].map_pos, sim.systems[lane[1]].map_pos,
 			Color(1, 1, 1, 0.13), 1.5)
 	for sys in sim.systems.values():
+		# Fog of war: systems out of sight are shown as unknown (dim, no live
+		# owner/colony info — you know the map layout, not the current state).
+		if not _visible(sys.map_pos):
+			draw_circle(sys.map_pos, 7.0, Color(0.5, 0.5, 0.55, 0.35))
+			draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
+				HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.2))
+			continue
 		draw_circle(sys.map_pos, 9.0, Color(1.0, 0.85, 0.35))
 		# Live border contest result: ring in the current owner's color.
 		var owner: int = sim.system_owner(sys.id)

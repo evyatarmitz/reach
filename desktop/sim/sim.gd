@@ -280,6 +280,31 @@ func neighbor_growth_multiplier(colony: Colony) -> float:
 	return 1.0 + SimConstants.NEIGHBOR_COEF * bonus
 
 
+# --- visibility (fog of war) --------------------------------------------------
+# An empire sees within SIGHT_RANGE of any point of presence (a colony or a
+# mine). Separate from influence — you can hold ground you can't see. AI empires
+# are full-info for now; fog is a player-facing concern.
+func sight_positions(empire_id: int) -> Array:
+	var seen := {}   # system_id -> true, so one colony per system isn't counted twice
+	for c in colonies:
+		if c.empire_id == empire_id:
+			seen[planets[c.planet_id].system_id] = true
+	for p in planets.values():
+		if p.has_mine() and p.mine_empire_id == empire_id:
+			seen[p.system_id] = true
+	var out: Array = []
+	for sid in seen:
+		out.append(systems[sid].map_pos)
+	return out
+
+
+func is_point_visible(pos: Vector2, empire_id: int) -> bool:
+	for src in sight_positions(empire_id):
+		if pos.distance_to(src) <= SimConstants.SIGHT_RANGE:
+			return true
+	return false
+
+
 # --- commands (same gating for every empire) ----------------------------------
 
 func can_found_colony(empire_id: int, planet_id: int) -> bool:

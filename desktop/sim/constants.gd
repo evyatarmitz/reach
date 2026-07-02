@@ -57,6 +57,13 @@ const PROD_COEF := 0.05
 const PROD_EXP := 0.8
 const GOODS_RAW_PER_GOOD := 2.0
 
+# Fog of war: how far an empire SEES around each point of presence (colony or
+# mine). Deliberately separate from — and smaller than — influence reach, so you
+# can hold influence over ground you can't currently see. The observation post
+# (later) will extend this. ~1.5 system spacings: you see immediate neighbours,
+# not the far map.
+const SIGHT_RANGE := 320.0
+
 # Influence (vision.md core formulas): influence = A1 * pop_count; a system's
 # uncontested reach = A2 * influence; contested borders sit at the
 # influence-ratio point (claim = influence / distance, strongest claim wins).

@@ -53,6 +53,7 @@ func _init() -> void:
 	_test_influence_gating()
 	_test_border_contest()
 	_test_influence_field()
+	_test_fog_of_war()
 	_test_neighbor_bonus()
 	_test_ai_rival()
 	_test_mining()
@@ -245,6 +246,41 @@ func _test_influence_field() -> void:
 	sim.inject_colony(e1.id, sim.add_planet(sa.id, "a2").id, 100.0, true)
 	check(is_equal_approx(sim.empire_claim_at(Vector2(150, 0), e1.id), base),
 		"field: same-system colonies don't stack (max, not sum)")
+
+
+func _test_fog_of_war() -> void:
+	var sim := Sim.new()
+	var e := sim.add_empire("A", Color.WHITE)
+	# A tiny colony (small influence) but sight is a flat SIGHT_RANGE, so a point
+	# far beyond its influence reach can still be within sight, and vice versa.
+	var home := sim.add_system("Home")
+	home.map_pos = Vector2.ZERO
+	var hp := sim.add_planet(home.id, "H")
+	hp.has_deposit = true
+	sim.inject_colony(e.id, hp.id, 5.0, true)  # influence reach = 1.8*5 = 9 (tiny)
+
+	check(sim.is_point_visible(home.map_pos, e.id),
+		"own colony's system is visible")
+	check(sim.is_point_visible(
+		Vector2(SimConstants.SIGHT_RANGE - 1.0, 0.0), e.id),
+		"a point just inside sight range is visible")
+	check(not sim.is_point_visible(
+		Vector2(SimConstants.SIGHT_RANGE + 1.0, 0.0), e.id),
+		"a point just beyond sight range is not visible")
+	check(SimConstants.SIGHT_RANGE > sim.influence_reach(home.id, e.id),
+		"sight is independent of (here, larger than) influence reach")
+
+	# A mine grants sight even with no colony in that system.
+	var sim2 := Sim.new()
+	var e2 := sim2.add_empire("B", Color.WHITE)
+	var s := sim2.add_system("S")
+	s.map_pos = Vector2(1000, 0)
+	var mp := sim2.add_planet(s.id, "M")
+	mp.mine_empire_id = e2.id
+	check(sim2.is_point_visible(s.map_pos, e2.id),
+		"a mine is a sight source too")
+	check(not sim2.is_point_visible(Vector2(0, 0), e2.id),
+		"points far from all presence are fogged")
 
 
 func _neighbor_rig() -> Dictionary:
