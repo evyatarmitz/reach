@@ -1,0 +1,353 @@
+This document defines the full scope, constraints, and non-negotiable rules of the project.
+
+==================================================
+1. CORE IDEA
+==================================================
+
+The game is a continuous, single-world simulation where:
+
+- The player is ALWAYS embodied as a physical entity in the world
+- There are NO abstract control modes
+- There is NO separation into different "game types" or "modes"
+- All interactions occur through in-world systems
+
+The player never becomes:
+- a camera
+- a god entity
+- a detached strategy controller
+
+Instead:
+- The player is a person inside the world at all times
+
+==================================================
+2. CONTROL PHILOSOPHY
+==================================================
+
+Control is NOT granted by UI or perspective.
+
+Control emerges from:
+- physical presence
+- communication systems
+- authority (role and hierarchy)
+
+There are two types of control:
+
+--------------------------------------------------
+2.1 Direct Control
+--------------------------------------------------
+
+Requires physical presence.
+
+Examples:
+- firing a weapon
+- piloting a vehicle
+- repairing systems
+- operating machinery
+
+If the player is not physically present:
+→ direct control is impossible
+
+--------------------------------------------------
+2.2 Command Control
+--------------------------------------------------
+
+Requires:
+- authority (rank/role)
+- communication access
+- subordinates (AI agents)
+
+The player does NOT directly control units.
+
+The player:
+→ issues orders
+→ influences actors
+
+Orders:
+- may be delayed
+- may be misunderstood
+- may be ignored (disloyalty is allowed)
+- depend on communication quality
+
+==================================================
+3. WORLD STRUCTURE
+==================================================
+
+The world is:
+
+- continuous
+- persistent
+- unified
+
+There is only ONE world state.
+
+There are NO:
+- separate simulation layers
+- fake background simulations
+- disconnected minigames
+
+All systems must operate on the same underlying state.
+
+==================================================
+4. SIMULATION MODEL
+==================================================
+
+The game uses multi-fidelity simulation.
+
+The world is NOT fully simulated at maximum detail at all times.
+
+Instead, simulation operates at different levels:
+
+--------------------------------------------------
+4.1 High Fidelity
+--------------------------------------------------
+Used for:
+- player surroundings
+- active interactions
+- critical events
+
+Includes:
+- full physics
+- detailed AI
+- projectiles
+- real-time systems
+
+--------------------------------------------------
+4.2 Medium Fidelity
+--------------------------------------------------
+Used for:
+- nearby but not directly interacted areas
+
+Includes:
+- simplified movement
+- simplified combat
+- reduced update frequency
+
+--------------------------------------------------
+4.3 Low Fidelity (Abstract)
+--------------------------------------------------
+Used for:
+- distant areas
+
+Includes:
+- statistical simulation
+- outcome-based systems
+- time-based resolution
+
+--------------------------------------------------
+4.4 Rules
+--------------------------------------------------
+
+- Entities must transition between fidelity levels
+- Transitions must preserve:
+  - identity
+  - state
+  - damage
+  - resources
+
+NO:
+- duplication
+- teleportation artifacts
+- state loss
+
+==================================================
+5. CAUSALITY
+==================================================
+
+The system must support full causality propagation.
+
+Requirements:
+
+- Local actions must affect global outcomes
+- Global state must affect local gameplay
+
+Examples:
+- damaging a ship subsystem affects a battle
+- losing a battle affects territory
+- territory affects resources
+- resources affect future battles
+
+This propagation must be continuous and consistent.
+
+==================================================
+6. PLAYER MODEL
+==================================================
+
+- Single persistent character
+- Always physically exists in the world
+- No body switching
+
+The player:
+- can die
+- can lose control temporarily
+- does NOT lose overall progress immediately
+
+==================================================
+7. DEATH & CONTINUITY SYSTEM
+==================================================
+
+Death removes direct control but does NOT end the world.
+
+--------------------------------------------------
+7.1 Continuity Anchor
+--------------------------------------------------
+
+A physical system in the world that enables player return.
+
+Properties:
+- exists physically
+- has a location
+- can be destroyed
+- can be moved
+
+--------------------------------------------------
+7.2 Respawn Rules
+--------------------------------------------------
+
+On player death:
+1. Player loses control
+2. World continues via AI and command chain
+3. Respawn timer begins
+
+--------------------------------------------------
+7.3 Respawn Time
+--------------------------------------------------
+
+Depends on:
+- distance to anchor
+- anchor placement
+
+Examples:
+- same battle → minutes
+- nearby system → hours
+- distant system → months
+- galaxy scale → years
+
+--------------------------------------------------
+7.4 Anchor Risk
+--------------------------------------------------
+
+- If anchor is destroyed:
+  → player cannot respawn
+  → game over
+
+- Anchor must be protected
+- Placement is a strategic decision:
+  - safe → long delay
+  - risky → short delay
+
+==================================================
+8. COMMAND STRUCTURE
+==================================================
+
+The player builds a chain of command.
+
+Includes:
+- officers
+- specialists
+- entourage (e.g. war chief)
+
+Functions:
+- execute orders
+- relay information
+- interpret intent
+
+Delegation:
+- occurs automatically when player leaves
+- can be configured manually
+
+==================================================
+9. NPC SYSTEM
+==================================================
+
+NPCs:
+- have competence levels (no RPG stats for player)
+- have roles
+- have behaviors
+
+They:
+- execute tasks
+- interpret orders
+- may fail or act imperfectly
+
+The system must support:
+- variation in competence
+- reliability differences
+- behavioral diversity
+
+==================================================
+10. DESIGN RESTRICTIONS (NON-NEGOTIABLE)
+==================================================
+
+The system MUST NOT include:
+
+- god-camera control
+- instant authority teleportation
+- disconnected gameplay modes
+- fake simulations
+- hardcoded system limits (e.g. fixed ship sizes)
+- UI-granted power without in-world justification
+
+==================================================
+11. SYSTEM DESIGN REQUIREMENTS
+==================================================
+
+All systems must be:
+
+- modular
+- standalone-testable
+- data-driven
+- serializable
+- scale-independent
+
+DO NOT build:
+- specific game content (e.g. "rifle system")
+
+DO build:
+- generic frameworks (e.g. "projectile system")
+
+All content must come from data definitions.
+
+==================================================
+12. FIRST IMPLEMENTATION TARGET (VERTICAL SLICE)
+==================================================
+
+Initial scenario:
+
+- one walkable ship
+- one enemy ship
+- one local battle
+- one command console
+- one engineering section
+- one turret system
+
+Player must be able to:
+
+- walk inside the ship
+- operate a turret
+- damage an enemy
+- leave turret
+- move through ship
+- repair a system
+- access command console
+- issue an order
+- observe external consequences
+
+==================================================
+13. DESIGN PRINCIPLE (CRITICAL)
+==================================================
+
+Every system must answer:
+
+"Why does the player have this level of control?"
+
+Valid reasons:
+- physical presence
+- authority
+- communication access
+- system functionality
+
+Invalid reasons:
+- UI convenience
+- camera position
+- arbitrary design shortcuts
+
