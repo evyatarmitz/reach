@@ -50,6 +50,7 @@ static func default_map_config() -> Dictionary:
 		"density_spread": 360.0,  # heatmap: blob radius (bigger = smoother)
 		"min_separation": 95.0,   # min distance between systems
 		"extra_lane_neighbors": 2,# lanes beyond the spanning tree (loops/chokepoints)
+		"ai_efficiency": 1.0,     # difficulty: AI production multiplier
 	}
 
 
@@ -57,11 +58,21 @@ static func new_demo() -> Sim:
 	return generate_map(default_map_config())
 
 
+# Merge a partial config over the defaults, so the menu can pass only the knobs it
+# changes (map size / empire count / difficulty) and the rest stay sensible.
+static func _merged_config(cfg: Dictionary) -> Dictionary:
+	var c := default_map_config()
+	for k in cfg:
+		c[k] = cfg[k]
+	return c
+
+
 # Procedural map: systems scattered by a variable-density heatmap, connected by a
 # minimum spanning tree (guarantees NO disconnected parts) plus a few nearest-
 # neighbor lanes for loops/chokepoints, then N empires placed far apart. Seeded
 # RNG only — same config -> identical map, so the sim stays deterministic.
-static func generate_map(cfg: Dictionary) -> Sim:
+static func generate_map(cfg_in: Dictionary) -> Sim:
+	var cfg := _merged_config(cfg_in)
 	var sim := Sim.new()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = cfg.seed
@@ -112,7 +123,8 @@ static func generate_map(cfg: Dictionary) -> Sim:
 					else SimConstants.Deposit.MINERAL
 
 	_connect_systems(sim, sys_ids, positions, int(cfg.extra_lane_neighbors))
-	_place_empires(sim, sys_ids, positions, int(cfg.empire_count))
+	_place_empires(sim, sys_ids, positions, int(cfg.empire_count),
+		float(cfg.ai_efficiency))
 	return sim
 
 
@@ -163,7 +175,7 @@ static func _connect_systems(sim: Sim, sys_ids: Array, positions: Array,
 # empire is the player; the rest get an AI. Each homeworld gets a mineral mine +
 # water mine (free) so its capital is self-sustaining from tick 1.
 static func _place_empires(sim: Sim, sys_ids: Array, positions: Array,
-		count: int) -> void:
+		count: int, ai_efficiency: float) -> void:
 	var n := sys_ids.size()
 	var chosen: Array = [0]
 	while chosen.size() < count and chosen.size() < n:
@@ -187,6 +199,8 @@ static func _place_empires(sim: Sim, sys_ids: Array, positions: Array,
 		var ename := "%s %s" % [sim.systems[sid].name,
 			_EMPIRE_SUFFIX[e_i % _EMPIRE_SUFFIX.size()]]
 		var emp := sim.add_empire(ename, _EMPIRE_COLORS[e_i % _EMPIRE_COLORS.size()])
+		if e_i > 0:   # AI empires scale with difficulty; the player stays at 1.0
+			emp.efficiency = ai_efficiency
 		var pids: Array = sim.systems[sid].planet_ids
 		var mineral_p: Planet = sim.planets[pids[0]]
 		var water_p: Planet = sim.planets[pids[1]]
@@ -815,7 +829,7 @@ func tick(dt_days: float) -> void:
 	for p in planets.values():
 		if p.has_mine():
 			var e: Empire = empires[p.mine_empire_id]
-			var out: float = p.mine_output() * dt_days
+			var out: float = p.mine_output() * dt_days * e.efficiency
 			if p.deposit_type == SimConstants.Deposit.WATER:
 				e.water += out
 			elif p.deposit_type == SimConstants.Deposit.MINERAL:
@@ -832,12 +846,13 @@ func tick(dt_days: float) -> void:
 			c.spec_strength = minf(1.0,
 				c.spec_strength + dt_days / SimConstants.SPEC_RAMP_DAYS)
 		var food_made: float = minf(
-			c.food_capacity() * c.spec_factor(SimConstants.Spec.FOOD) * dt_days, e.water)
+			c.food_capacity() * c.spec_factor(SimConstants.Spec.FOOD) \
+			* e.efficiency * dt_days, e.water)
 		e.water -= food_made
 		e.food += food_made
 		var alloy_made: float = minf(
-			c.alloy_capacity() * c.spec_factor(SimConstants.Spec.ALLOY) * dt_days,
-			e.minerals)
+			c.alloy_capacity() * c.spec_factor(SimConstants.Spec.ALLOY) \
+			* e.efficiency * dt_days, e.minerals)
 		e.minerals -= alloy_made
 		e.alloys += alloy_made
 		# Military refining chain: tier 1 from alloys, each higher tier from the

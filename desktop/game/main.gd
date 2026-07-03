@@ -75,8 +75,12 @@ var _panel_system := -1        # which system the planet list was built for
 func _ready() -> void:
 	# Black space so fogged (unseen) area reads as truly dark, not grey.
 	RenderingServer.set_default_clear_color(Color(0.02, 0.02, 0.03))
-	sim = Sim.new_demo()
-	player_empire_id = sim.empires.keys()[0]  # demo convention: first = human
+	# New game from the menu's settings, or the default demo map.
+	if not Session.config.is_empty():
+		sim = Sim.generate_map(Session.config)
+	else:
+		sim = Sim.new_demo()
+	player_empire_id = sim.empires.keys()[0]  # first empire = human player
 	_build_ui()
 	_init_camera()
 	if "--autoshot" in OS.get_cmdline_user_args():

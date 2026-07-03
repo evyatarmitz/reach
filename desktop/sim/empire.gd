@@ -18,3 +18,5 @@ var food: float = SimConstants.START_FOOD
 var alloys: float = SimConstants.START_ALLOYS
 # National military resources, tiers 1-5 (index 0-4), refined in cities.
 var nat: Array[float] = [0.0, 0.0, 0.0, 0.0, 0.0]
+# Production multiplier — 1.0 for the player; AI empires scale by difficulty.
+var efficiency: float = 1.0

@@ -68,6 +68,7 @@ func _init() -> void:
 	_test_power_ceiling()
 	_test_attrition_and_depot()
 	_test_structure_capture()
+	_test_difficulty()
 	_test_determinism()
 	if failures == 0:
 		print("ALL TESTS PASSED")
@@ -783,6 +784,35 @@ func _test_structure_capture() -> void:
 	sim.tick(SimConstants.TICK_DAYS)
 	check(mp.mine_empire_id == strong.id,
 		"a mine changes hands to whoever controls the system as the border shifts")
+
+
+func _test_difficulty() -> void:
+	# Empire.efficiency scales mining output. Same mine, two efficiencies -> the
+	# higher-efficiency empire banks more of the T0 resource per tick.
+	var low := _mined_over(0.5)
+	var high := _mined_over(1.5)
+	check(high > low and low > 0.0,
+		"empire efficiency (difficulty) scales resource gathering")
+	# The generator applies ai_efficiency to AI empires, not the player.
+	var sim := Sim.generate_map({"ai_efficiency": 0.5, "empire_count": 3})
+	var ids: Array = sim.empires.keys()
+	check(is_equal_approx(sim.empires[ids[0]].efficiency, 1.0),
+		"the player empire keeps efficiency 1.0")
+	check(is_equal_approx(sim.empires[ids[1]].efficiency, 0.5),
+		"AI empires take the configured difficulty efficiency")
+
+
+func _mined_over(eff: float) -> float:
+	var sim := Sim.new()
+	var e := sim.add_empire("E", Color.WHITE)
+	e.efficiency = eff
+	var s := sim.add_system("S")
+	s.map_pos = Vector2.ZERO
+	var p := sim.add_planet(s.id, "p")
+	p.deposit_type = SimConstants.Deposit.WATER
+	p.mine_empire_id = e.id
+	sim.tick(SimConstants.TICK_DAYS)
+	return e.water
 
 
 func _test_determinism() -> void:
