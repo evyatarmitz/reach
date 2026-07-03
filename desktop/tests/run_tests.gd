@@ -647,7 +647,7 @@ func _test_military_resources() -> void:
 	e2.alloys = 1.0e9
 	var s2 := sim2.add_system("S")
 	s2.map_pos = Vector2.ZERO
-	sim2.inject_colony(e2.id, sim2.add_planet(s2.id, "small").id, 150.0, true)
+	sim2.inject_colony(e2.id, sim2.add_planet(s2.id, "small").id, 100.0, true)
 	run_days(sim2, 40.0)
 	check(e2.nat[0] > 0.0 and e2.nat[1] == 0.0,
 		"a small city (below the tier-2 cutoff) refines only tier 1")

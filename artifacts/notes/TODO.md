@@ -73,6 +73,36 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.41.0–0.44.0 (2026-07-03, Godot 4.7) — GRAPHICS + BALANCE PASS
+
+Autonomous polish/graphics/balance session (user away).
+- **0.41.0** Graphics: deep-space starfield backdrop (seeded, static) + systems
+  render as spectral glowing stars (per-system colour, soft glow + core), live
+  bright / explored dim.
+- **0.42.0** Graphics: heading-aware fleet arrowheads (point along travel) +
+  shape-coded planet glyphs (colony disc w/ rim, water droplet, mineral diamond,
+  mine bracket) — readable without relying on colour.
+- **0.43.0** Polish: toggleable legend (L) keying every map symbol/colour/state.
+- **0.44.0** BALANCE PASS. Built `tests/balance_report.gd` — a headless all-AI
+  probe that runs a full game and reports the two pillars + economy health. Run:
+  `godot --headless --path desktop --script res://tests/balance_report.gd`
+  (args: `seed= systems= empires= days=`). Findings + fixes:
+  - **T0 stockpile balloon** (raw water+minerals hit ~1.3M unused — mines
+    out-produced refining several ×): MINE_RICHNESS 25-65 → 12-30, halving it to
+    ~0.55M. Raw is now closer to a real constraint. (Still ~0.5M — a candidate for
+    a further cut or a raw-stockpile cap; left as a playtest knob.)
+  - **Military tiers 3-5 were DEAD CONTENT** (cities never reached the old
+    900/1600/2500 cutoffs, so T3-5 always showed 0): MIL_CUTOFF lowered to
+    [50,150,350,700,1200]. All five tiers now produce (verified in the probe).
+  - **Pillar checks (healthy):** no steamroll ever (final map share ~34/28/20/18,
+    nobody >75%); growth self-limits to a stable plateau.
+  - **KNOWN, NOT FIXED — pop boom-bust:** total pop overshoots (~160k peak) during
+    the expansion→maturity transition, then famine-corrects to a stable ~45k
+    plateau. It's a self-correcting startup transient, violates neither pillar, and
+    resisted simple fixes (a neighbor-bonus cap shrank cities and broke mil-tier
+    access; a food-stockpile buffer didn't dampen it — both reverted). Needs live
+    playtesting to tune the growth/food feedback to feel. Use balance_report.gd.
+
 ## Status — through 0.40.0 (2026-07-03, Godot 4.7) — FOG/VR POLISH + FOW MEMORY
 
 Post-alpha fixes, all from user playtest feedback on the fog of war:

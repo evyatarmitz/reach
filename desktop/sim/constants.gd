@@ -83,9 +83,13 @@ const IMMIGRATION_RATE := 0.01
 # constant over time, varies by deposit) so later mine upgrades have a reason to
 # prefer some deposits. The exact richness is hidden until a mine is built — the
 # planet view shows only an ESTIMATE_BAND-wide bracket before building.
-const MINE_RICHNESS_MIN := 25.0
-const MINE_RICHNESS_MAX := 65.0
-const ESTIMATE_BAND := 15.0
+# Tuned down from 25-65: at the old rate mines out-produced city refining several
+# times over, so raw water/minerals ballooned into the millions (a meaningless
+# buffer that never drained — see tests/balance_report.gd). Lower richness keeps
+# raw supply near refining demand, so mines/deposits stay a real constraint.
+const MINE_RICHNESS_MIN := 12.0
+const MINE_RICHNESS_MAX := 30.0
+const ESTIMATE_BAND := 8.0
 
 # How often an AI empire re-evaluates (sim days). Gradual, deterministic; not
 # tied to framerate or the speed dial.
@@ -136,7 +140,11 @@ const ALLOY_CONV_COEF := 0.05
 # is made from alloys, each higher tier from the one below it, and each tier is
 # gated by a city population cutoff (higher tiers need bigger cities — "more
 # resources for higher-tier production"). Ships of tier T cost the tier-T resource.
-const MIL_CUTOFF := [100.0, 400.0, 900.0, 1600.0, 2500.0]
+# Lowered from [100,400,900,1600,2500]: cities in a real game top out around a few
+# hundred to ~1500 pop, so the old high cutoffs left ship tiers 3-5 permanently
+# unbuildable (dead content — every game showed Mil T3-5 stuck at 0). These map the
+# five tiers onto achievable city sizes: small cities make T1-2, big cities T3-5.
+const MIL_CUTOFF := [50.0, 150.0, 350.0, 700.0, 1200.0]
 const MIL_COEF := 0.02
 const MIL_EXP := 0.8
 
