@@ -217,6 +217,130 @@ func add_ai(empire_id: int) -> void:
 	ais.append(EmpireAI.new(empire_id))
 
 
+# --- save / load -------------------------------------------------------------
+# Serialize the whole sim to a plain Dictionary (JSON-safe). deserialize() is the
+# inverse. JSON turns every number into a float, so deserialize int()s all ids.
+
+func serialize() -> Dictionary:
+	var es: Array = []
+	for e in empires.values():
+		es.append({"id": e.id, "name": e.name,
+			"color": [e.color.r, e.color.g, e.color.b, e.color.a],
+			"water": e.water, "minerals": e.minerals, "food": e.food,
+			"alloys": e.alloys, "nat": e.nat.duplicate(), "eff": e.efficiency})
+	var ss: Array = []
+	for s in systems.values():
+		ss.append({"id": s.id, "name": s.name, "x": s.map_pos.x, "y": s.map_pos.y,
+			"depot": s.depot_empire_id, "planets": s.planet_ids.duplicate()})
+	var ps: Array = []
+	for p in planets.values():
+		ps.append({"id": p.id, "sys": p.system_id, "name": p.name,
+			"dep": p.deposit_type, "mine": p.mine_empire_id, "mlvl": p.mine_level,
+			"orad": p.orbit_radius, "oang": p.orbit_angle})
+	var cs: Array = []
+	for c in colonies:
+		cs.append({"pid": c.planet_id, "eid": c.empire_id, "pop": c.population,
+			"est": c.established, "emi": c.emigrating, "spec": c.spec,
+			"sstr": c.spec_strength})
+	var fs: Array = []
+	for f in fleets:
+		fs.append({"id": f.id, "eid": f.empire_id, "sys": f.system_id,
+			"path": f.path.duplicate(), "prog": f.progress,
+			"fi": f.fighters.duplicate(), "bo": f.bombers.duplicate(),
+			"dmg": f.damage, "fd": f.foreign_days})
+	var ai: Array = []
+	for a in ais:
+		ai.append({"eid": a.empire_id, "bc": a._build_count,
+			"nad": a._next_action_day})
+	return {"day": day, "next_id": _next_id, "empires": es, "systems": ss,
+		"planets": ps, "colonies": cs, "fleets": fs, "lanes": lanes.duplicate(true),
+		"ais": ai}
+
+
+static func deserialize(d: Dictionary) -> Sim:
+	var sim := Sim.new()
+	sim.day = d.day
+	sim._next_id = int(d.next_id)
+	for e in d.empires:
+		var emp := Empire.new()
+		emp.id = int(e.id)
+		emp.name = e.name
+		var col: Array = e.color
+		emp.color = Color(col[0], col[1], col[2], col[3])
+		emp.water = e.water
+		emp.minerals = e.minerals
+		emp.food = e.food
+		emp.alloys = e.alloys
+		emp.efficiency = e.eff
+		var nat: Array[float] = []
+		for v in e.nat:
+			nat.append(float(v))
+		emp.nat = nat
+		sim.empires[emp.id] = emp
+	for s in d.systems:
+		var sys := StarSystem.new()
+		sys.id = int(s.id)
+		sys.name = s.name
+		sys.map_pos = Vector2(s.x, s.y)
+		sys.depot_empire_id = int(s.depot)
+		var pl: Array[int] = []
+		for pid in s.planets:
+			pl.append(int(pid))
+		sys.planet_ids = pl
+		sim.systems[sys.id] = sys
+	for p in d.planets:
+		var pp := Planet.new()
+		pp.id = int(p.id)
+		pp.system_id = int(p.sys)
+		pp.name = p.name
+		pp.deposit_type = int(p.dep)
+		pp.mine_empire_id = int(p.mine)
+		pp.mine_level = int(p.mlvl)
+		pp.orbit_radius = p.orad
+		pp.orbit_angle = p.oang
+		sim.planets[pp.id] = pp
+	for c in d.colonies:
+		var col2 := Colony.new()
+		col2.planet_id = int(c.pid)
+		col2.empire_id = int(c.eid)
+		col2.population = c.pop
+		col2.established = c.est
+		col2.emigrating = c.emi
+		col2.spec = int(c.spec)
+		col2.spec_strength = c.sstr
+		sim.planets[col2.planet_id].colony = col2
+		sim.colonies.append(col2)
+	for f in d.fleets:
+		var fl := Fleet.new()
+		fl.id = int(f.id)
+		fl.empire_id = int(f.eid)
+		fl.system_id = int(f.sys)
+		fl.progress = f.prog
+		fl.damage = f.dmg
+		fl.foreign_days = f.fd
+		var pth: Array[int] = []
+		for x in f.path:
+			pth.append(int(x))
+		fl.path = pth
+		var fi: Array[int] = []
+		for v in f.fi:
+			fi.append(int(v))
+		fl.fighters = fi
+		var bo: Array[int] = []
+		for v in f.bo:
+			bo.append(int(v))
+		fl.bombers = bo
+		sim.fleets.append(fl)
+	for l in d.lanes:
+		sim.lanes.append([int(l[0]), int(l[1])])
+	for a in d.ais:
+		var ai := EmpireAI.new(int(a.eid))
+		ai._build_count = int(a.bc)
+		ai._next_action_day = a.nad
+		sim.ais.append(ai)
+	return sim
+
+
 # --- construction -----------------------------------------------------------
 
 func add_empire(empire_name: String, color: Color) -> Empire:

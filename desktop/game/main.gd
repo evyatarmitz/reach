@@ -26,6 +26,7 @@ const BORDER_CELL := 14.0
 const BORDER_REFRESH := 0.4
 const BORDER_EPS := 0.01     # tiny rival-claim floor so bubble-vs-empty edges draw
 const FOG_CELL := 34.0       # coarse cell for the influence-shaped fog fill
+const SAVE_PATH := "user://reach_save.json"
 const FLEET_ICON_OFF := Vector2(0, -17)   # drawn above the system so it stays clickable
 const BORDER_INSET := 3.5    # push each empire's border curve into its own territory
 
@@ -85,6 +86,47 @@ func _ready() -> void:
 	_init_camera()
 	if "--autoshot" in OS.get_cmdline_user_args():
 		_autoshot()
+
+
+func save_game(path: String = SAVE_PATH) -> void:
+	var d := {"sim": sim.serialize(), "player": player_empire_id,
+		"explored": _explored.keys(), "stale": _stale,
+		"fog_seen": _fog_seen.keys(),
+		"cx": _galaxy_cam_pos.x, "cy": _galaxy_cam_pos.y, "cz": _galaxy_cam_zoom}
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify(d))
+		f.close()
+
+
+func load_game(path: String = SAVE_PATH) -> bool:
+	if not FileAccess.file_exists(path):
+		return false
+	var f := FileAccess.open(path, FileAccess.READ)
+	var d = JSON.parse_string(f.get_as_text())
+	f.close()
+	if typeof(d) != TYPE_DICTIONARY:
+		return false
+	sim = Sim.deserialize(d.sim)
+	player_empire_id = int(d.player)
+	_explored = {}
+	for k in d.explored:
+		_explored[int(k)] = true
+	_stale = {}
+	for k in d.stale:
+		_stale[int(k)] = {"owner": int(d.stale[k].owner),
+			"colonies": int(d.stale[k].colonies)}
+	_fog_seen = {}
+	for k in d.fog_seen:
+		_fog_seen[k] = true
+	_galaxy_cam_pos = Vector2(d.cx, d.cy)
+	_galaxy_cam_zoom = d.cz
+	view_system_id = -1
+	selected_planet_id = -1
+	selected_fleet_id = -1
+	_panel_system = -1
+	_recompute_borders()
+	return true
 
 
 func _init_camera() -> void:
@@ -410,6 +452,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_ESCAPE:
 				view_system_id = -1
 				selected_planet_id = -1
+				selected_fleet_id = -1
+			KEY_F5:
+				save_game()
+			KEY_F9:
+				load_game()
 
 
 func _select_at(pos: Vector2) -> void:

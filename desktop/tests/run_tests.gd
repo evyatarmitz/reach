@@ -69,6 +69,7 @@ func _init() -> void:
 	_test_attrition_and_depot()
 	_test_structure_capture()
 	_test_difficulty()
+	_test_save_load()
 	_test_determinism()
 	if failures == 0:
 		print("ALL TESTS PASSED")
@@ -813,6 +814,39 @@ func _mined_over(eff: float) -> float:
 	p.mine_empire_id = e.id
 	sim.tick(SimConstants.TICK_DAYS)
 	return e.water
+
+
+func _test_save_load() -> void:
+	var a := Sim.new_demo()
+	run_days(a, 150.0)   # evolve so there's real state (colonies, resources, maybe ships)
+	# Full JSON round-trip, as a real save would do.
+	var b := Sim.deserialize(JSON.parse_string(JSON.stringify(a.serialize())))
+	check(is_equal_approx(a.day, b.day), "save/load preserves the day")
+	check(a.empires.size() == b.empires.size()
+		and a.systems.size() == b.systems.size()
+		and a.planets.size() == b.planets.size()
+		and a.lanes.size() == b.lanes.size(),
+		"save/load preserves counts (empires/systems/planets/lanes)")
+	check(a.colonies.size() == b.colonies.size()
+		and a.fleets.size() == b.fleets.size(),
+		"save/load preserves colonies and fleets")
+	var same_res := true
+	for id in a.empires:
+		var ea: Empire = a.empires[id]
+		var eb: Empire = b.empires[id]
+		if not (is_equal_approx(ea.alloys, eb.alloys) and is_equal_approx(ea.food, eb.food)
+				and is_equal_approx(ea.efficiency, eb.efficiency)):
+			same_res = false
+	check(same_res, "save/load preserves empire resources + efficiency")
+	var same_pop := true
+	for i in a.colonies.size():
+		if not is_equal_approx(a.colonies[i].population, b.colonies[i].population):
+			same_pop = false
+	check(same_pop, "save/load preserves colony populations")
+	# The loaded sim keeps running correctly.
+	var day_before := b.day
+	run_days(b, 5.0)
+	check(b.day > day_before, "a loaded sim continues to tick")
 
 
 func _test_determinism() -> void:
