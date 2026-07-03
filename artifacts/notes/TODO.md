@@ -73,9 +73,21 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — through 0.30.0 (2026-07-03, Godot 4.7)
+
+**107 headless test assertions, all passing.** Batch 0.29.0–0.30.0:
+- **0.29.0** Mines & supply depots now change hands to the system's current owner
+  as the influence border shifts (colonies still require bombardment — flagged in
+  case you want colonies to flip too). Neighbor growth bonus now also applies
+  WITHIN a system (in-system distance), so a big city lifts its own-system
+  neighbours, not only across systems.
+- **0.30.0** Map indicators: hovering a known system shows a symbol row beneath it
+  (per-planet colony/deposit/mine glyphs + depot); fleet markers show a stripe per
+  10 fighters and a star per 10 bombers.
+
 ## Status — through 0.28.0 (2026-07-03, Godot 4.7)
 
-**105 headless test assertions, all passing.** Batch 0.27.0–0.28.0 (creative-freedom
+Batch 0.27.0–0.28.0 (creative-freedom
 pass: completed the anti-snowball COMBAT PILLAR — the "no war won by one decisive
 fight" promise is now fully enforced):
 - **0.27.0** Hard ship-power ceiling: an empire's combat damage in a battle caps at
