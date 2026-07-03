@@ -136,6 +136,13 @@ const CONV_EXP := 0.8
 const FOOD_CONV_COEF := 0.05
 const ALLOY_CONV_COEF := 0.05
 
+# Raw (T0) stockpile ceiling, as days of the empire's current refining capacity
+# (floored so a young empire can still buffer a little). Mine output beyond this is
+# wasted — a throughput limit that keeps raw a real constraint and removes the giant
+# buffer that fuelled the population boom-then-famine. See tests/balance_report.gd.
+const RAW_STOCK_DAYS := 20.0
+const RAW_STOCK_MIN := 500.0
+
 # National MILITARY resources, one per ship tier (1-5). A refining chain: tier 1
 # is made from alloys, each higher tier from the one below it, and each tier is
 # gated by a city population cutoff (higher tiers need bigger cities — "more

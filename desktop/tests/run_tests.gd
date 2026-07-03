@@ -418,14 +418,14 @@ func _test_conversion() -> void:
 	var s := sim.add_system("S")
 	s.map_pos = Vector2.ZERO
 	var city := sim.inject_colony(e.id, sim.add_planet(s.id, "p").id, 200.0, true)
-	# Plenty of input: a full tick converts up to capacity of each chain. Measure
-	# WATER consumed (food is also eaten by pop the same tick, so the food
-	# stockpile isn't a clean readout of what was refined).
-	e.water = 1.0e6
-	e.minerals = 1.0e6
+	# Ample input (but under the raw-stockpile cap so it isn't clamped): a full tick
+	# converts up to capacity of each chain. Measure WATER consumed (food is also
+	# eaten by pop the same tick, so the food stockpile isn't a clean readout).
+	e.water = 400.0
+	e.minerals = 400.0
 	var cap_before: float = city.food_capacity()   # pop grows during the tick
 	sim.tick(SimConstants.TICK_DAYS)
-	check(is_equal_approx(1.0e6 - e.water, cap_before * SimConstants.TICK_DAYS),
+	check(is_equal_approx(400.0 - e.water, cap_before * SimConstants.TICK_DAYS),
 		"established city refines water into food at capacity when input is ample")
 	check(e.alloys > 0.0, "established city refines minerals into alloys")
 
@@ -451,7 +451,7 @@ func _test_conversion() -> void:
 	var s3 := sim3.add_system("S")
 	s3.map_pos = Vector2.ZERO
 	sim3.inject_colony(e3.id, sim3.add_planet(s3.id, "p").id, 50.0, false)
-	e3.water = 1000.0
+	e3.water = 400.0   # under the raw-stockpile cap floor so it isn't clamped
 	var water_before: float = e3.water
 	sim3.tick(SimConstants.TICK_DAYS)
 	check(is_equal_approx(e3.water, water_before),

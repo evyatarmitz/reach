@@ -108,12 +108,17 @@ Autonomous polish/graphics/balance session (user away).
     [50,150,350,700,1200]. All five tiers now produce (verified in the probe).
   - **Pillar checks (healthy):** no steamroll ever (final map share ~34/28/20/18,
     nobody >75%); growth self-limits to a stable plateau.
-  - **KNOWN, NOT FIXED — pop boom-bust:** total pop overshoots (~160k peak) during
-    the expansion→maturity transition, then famine-corrects to a stable ~45k
-    plateau. It's a self-correcting startup transient, violates neither pillar, and
-    resisted simple fixes (a neighbor-bonus cap shrank cities and broke mil-tier
-    access; a food-stockpile buffer didn't dampen it — both reverted). Needs live
-    playtesting to tune the growth/food feedback to feel. Use balance_report.gd.
+  - **Pop boom-bust — ROOT-CAUSED & largely FIXED in 0.52.0.** The overshoot was a
+    famine: the raw WATER stockpile ballooned (mines >> refining), let refining run
+    hot so pop boomed, then the buffer drained and food collapsed to mine-throughput
+    → uniform pop shrink (colony COUNT held, ruling out bombardment). Same root cause
+    as the T0 balloon. Fix: cap raw stockpiles to ~20 days of the empire's refining
+    capacity (RAW_STOCK_DAYS/MIN). Result: T0 balloon gone (545k → ~2.5k) AND the
+    overshoot roughly halved (peak/final retention 28% → 51%). A mild residual
+    overshoot remains for the largest, most-spread empire (its cap scales with its
+    big refining capacity) — acceptable, self-corrects, violates neither pillar.
+    Earlier dead-ends (neighbor-bonus cap, food-stockpile buffer) were the wrong
+    lever and stay reverted.
 
 ## Status — through 0.40.0 (2026-07-03, Godot 4.7) — FOG/VR POLISH + FOW MEMORY
 

@@ -964,6 +964,23 @@ func tick(dt_days: float) -> void:
 			elif p.deposit_type == SimConstants.Deposit.MINERAL:
 				e.minerals += out
 
+	# 1b. Cap raw stockpiles: you can't hoard T0 beyond what your cities could soon
+	#     refine. A throughput limit — mine output past the cap is wasted, so raw
+	#     stays a real constraint (build more cities) AND there's no giant buffer to
+	#     fuel a population boom-then-famine. Cap scales with current refining
+	#     capacity so it never starves refining.
+	var food_cap := {}   # empire -> total water/day it can refine into food
+	var alloy_cap := {}  # empire -> total minerals/day it can refine into alloys
+	for c in colonies:
+		if c.established:
+			food_cap[c.empire_id] = food_cap.get(c.empire_id, 0.0) + c.food_capacity()
+			alloy_cap[c.empire_id] = alloy_cap.get(c.empire_id, 0.0) + c.alloy_capacity()
+	for e in empires.values():
+		e.water = minf(e.water, maxf(SimConstants.RAW_STOCK_MIN,
+			food_cap.get(e.id, 0.0) * SimConstants.RAW_STOCK_DAYS))
+		e.minerals = minf(e.minerals, maxf(SimConstants.RAW_STOCK_MIN,
+			alloy_cap.get(e.id, 0.0) * SimConstants.RAW_STOCK_DAYS))
+
 	# 2. Established cities refine T0 -> T1, capped by available input (partial
 	#    is fine). Earlier colonies draw first — deterministic by colony order.
 	for c in colonies:
