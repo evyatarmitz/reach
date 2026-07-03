@@ -73,9 +73,28 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — through 0.28.0 (2026-07-03, Godot 4.7)
+
+**105 headless test assertions, all passing.** Batch 0.27.0–0.28.0 (creative-freedom
+pass: completed the anti-snowball COMBAT PILLAR — the "no war won by one decisive
+fight" promise is now fully enforced):
+- **0.27.0** Hard ship-power ceiling: an empire's combat damage in a battle caps at
+  POWER_CEILING; extra ships add hull (survivability), not punch. Big stacks win by
+  outlasting, never one-shot.
+- **0.28.0** Overstay attrition (a fleet in unowned, unsupplied space bleeds hull ∝
+  its own size past a grace period) + supply depot (buildable structure that negates
+  attrition in its system + one jump, doesn't stack).
+- Combat safeguards now all in: throughput-limited production (0.2.0) + ship-power
+  ceiling (0.27.0) + percentage/absolute overstay attrition (0.28.0).
+
+REMAINING (roadmap): construction/civ VESSEL to build structures instead of instant
+press (vision: can't cross borders); observation post (extend VR beyond one jump) +
+transportation (boost neighbor bonus); national vs civilian resource split; cosmic
+anomalies blocking influence+visibility; a real balance pass once there's more play.
+
 ## Status — through 0.26.0 (2026-07-02, Godot 4.7)
 
-**98 headless test assertions, all passing.** Overnight batch 0.23.0–0.26.0
+Overnight batch 0.23.0–0.26.0
 (fleets finished + military economy + specialization; all per user spec):
 - **0.23.0** Tiered military resources (nat[1-5]): a refining chain in cities, tier
   T from tier T-1, gated by pop cutoffs (100/400/900/1600/2500). A maxed city feeds
