@@ -24,21 +24,17 @@ const ZOOM_MAX := 2.5
 # edge sits inside its territory and hostile seams show BOTH colours.
 const BORDER_CELL := 14.0
 const BORDER_REFRESH := 0.4
-# Rival-claim floor for the border contour against EMPTY space (no real rival).
-# This is what sets where an uncontested "bubble" edge is drawn. It MUST sit at a
-# higher claim than the fog's open-space fade edge (VR_CLAIM_FLOOR / SIGHT ~= 0.67)
-# so the fog always extends PAST the border — otherwise the bubble border is drawn
-# at/beyond the fog's fade edge and gets lost in it. Real (contested) seams use the
-# rival's actual claim instead, so they're unaffected.
-const BORDER_OPEN_FLOOR := 0.85
+const BORDER_EPS := 0.01     # tiny rival-claim floor so bubble-vs-empty edges draw
 const FOG_CELL := 16.0       # sample cell for the fog texture (linearly filtered)
-# VR fill feathering: the lit region fades out over a soft band instead of a hard
-# edge, so it reads as the influence SHAPE, not a stamped disc. VR_CLAIM_FLOOR is
-# the open-space cutoff (no rival) — the lit edge sits at an influence equipotential
-# a bit inside the hard reach radius, so nearby systems' fields merge into organic
-# blobs and no hard circle ever shows. VR_BAND is the feather width in claim-ratio
-# units (fully lit once player_claim*SIGHT is this fraction past the threshold).
-const VR_CLAIM_FLOOR := 2.0
+# VR fill. The fog must reach PAST the border (the border is your influence edge;
+# the fog is your SIGHT, which sees further). VR_SIGHT_REACH is how far sight
+# extends beyond influence reach — the player's fog claim is sampled with reach
+# scaled by this, so the field exists (and feathers) past the border instead of
+# hard-cutting at it. VR_CLAIM_FLOOR is the open-space fade threshold, tuned so the
+# feather completes around the extended sight edge (no hard disc). VR_BAND is the
+# feather width in claim-ratio units. Fog stays soft/organic; border sits inside it.
+const VR_SIGHT_REACH := 1.5
+const VR_CLAIM_FLOOR := 1.1
 const VR_BAND := 0.6
 const SAVE_PATH := "user://reach_save.json"
 const FLEET_ICON_OFF := Vector2(0, -17)   # drawn above the system so it stays clickable
@@ -266,6 +262,17 @@ func _recompute_borders() -> void:
 
 	var pk := ids.find(player_empire_id)   # player's index in the source arrays
 
+	# VR/sight uses the player's influence reach scaled up (sight sees further than
+	# influence claims), so visibility — fog fill, revealed systems, and the borders
+	# you can see — all extend PAST your border, not up to it. Ownership and the
+	# border contour itself still use the real reach (that's your actual influence).
+	var reach_vr: Array = reach.duplicate()
+	if pk != -1:
+		var rvs := PackedFloat32Array()
+		for rv in reach[pk]:
+			rvs.append(rv * VR_SIGHT_REACH)
+		reach_vr[pk] = rvs
+
 	# Field VR: visibility follows the ACTUAL influence — a point is in VR where
 	# the player's claim, scaled by SIGHT, still beats the strongest rival there
 	# (so it fills the influence territory and extends 1.5x IN FRONT of the border,
@@ -275,7 +282,7 @@ func _recompute_borders() -> void:
 	var full := {}
 	for sys in sim.systems.values():
 		_system_owner[sys.id] = _owner_at(sys.map_pos, ids, pos, infl, reach)
-		if _player_vr_at(sys.map_pos, ids, pos, infl, reach, pk) \
+		if _player_vr_at(sys.map_pos, ids, pos, infl, reach_vr, pk) \
 				or sim._empire_has_colony_in(player_empire_id, sys.id) \
 				or sim.empire_fleet_in_system(player_empire_id, sys.id):
 			full[sys.id] = true
@@ -311,7 +318,9 @@ func _recompute_borders() -> void:
 			var c := Vector2(flo.x + (gx + 0.5) * FOG_CELL, flo.y + (gy + 0.5) * FOG_CELL)
 			var v := 0.0
 			if pk != -1:
-				var pc := _claim_at(c, pos[pk], infl[pk], reach[pk])
+				# Player claim on extended SIGHT reach so the fog reaches past the
+				# border; rivals on their real reach (that's their actual presence).
+				var pc := _claim_at(c, pos[pk], infl[pk], reach_vr[pk])
 				if pc > 0.0:
 					var rival := 0.0
 					for k in ids.size():
@@ -384,14 +393,13 @@ func _recompute_borders() -> void:
 				var p_tr := p_tl + Vector2(BORDER_CELL, 0)
 				var p_br := p_tl + Vector2(BORDER_CELL, BORDER_CELL)
 				var p_bl := p_tl + Vector2(0, BORDER_CELL)
-				# Floor the rival claim so an empire's edge against EMPTY space still
-				# crosses zero and draws a contour — but at BORDER_OPEN_FLOOR (not ~0),
-				# so the uncontested bubble edge sits INSIDE the fog's fade, keeping the
-				# border visible on lit ground. Contested seams use the real rival claim.
-				var m_tl := ck[i_tl] - maxf(_best_other(claims, k, i_tl), BORDER_OPEN_FLOOR)
-				var m_tr := ck[i_tr] - maxf(_best_other(claims, k, i_tr), BORDER_OPEN_FLOOR)
-				var m_br := ck[i_br] - maxf(_best_other(claims, k, i_br), BORDER_OPEN_FLOOR)
-				var m_bl := ck[i_bl] - maxf(_best_other(claims, k, i_bl), BORDER_OPEN_FLOOR)
+				# Subtract a small floor from the rival claim so an empire's edge
+				# against EMPTY space (both claims ~0) still crosses zero and draws
+				# a contour — otherwise a lone/uncontested bubble showed no curve.
+				var m_tl := ck[i_tl] - maxf(_best_other(claims, k, i_tl), BORDER_EPS)
+				var m_tr := ck[i_tr] - maxf(_best_other(claims, k, i_tr), BORDER_EPS)
+				var m_br := ck[i_br] - maxf(_best_other(claims, k, i_br), BORDER_EPS)
+				var m_bl := ck[i_bl] - maxf(_best_other(claims, k, i_bl), BORDER_EPS)
 				# Centroid of this cell's INSIDE corners (margin >= 0) — the
 				# empire's own side. Each segment is nudged toward it so a shared
 				# seam shows both empires' curves side by side, not overlapping.
@@ -411,7 +419,7 @@ func _recompute_borders() -> void:
 					if off.length() > 0.01:
 						off = off.normalized() * BORDER_INSET
 					# Only draw border the player can actually see (its own VR).
-					if _player_vr_at(mid, ids, pos, infl, reach, pk):
+					if _player_vr_at(mid, ids, pos, infl, reach_vr, pk):
 						_border_segments.append([seg[0] + off, seg[1] + off, col])
 
 
