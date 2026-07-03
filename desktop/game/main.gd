@@ -80,6 +80,7 @@ var depot_btn: Button
 var ship_f_btns: Array = []   # fighter build buttons, tier 1-5
 var ship_b_btns: Array = []   # bomber build buttons, tier 1-5
 var menu_overlay: PanelContainer
+var legend_panel: PanelContainer
 var overlay_title: Label
 var overlay_resume: Button
 var overlay_save: Button
@@ -599,6 +600,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				save_game()
 			KEY_F9:
 				load_game()
+			KEY_L:
+				if legend_panel != null:
+					legend_panel.visible = not legend_panel.visible
 
 
 func _select_at(pos: Vector2) -> void:
@@ -946,6 +950,41 @@ func _build_ui() -> void:
 
 	_build_ship_panel(layer)
 	_build_menu_overlay(layer)
+	_build_legend(layer)
+
+
+# A bottom-left key explaining the map symbols/colours. Hidden by default, toggled
+# with L (the hint line advertises it). Plain text — clear without needing icons.
+func _build_legend(layer: CanvasLayer) -> void:
+	legend_panel = PanelContainer.new()
+	legend_panel.anchor_top = 1.0
+	legend_panel.anchor_bottom = 1.0
+	legend_panel.offset_left = 12.0
+	legend_panel.offset_top = -232.0
+	legend_panel.offset_bottom = -60.0
+	legend_panel.visible = false
+	layer.add_child(legend_panel)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 3)
+	legend_panel.add_child(v)
+	var lines := [
+		"[ LEGEND ]  (L to hide)",
+		"star glow — a system (colour = star type)",
+		"ring round star — controlling empire",
+		"number by star — colonies there",
+		"arrow — fleet;  — stripe = 10 fighters",
+		"   ◆ above = 10 bombers",
+		"bright = in sight · dim = last-seen · black = unknown",
+		"bold coloured line — contested border",
+		"hover a system for its planets",
+		"● colony  ◆ mineral  ○ water  ▫ mine",
+	]
+	for i in lines.size():
+		var l := Label.new()
+		l.text = lines[i]
+		l.add_theme_font_size_override("font_size", 11)
+		l.modulate = Color(1, 1, 1, 0.85) if i == 0 else Color(1, 1, 1, 0.6)
+		v.add_child(l)
 
 
 func _build_menu_overlay(layer: CanvasLayer) -> void:
@@ -1160,7 +1199,7 @@ func _refresh_ui() -> void:
 		hint_label.text = "Pick a planet · Esc to close"
 		_show_system_panel(view_system_id)
 		return
-	hint_label.text = "Right-drag pan · wheel zoom · click a system or fleet"
+	hint_label.text = "Right-drag pan · wheel zoom · click a system or fleet · L: legend"
 	panel.visible = false
 	_panel_system = -1
 
