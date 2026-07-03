@@ -719,17 +719,28 @@ func _draw_galaxy() -> void:
 				HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.35))
 
 	# Fleets: your own always visible; a rival's only while it sits in your VR.
-	# Drawn as a diamond in the empire's colour; a selected fleet gets a ring and
-	# a dashed line to its destination.
+	# Drawn as an arrowhead in the empire's colour, pointed along its heading; a
+	# selected fleet gets a ring and a dashed line to its destination.
 	for f in sim.fleets:
 		var own := f.empire_id == player_empire_id
 		if not (own or _sys_live(f.system_id)):
 			continue
 		var fp := sim.fleet_position(f) + FLEET_ICON_OFF   # above the system node
 		var col: Color = sim.empires[f.empire_id].color
-		draw_colored_polygon(PackedVector2Array([
-			fp + Vector2(0, -6), fp + Vector2(6, 0),
-			fp + Vector2(0, 6), fp + Vector2(-6, 0)]), col)
+		var dir := Vector2.UP
+		if f.is_moving():
+			var d: Vector2 = sim.systems[f.path[0]].map_pos - sim.fleet_position(f)
+			if d.length() > 0.1:
+				dir = d.normalized()
+		var perp := dir.orthogonal()
+		var tip := fp + dir * 8.0
+		var bl := fp - dir * 5.0 + perp * 6.0
+		var br := fp - dir * 5.0 - perp * 6.0
+		var tail := fp - dir * 2.0
+		var arrow := PackedVector2Array([tip, bl, tail, br])
+		draw_colored_polygon(arrow, col)
+		draw_polyline(PackedVector2Array([tip, bl, tail, br, tip]),
+			Color(0, 0, 0, 0.55), 1.0)
 		# Power at a glance: a stripe (below) per 10 fighters, a star (above) per
 		# 10 bombers.
 		var nf := 0
@@ -807,20 +818,27 @@ func _draw_system_symbols(sys: StarSystem) -> void:
 		var has_mine: bool = p.has_mine() if live else pinfo.get("mine", false)
 		var mine_owner: int = p.mine_empire_id if live else pinfo.get("mine_owner", -1)
 		if has_colony and colony_owner != -1:
+			# Colony: filled owner-colour disc with a dark rim for contrast; a white
+			# ring means it's still growing (not yet an established city).
+			draw_circle(c, 6.0, Color(0, 0, 0, 0.5))
 			draw_circle(c, 5.0, sim.empires[colony_owner].color)
 			if not established:
-				draw_arc(c, 5.0, 0.0, TAU, 16, Color(1, 1, 1, 0.6), 1.0)
+				draw_arc(c, 5.0, 0.0, TAU, 16, Color(1, 1, 1, 0.7), 1.0)
 		elif p.has_deposit():
-			var dc := Color(0.4, 0.85, 1.0) \
-				if p.deposit_type == SimConstants.Deposit.WATER \
-				else Color(0.9, 0.6, 0.35)
-			draw_colored_polygon(PackedVector2Array([
-				c + Vector2(0, -5), c + Vector2(5, 0),
-				c + Vector2(0, 5), c + Vector2(-5, 0)]), dc)
+			# Shape-coded so it reads without relying on colour: water = round
+			# droplet (blue), minerals = diamond (amber).
+			if p.deposit_type == SimConstants.Deposit.WATER:
+				draw_circle(c, 4.6, Color(0.4, 0.85, 1.0))
+				draw_circle(c + Vector2(-1.3, -1.3), 1.3, Color(1, 1, 1, 0.7))
+			else:
+				draw_colored_polygon(PackedVector2Array([
+					c + Vector2(0, -5), c + Vector2(5, 0),
+					c + Vector2(0, 5), c + Vector2(-5, 0)]), Color(0.95, 0.62, 0.3))
 		else:
 			draw_circle(c, 2.5, Color(0.5, 0.5, 0.55))
 		if has_mine and mine_owner != -1:
-			draw_rect(Rect2(c + Vector2(-3, -3), Vector2(6, 6)),
+			# Mine: bracketed square in the owner's colour over the planet glyph.
+			draw_rect(Rect2(c + Vector2(-3.5, -3.5), Vector2(7, 7)),
 				sim.empires[mine_owner].color, false, 1.5)
 		i += 1
 	if depot_owner != -1:
