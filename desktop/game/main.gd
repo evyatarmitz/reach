@@ -886,6 +886,31 @@ func _draw_galaxy() -> void:
 # Under a hovered system: one glyph per planet — filled circle = colony (owner
 # colour), diamond = uncolonised deposit (blue water / orange minerals), a small
 # bright square overlaid = a mine; plus a square for a system supply depot.
+# One-line hover readout for the hint area — live detail for a system in sight, the
+# frozen last-seen snapshot otherwise (respects fog; no live enemy data in grey).
+func _hover_summary(sid: int) -> String:
+	var sys: StarSystem = sim.systems[sid]
+	if _sys_live(sid):
+		var owner: int = _system_owner.get(sid, -1)
+		var oname: String = sim.empires[owner].name if owner != -1 else "unclaimed"
+		var pop := 0.0
+		var cc := 0
+		for pid in sys.planet_ids:
+			var c: Colony = sim.planets[pid].colony
+			if c != null:
+				pop += c.population
+				cc += 1
+		return "%s — %s · pop %s · %d colonies" % [sys.name, oname, _fmt_num(pop), cc]
+	var snap: Dictionary = _stale.get(sid, {})
+	var so: int = snap.get("owner", -1)
+	var oname2: String = sim.empires[so].name if so != -1 else "unknown"
+	var cc2 := 0
+	for pinfo in snap.get("planets", {}).values():
+		if pinfo.get("colony", false):
+			cc2 += 1
+	return "%s — last seen: %s · %d colonies" % [sys.name, oname2, cc2]
+
+
 func _fmt_num(v: float) -> String:
 	# Compact big numbers for the status bar (21214 -> "21.2k").
 	if v >= 1000.0:
@@ -1384,7 +1409,10 @@ func _refresh_ui() -> void:
 		hint_label.text = "Pick a planet · Esc to close"
 		_show_system_panel(view_system_id)
 		return
-	hint_label.text = "Right-drag pan · wheel zoom · click a system or fleet · L: legend"
+	if _hover_system != -1 and _sys_known(_hover_system):
+		hint_label.text = _hover_summary(_hover_system)
+	else:
+		hint_label.text = "Right-drag pan · wheel zoom · click a system or fleet · L: legend"
 	panel.visible = false
 	_panel_system = -1
 
