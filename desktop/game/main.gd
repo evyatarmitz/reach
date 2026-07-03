@@ -24,7 +24,13 @@ const ZOOM_MAX := 2.5
 # edge sits inside its territory and hostile seams show BOTH colours.
 const BORDER_CELL := 14.0
 const BORDER_REFRESH := 0.4
-const BORDER_EPS := 0.01     # tiny rival-claim floor so bubble-vs-empty edges draw
+# Rival-claim floor for the border contour against EMPTY space (no real rival).
+# This is what sets where an uncontested "bubble" edge is drawn. It MUST sit at a
+# higher claim than the fog's open-space fade edge (VR_CLAIM_FLOOR / SIGHT ~= 0.67)
+# so the fog always extends PAST the border — otherwise the bubble border is drawn
+# at/beyond the fog's fade edge and gets lost in it. Real (contested) seams use the
+# rival's actual claim instead, so they're unaffected.
+const BORDER_OPEN_FLOOR := 0.85
 const FOG_CELL := 16.0       # sample cell for the fog texture (linearly filtered)
 # VR fill feathering: the lit region fades out over a soft band instead of a hard
 # edge, so it reads as the influence SHAPE, not a stamped disc. VR_CLAIM_FLOOR is
@@ -378,13 +384,14 @@ func _recompute_borders() -> void:
 				var p_tr := p_tl + Vector2(BORDER_CELL, 0)
 				var p_br := p_tl + Vector2(BORDER_CELL, BORDER_CELL)
 				var p_bl := p_tl + Vector2(0, BORDER_CELL)
-				# Subtract a small floor from the rival claim so an empire's edge
-				# against EMPTY space (both claims ~0) still crosses zero and draws
-				# a contour — otherwise a lone/uncontested bubble showed no curve.
-				var m_tl := ck[i_tl] - maxf(_best_other(claims, k, i_tl), BORDER_EPS)
-				var m_tr := ck[i_tr] - maxf(_best_other(claims, k, i_tr), BORDER_EPS)
-				var m_br := ck[i_br] - maxf(_best_other(claims, k, i_br), BORDER_EPS)
-				var m_bl := ck[i_bl] - maxf(_best_other(claims, k, i_bl), BORDER_EPS)
+				# Floor the rival claim so an empire's edge against EMPTY space still
+				# crosses zero and draws a contour — but at BORDER_OPEN_FLOOR (not ~0),
+				# so the uncontested bubble edge sits INSIDE the fog's fade, keeping the
+				# border visible on lit ground. Contested seams use the real rival claim.
+				var m_tl := ck[i_tl] - maxf(_best_other(claims, k, i_tl), BORDER_OPEN_FLOOR)
+				var m_tr := ck[i_tr] - maxf(_best_other(claims, k, i_tr), BORDER_OPEN_FLOOR)
+				var m_br := ck[i_br] - maxf(_best_other(claims, k, i_br), BORDER_OPEN_FLOOR)
+				var m_bl := ck[i_bl] - maxf(_best_other(claims, k, i_bl), BORDER_OPEN_FLOOR)
 				# Centroid of this cell's INSIDE corners (margin >= 0) — the
 				# empire's own side. Each segment is nudged toward it so a shared
 				# seam shows both empires' curves side by side, not overlapping.
