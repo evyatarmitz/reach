@@ -66,6 +66,10 @@ var mil_label: Label
 var day_label: Label
 var standing_label: Label
 var hint_label: Label
+var event_label: Label          # top-left feed of recent autonomous events
+var _events: Array = []         # [day, text] recent events, newest last
+var _prev_pcolonies: Dictionary = {}  # planet_id -> system_id, player's colonies
+var _seen_combat: Dictionary = {}     # system_id -> last combat day already logged
 var speed_buttons: Array[Button] = []
 var panel: PanelContainer
 var panel_title: Label
@@ -240,10 +244,56 @@ func _process(delta: float) -> void:
 		_border_timer = BORDER_REFRESH
 		_recompute_borders()
 	_update_hover()
+	_scan_events()
 	_check_game_over()
 	_apply_camera()
 	_refresh_ui()
 	queue_redraw()
+
+
+# Watch for autonomous happenings the player should know about — colonies lost,
+# battles in systems they can see — and surface them in the top-left feed. (Things
+# the player did themselves, like founding a colony, aren't logged — they know.)
+func _scan_events() -> void:
+	# Player colony losses (a planet that was ours no longer has our colony).
+	var now := {}
+	for c in sim.colonies:
+		if c.empire_id == player_empire_id:
+			now[c.planet_id] = sim.planets[c.planet_id].system_id
+	if not _prev_pcolonies.is_empty():
+		for pid in _prev_pcolonies:
+			if not now.has(pid):
+				var sid: int = _prev_pcolonies[pid]
+				var nm: String = sim.systems[sid].name if sim.systems.has(sid) else "?"
+				_log_event("✖ Colony lost at %s" % nm)
+	_prev_pcolonies = now
+	# Battles at systems the player can currently see.
+	for sid in sim.combat_at:
+		var d: float = sim.combat_at[sid]
+		if d > _seen_combat.get(sid, -1.0) and _sys_live(sid):
+			_seen_combat[sid] = d
+			_log_event("⚔ Battle at %s" % sim.systems[sid].name)
+	_refresh_events()
+
+
+func _log_event(text: String) -> void:
+	_events.append([sim.day, text])
+
+
+# Keep the newest 5 events from the last 25 days; render them into the feed label.
+func _refresh_events() -> void:
+	var kept: Array = []
+	for e in _events:
+		if sim.day - e[0] <= 25.0:
+			kept.append(e)
+	while kept.size() > 5:
+		kept.pop_front()
+	_events = kept
+	if event_label != null:
+		var lines := ""
+		for e in _events:
+			lines += "%s\n" % e[1]
+		event_label.text = lines
 
 
 # Defeat when the player holds no colonies; victory when only the player does.
@@ -921,6 +971,12 @@ func _build_ui() -> void:
 	hint_label.modulate = Color(1, 1, 1, 0.5)
 	hint_label.position = Vector2(16.0, 40.0)
 	layer.add_child(hint_label)
+
+	event_label = Label.new()
+	event_label.position = Vector2(16.0, 64.0)
+	event_label.add_theme_font_size_override("font_size", 12)
+	event_label.modulate = Color(1, 0.9, 0.7, 0.85)
+	layer.add_child(event_label)
 
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
