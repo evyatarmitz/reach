@@ -651,7 +651,9 @@ func _fight(emap: Dictionary, dt_days: float) -> void:
 		var p := 0.0
 		for f in emap[eid]:
 			p += (f as Fleet).combat_power()
-		power[eid] = p
+		# Hard ceiling: damage output can't exceed the cap regardless of stack
+		# size, so mass buys survival (hull), not a one-shot.
+		power[eid] = minf(p, SimConstants.POWER_CEILING)
 	for eid in emap:
 		var enemy := 0.0
 		for oid in power:

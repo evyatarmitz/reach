@@ -65,6 +65,7 @@ func _init() -> void:
 	_test_military_resources()
 	_test_specialization()
 	_test_mine_upgrade()
+	_test_power_ceiling()
 	_test_determinism()
 	if failures == 0:
 		print("ALL TESTS PASSED")
@@ -690,6 +691,33 @@ func _test_mine_upgrade() -> void:
 	check(sim.upgrade_mine(e.id, p.id) and p.mine_level == 1,
 		"upgrading raises the mine level")
 	check(p.mine_output() > out0, "an upgraded mine outputs more")
+
+
+func _test_power_ceiling() -> void:
+	# Two attacker stacks both well over the ceiling (and staying over it across
+	# the window) inflict the SAME damage — extra ships add no punch, only hull.
+	var lost_at_cap := _window_enemy_loss(8)
+	var lost_over_cap := _window_enemy_loss(30)
+	check(is_equal_approx(lost_at_cap, lost_over_cap),
+		"combat damage is hard-capped: a huge stack hits no harder than the ceiling")
+	check(lost_at_cap > 0.0, "combat still does damage")
+
+
+# Defender hull lost over 30 days when attacked by `n` tier-5 fighters. The
+# defender is huge (survives) so we read the attacker's (capped) damage output.
+func _window_enemy_loss(n: int) -> float:
+	var sim := Sim.new()
+	var atk := sim.add_empire("A", Color.RED)
+	var def := sim.add_empire("D", Color.BLUE)
+	var s := sim.add_system("S")
+	s.map_pos = Vector2.ZERO
+	var af := sim._fleet_at(atk.id, s.id)
+	af.fighters[4] = n
+	var df := sim._fleet_at(def.id, s.id)
+	df.fighters[0] = 100000   # huge defender: survives, and its own damage stays capped
+	var before := df.hull()
+	run_days(sim, 30.0)
+	return before - df.hull()
 
 
 func _test_determinism() -> void:

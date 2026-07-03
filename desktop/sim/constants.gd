@@ -106,6 +106,10 @@ const BOMBER_HP := [12.0, 18.0, 26.0, 36.0, 48.0]
 const FLEET_SPEED := 60.0
 const COMBAT_RATE := 0.02       # hull lost per enemy-combat-power per day
 const BOMBARD_DESTROY_POP := 100.0
+# Hard ship-power ceiling (vision): an empire's combat DAMAGE in one battle can't
+# exceed this, no matter how big the stack — extra ships become durability, not
+# punch, so a bigger fleet wins by outlasting, never by one decisive blow.
+const POWER_CEILING := 200.0
 
 # Established-city conversion: capacity/day = COEF * pop^EXP for each chain
 # (water->food, minerals->alloys). Actual output is capped by the available T0
