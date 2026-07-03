@@ -92,6 +92,7 @@ var overlay_title: Label
 var overlay_resume: Button
 var overlay_save: Button
 var _game_over := false
+var _speed_before_menu := 1     # speed to restore when the pause menu closes
 var planet_list: VBoxContainer
 var _planet_rows: Array = []   # [Button, planet_id] rows for the open system
 var _panel_system := -1        # which system the planet list was built for
@@ -315,6 +316,25 @@ func _check_game_over() -> void:
 	overlay_resume.visible = false
 	overlay_save.visible = false
 	overlay_title.text = "Victory!" if player_has else "Defeated"
+
+
+func _toggle_menu() -> void:
+	# The in-game menu pauses the sim while open and restores the prior speed on
+	# close, so opening it never lets the game run on unwatched. No-op once the game
+	# is over — that overlay isn't dismissable.
+	if _game_over:
+		return
+	if menu_overlay.visible:
+		menu_overlay.visible = false
+		speed_idx = _speed_before_menu
+	else:
+		_speed_before_menu = speed_idx
+		speed_idx = 0
+		overlay_title.text = "Paused"
+		overlay_resume.visible = true
+		overlay_save.visible = true
+		overlay_save.text = "Save game"
+		menu_overlay.visible = true
 
 
 func _update_hover() -> void:
@@ -999,7 +1019,7 @@ func _build_ui() -> void:
 
 	var menu_btn := Button.new()
 	menu_btn.text = "Menu"
-	menu_btn.pressed.connect(func() -> void: menu_overlay.visible = not menu_overlay.visible)
+	menu_btn.pressed.connect(_toggle_menu)
 	bar.add_child(menu_btn)
 
 	panel = PanelContainer.new()
@@ -1159,7 +1179,9 @@ func _build_menu_overlay(layer: CanvasLayer) -> void:
 	v.add_child(overlay_title)
 	overlay_resume = Button.new()
 	overlay_resume.text = "Resume"
-	overlay_resume.pressed.connect(func() -> void: menu_overlay.visible = false)
+	overlay_resume.pressed.connect(func() -> void:
+		menu_overlay.visible = false
+		speed_idx = _speed_before_menu)
 	v.add_child(overlay_resume)
 	overlay_save = Button.new()
 	overlay_save.text = "Save game"
