@@ -25,7 +25,15 @@ const ZOOM_MAX := 2.5
 const BORDER_CELL := 14.0
 const BORDER_REFRESH := 0.4
 const BORDER_EPS := 0.01     # tiny rival-claim floor so bubble-vs-empty edges draw
-const FOG_CELL := 34.0       # coarse cell for the influence-shaped fog fill
+const FOG_CELL := 16.0       # sample cell for the fog texture (linearly filtered)
+# VR fill feathering: the lit region fades out over a soft band instead of a hard
+# edge, so it reads as the influence SHAPE, not a stamped disc. VR_CLAIM_FLOOR is
+# the open-space cutoff (no rival) — the lit edge sits at an influence equipotential
+# a bit inside the hard reach radius, so nearby systems' fields merge into organic
+# blobs and no hard circle ever shows. VR_BAND is the feather width in claim-ratio
+# units (fully lit once player_claim*SIGHT is this fraction past the threshold).
+const VR_CLAIM_FLOOR := 2.0
+const VR_BAND := 0.6
 const SAVE_PATH := "user://reach_save.json"
 const FLEET_ICON_OFF := Vector2(0, -17)   # drawn above the system so it stays clickable
 const BORDER_INSET := 3.5    # push each empire's border curve into its own territory
@@ -44,9 +52,9 @@ var _explored := {}         # system_id -> true, ever seen (gray once out of VR)
 var _stale := {}            # system_id -> {owner, colonies}, last-seen snapshot
 var _hover_system := -1     # known system currently under the cursor (symbols shown)
 var _hover_hold := false    # autoshot: freeze the hovered system for the screenshot
-var _fog_lit: Array = []    # Rect2 coarse cells currently in the player's VR
-var _fog_gray: Array = []   # Rect2 coarse cells explored but out of VR
-var _fog_seen := {}         # "gx,gy" -> true, coarse cells ever in VR
+var _fog_tex: ImageTexture  # baked fog: feathered lit / grey memory / transparent
+var _fog_rect := Rect2()    # world-space rect the fog texture covers
+var _fog_seen := {}         # "gx,gy" -> true, cells ever in VR (explored memory)
 
 var raw_label: Label
 var goods_label: Label
@@ -81,6 +89,10 @@ var _panel_system := -1        # which system the planet list was built for
 func _ready() -> void:
 	# Black space so fogged (unseen) area reads as truly dark, not grey.
 	RenderingServer.set_default_clear_color(Color(0.02, 0.02, 0.03))
+	# Linear-filter the baked fog texture so its low-res samples interpolate into a
+	# smooth influence-shaped gradient instead of visible cells. (Only the fog is a
+	# texture here; lines/text/arcs are vector-drawn and unaffected.)
+	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	# New game from the menu's settings, or the default demo map. (A pending load
 	# replaces this after the UI/camera exist.)
 	if not Session.config.is_empty():
@@ -277,25 +289,47 @@ func _recompute_borders() -> void:
 					cc += 1
 			_stale[sys.id] = {"owner": _system_owner[sys.id], "colonies": cc}
 
-	# Influence-shaped fog fill: sample the field VR on a coarse grid so the lit
-	# region hugs the actual influence and its front edge (not discs around
-	# systems). Cells ever lit stay grey once out of VR (explored memory).
-	_fog_lit.clear()
-	_fog_gray.clear()
+	# Influence-shaped fog: sample a CONTINUOUS VR value on a grid and bake it into
+	# a texture (drawn with linear filtering) so the lit region reads as the smooth
+	# influence shape with a feathered edge — not axis-aligned blocks, not a hard
+	# reach disc. Per cell: v in [0,1] = how deep inside VR it is; v>0 marks the
+	# cell explored (grey memory once it later drops out of VR).
 	var flo := _map_lo - Vector2(140, 140)
 	var fhi := _map_hi + Vector2(140, 140)
-	var fcols := int((fhi.x - flo.x) / FOG_CELL) + 1
-	var frows := int((fhi.y - flo.y) / FOG_CELL) + 1
+	var fcols: int = maxi(1, int((fhi.x - flo.x) / FOG_CELL) + 1)
+	var frows: int = maxi(1, int((fhi.y - flo.y) / FOG_CELL) + 1)
+	var sight: float = SimConstants.SIGHT_INFLUENCE_FACTOR
+	var img := Image.create(fcols, frows, false, Image.FORMAT_RGBA8)
 	for gy in frows:
 		for gx in fcols:
 			var c := Vector2(flo.x + (gx + 0.5) * FOG_CELL, flo.y + (gy + 0.5) * FOG_CELL)
-			var rect := Rect2(flo.x + gx * FOG_CELL, flo.y + gy * FOG_CELL,
-				FOG_CELL, FOG_CELL)
-			if _player_vr_at(c, ids, pos, infl, reach, pk):
-				_fog_lit.append(rect)
-				_fog_seen["%d,%d" % [gx, gy]] = true
-			elif _fog_seen.has("%d,%d" % [gx, gy]):
-				_fog_gray.append(rect)
+			var v := 0.0
+			if pk != -1:
+				var pc := _claim_at(c, pos[pk], infl[pk], reach[pk])
+				if pc > 0.0:
+					var rival := 0.0
+					for k in ids.size():
+						if k != pk:
+							rival = maxf(rival, _claim_at(c, pos[k], infl[k], reach[k]))
+					# Feather by claim ratio: fully lit well inside, fading to 0 at the
+					# VR limit (rival dominance at borders, or the open-space floor).
+					var ratio := pc * sight / maxf(rival, VR_CLAIM_FLOOR)
+					v = clampf((ratio - 1.0) / VR_BAND, 0.0, 1.0)
+			var key := "%d,%d" % [gx, gy]
+			if v > 0.0:
+				_fog_seen[key] = true
+			# Composite feathered lit over grey memory over transparent (black bg).
+			var base_a := 0.6 if _fog_seen.has(key) else 0.0
+			var fa: float = v + base_a * (1.0 - v)
+			var col := Color(0, 0, 0, 0)
+			if fa > 0.0001:
+				var lit := Vector3(0.13, 0.13, 0.15) * v
+				var mem := Vector3(0.07, 0.07, 0.08) * (base_a * (1.0 - v))
+				var rgb: Vector3 = (lit + mem) / fa
+				col = Color(rgb.x, rgb.y, rgb.z, fa)
+			img.set_pixel(gx, gy, col)
+	_fog_tex = ImageTexture.create_from_image(img)
+	_fog_rect = Rect2(flo, fhi - flo)
 
 	# Sample each empire's claim on a grid of POINTS (cell corners), then trace a
 	# smooth marching-squares contour of every empire's dominance margin
@@ -544,14 +578,12 @@ func _draw() -> void:
 
 func _draw_galaxy() -> void:
 	var font := ThemeDB.fallback_font
-	# Influence-shaped fog on the black background: lit cells hug the player's
-	# actual influence (and reach in front of the border); explored-but-lost cells
-	# are darker grey; never-seen stays black. Cells are precomputed in the border
-	# refresh from the field, so this is the influence shape, not discs.
-	for r in _fog_gray:
-		draw_rect(r, Color(0.07, 0.07, 0.08))
-	for r in _fog_lit:
-		draw_rect(r, Color(0.13, 0.13, 0.15))
+	# Influence-shaped fog on the black background: one baked texture, drawn with
+	# linear filtering (see _ready) so the feathered lit region hugs the player's
+	# actual influence with a smooth edge — no blocks, no hard reach disc. Lit fades
+	# to grey explored-memory to never-seen black. Baked in the border refresh.
+	if _fog_tex != null:
+		draw_texture_rect(_fog_tex, _fog_rect, false)
 	# Deformed influence borders (already fog-gated to VR in _recompute_borders).
 	for seg in _border_segments:
 		draw_line(seg[0], seg[1], seg[2], 2.0)
