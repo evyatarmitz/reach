@@ -41,6 +41,8 @@ var _system_owner := {}     # system_id -> empire_id, cached with the border fie
 var _system_vr := {}        # system_id -> 0 none / 1 partial / 2 full VR
 var _explored := {}         # system_id -> true, ever seen (gray once out of VR)
 var _stale := {}            # system_id -> {owner, colonies}, last-seen snapshot
+var _hover_system := -1     # known system currently under the cursor (symbols shown)
+var _hover_hold := false    # autoshot: freeze the hovered system for the screenshot
 
 var raw_label: Label
 var goods_label: Label
@@ -110,9 +112,21 @@ func _process(delta: float) -> void:
 	if _border_timer <= 0.0:
 		_border_timer = BORDER_REFRESH
 		_recompute_borders()
+	_update_hover()
 	_apply_camera()
 	_refresh_ui()
 	queue_redraw()
+
+
+func _update_hover() -> void:
+	if _hover_hold:   # autoshot drives the hover manually
+		return
+	_hover_system = -1
+	var mp := get_global_mouse_position()
+	for sys in sim.systems.values():
+		if _sys_known(sys.id) and mp.distance_to(sys.map_pos) <= 22.0:
+			_hover_system = sys.id
+			return
 
 
 # Sample the influence field on a world grid and emit bold colored edge LINES
@@ -488,11 +502,67 @@ func _draw_galaxy() -> void:
 		draw_colored_polygon(PackedVector2Array([
 			fp + Vector2(0, -6), fp + Vector2(6, 0),
 			fp + Vector2(0, 6), fp + Vector2(-6, 0)]), col)
+		# Power at a glance: a stripe (below) per 10 fighters, a star (above) per
+		# 10 bombers.
+		var nf := 0
+		var nb := 0
+		for t in 5:
+			nf += f.fighters[t]
+			nb += f.bombers[t]
+		for i in nf / 10:
+			var y := fp.y + 9.0 + i * 3.0
+			draw_line(Vector2(fp.x - 6, y), Vector2(fp.x + 6, y), Color.WHITE, 1.5)
+		for i in nb / 10:
+			var c := Vector2(fp.x - 8 + i * 7.0, fp.y - 12.0)
+			draw_colored_polygon(PackedVector2Array([
+				c + Vector2(0, -3), c + Vector2(3, 0),
+				c + Vector2(0, 3), c + Vector2(-3, 0)]), Color(1, 1, 0.4))
 		if f.id == selected_fleet_id:
 			draw_arc(fp, 10.0, 0.0, TAU, 24, Color.WHITE, 1.5)
 			if f.is_moving():
 				draw_line(fp, sim.systems[f.path[f.path.size() - 1]].map_pos,
 					Color(1, 1, 1, 0.4), 1.0)
+
+	# Hover: a row of symbols under the system showing what's inside.
+	if _hover_system != -1 and sim.systems.has(_hover_system) \
+			and _sys_known(_hover_system):
+		_draw_system_symbols(sim.systems[_hover_system])
+
+
+# Under a hovered system: one glyph per planet — filled circle = colony (owner
+# colour), diamond = uncolonised deposit (blue water / orange minerals), a small
+# bright square overlaid = a mine; plus a square for a system supply depot.
+func _draw_system_symbols(sys: StarSystem) -> void:
+	var pids: Array = sys.planet_ids
+	var n := pids.size() + (1 if sys.depot_empire_id != -1 else 0)
+	var step := 15.0
+	var start := sys.map_pos + Vector2(-(n - 1) * step * 0.5, 30.0)
+	var i := 0
+	for pid in pids:
+		var p: Planet = sim.planets[pid]
+		var c := start + Vector2(i * step, 0)
+		if p.colony != null:
+			var oc: Color = sim.empires[p.colony.empire_id].color
+			draw_circle(c, 5.0, oc)
+			if not p.colony.established:
+				draw_arc(c, 5.0, 0.0, TAU, 16, Color(1, 1, 1, 0.6), 1.0)
+		elif p.has_deposit():
+			var dc := Color(0.4, 0.85, 1.0) \
+				if p.deposit_type == SimConstants.Deposit.WATER \
+				else Color(0.9, 0.6, 0.35)
+			draw_colored_polygon(PackedVector2Array([
+				c + Vector2(0, -5), c + Vector2(5, 0),
+				c + Vector2(0, 5), c + Vector2(-5, 0)]), dc)
+		else:
+			draw_circle(c, 2.5, Color(0.5, 0.5, 0.55))
+		if p.has_mine():
+			draw_rect(Rect2(c + Vector2(-3, -3), Vector2(6, 6)),
+				sim.empires[p.mine_empire_id].color, false, 1.5)
+		i += 1
+	if sys.depot_empire_id != -1:
+		var dcpos := start + Vector2(i * step, 0)
+		draw_rect(Rect2(dcpos + Vector2(-4, -4), Vector2(8, 8)),
+			sim.empires[sys.depot_empire_id].color)
 
 
 func _build_ui() -> void:
@@ -874,15 +944,20 @@ func _autoshot() -> void:
 			_recompute_borders()
 	# Build a few ships (they appear at the most-populated city) so a fleet marker
 	# shows in the galaxy shot.
-	sim.empires[player_empire_id].nat[0] = 1000.0
-	sim.build_ship(player_empire_id, SimConstants.Role.FIGHTER, 1)
-	sim.build_ship(player_empire_id, SimConstants.Role.BOMBER, 1)
+	sim.empires[player_empire_id].nat[0] = 5000.0
+	for _k in 24:
+		sim.build_ship(player_empire_id, SimConstants.Role.FIGHTER, 1)
+	for _k in 12:
+		sim.build_ship(player_empire_id, SimConstants.Role.BOMBER, 1)
 	for f in sim.fleets:
 		if f.empire_id == player_empire_id:
 			selected_fleet_id = f.id
 			break
 	# Fog stays ON for the galaxy shot so the live / gray-explored / black states
-	# and the border inside the player's VR all show.
+	# and the border inside the player's VR all show. Force a hover so the
+	# per-system symbol row is captured.
+	_hover_hold = true
+	_hover_system = home.id
 	_recompute_borders()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
