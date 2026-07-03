@@ -25,7 +25,7 @@ const ZOOM_MAX := 2.5
 const BORDER_CELL := 14.0
 const BORDER_REFRESH := 0.4
 const BORDER_EPS := 0.01     # tiny rival-claim floor so bubble-vs-empty edges draw
-const FOG_DISC := 170.0      # lit/gray halo radius around a known system
+const FOG_CELL := 34.0       # coarse cell for the influence-shaped fog fill
 const FLEET_ICON_OFF := Vector2(0, -17)   # drawn above the system so it stays clickable
 const BORDER_INSET := 3.5    # push each empire's border curve into its own territory
 
@@ -43,6 +43,9 @@ var _explored := {}         # system_id -> true, ever seen (gray once out of VR)
 var _stale := {}            # system_id -> {owner, colonies}, last-seen snapshot
 var _hover_system := -1     # known system currently under the cursor (symbols shown)
 var _hover_hold := false    # autoshot: freeze the hovered system for the screenshot
+var _fog_lit: Array = []    # Rect2 coarse cells currently in the player's VR
+var _fog_gray: Array = []   # Rect2 coarse cells explored but out of VR
+var _fog_seen := {}         # "gx,gy" -> true, coarse cells ever in VR
 
 var raw_label: Label
 var goods_label: Label
@@ -160,16 +163,18 @@ func _recompute_borders() -> void:
 			infl.append(iv)
 			reach.append(rv)
 
-	# (player index in the arrays no longer needed — VR is topology-based now)
-	# Topology VR (item 1/4): visibility expands with the SYSTEMS you hold, not
-	# with a raw influence radius. FULL VR (2) in systems you own / have a colony
-	# in / have a fleet in; PARTIAL VR (1, structure only) one lane-jump out. Once
-	# seen, a system stays "explored" (grey). Retreats when you lose a system.
+	var pk := ids.find(player_empire_id)   # player's index in the source arrays
+
+	# Field VR: visibility follows the ACTUAL influence — a point is in VR where
+	# the player's claim, scaled by SIGHT, still beats the strongest rival there
+	# (so it fills the influence territory and extends 1.5x IN FRONT of the border,
+	# and stops as a rival dominates). FULL (2) where the field says so or you hold
+	# the system; PARTIAL (1) one lane-jump out for structure; explored stays grey.
 	_system_vr.clear()
 	var full := {}
 	for sys in sim.systems.values():
 		_system_owner[sys.id] = _owner_at(sys.map_pos, ids, pos, infl, reach)
-		if _system_owner[sys.id] == player_empire_id \
+		if _player_vr_at(sys.map_pos, ids, pos, infl, reach, pk) \
 				or sim._empire_has_colony_in(player_empire_id, sys.id) \
 				or sim.empire_fleet_in_system(player_empire_id, sys.id):
 			full[sys.id] = true
@@ -182,12 +187,32 @@ func _recompute_borders() -> void:
 	for sys in sim.systems.values():
 		if _system_vr[sys.id] >= 1:
 			_explored[sys.id] = true
-		if _system_vr[sys.id] == 2:   # snapshot live state for the fog memory
+		if _system_vr[sys.id] == 2:
 			var cc := 0
 			for pid in sys.planet_ids:
 				if sim.planets[pid].colony != null:
 					cc += 1
 			_stale[sys.id] = {"owner": _system_owner[sys.id], "colonies": cc}
+
+	# Influence-shaped fog fill: sample the field VR on a coarse grid so the lit
+	# region hugs the actual influence and its front edge (not discs around
+	# systems). Cells ever lit stay grey once out of VR (explored memory).
+	_fog_lit.clear()
+	_fog_gray.clear()
+	var flo := _map_lo - Vector2(140, 140)
+	var fhi := _map_hi + Vector2(140, 140)
+	var fcols := int((fhi.x - flo.x) / FOG_CELL) + 1
+	var frows := int((fhi.y - flo.y) / FOG_CELL) + 1
+	for gy in frows:
+		for gx in fcols:
+			var c := Vector2(flo.x + (gx + 0.5) * FOG_CELL, flo.y + (gy + 0.5) * FOG_CELL)
+			var rect := Rect2(flo.x + gx * FOG_CELL, flo.y + gy * FOG_CELL,
+				FOG_CELL, FOG_CELL)
+			if _player_vr_at(c, ids, pos, infl, reach, pk):
+				_fog_lit.append(rect)
+				_fog_seen["%d,%d" % [gx, gy]] = true
+			elif _fog_seen.has("%d,%d" % [gx, gy]):
+				_fog_gray.append(rect)
 
 	# Sample each empire's claim on a grid of POINTS (cell corners), then trace a
 	# smooth marching-squares contour of every empire's dominance margin
@@ -208,14 +233,6 @@ func _recompute_borders() -> void:
 					Vector2(lo.x + gx * BORDER_CELL, lo.y + gy * BORDER_CELL),
 					pos[k], infl[k], reach[k])
 		claims.append(arr)
-
-	# Live system positions — borders are only drawn near them, so a border can't
-	# float in black space far from any visible system (which happens because a
-	# mature colony's raw reach can exceed the whole map — see balance note).
-	var live_pos: Array = []
-	for sys in sim.systems.values():
-		if _sys_live(sys.id):
-			live_pos.append(sys.map_pos)
 
 	# Draw rivals first, the player's own empire last, so at a coincident seam
 	# (where both empires' margin=0 curves overlap) the player sees its own colour.
@@ -269,12 +286,8 @@ func _recompute_borders() -> void:
 					var off := inside_c - mid
 					if off.length() > 0.01:
 						off = off.normalized() * BORDER_INSET
-					var near := false
-					for lp in live_pos:
-						if mid.distance_squared_to(lp) <= FOG_DISC * FOG_DISC:
-							near = true
-							break
-					if near:
+					# Only draw border the player can actually see (its own VR).
+					if _player_vr_at(mid, ids, pos, infl, reach, pk):
 						_border_segments.append([seg[0] + off, seg[1] + off, col])
 
 
@@ -293,6 +306,23 @@ func _claim_at(p: Vector2, pv: PackedVector2Array, iv: PackedFloat32Array,
 	if si <= 0.0:
 		return 0.0
 	return 1.0e9 if sri <= 0.0 else (si * si) / sri
+
+
+# Is a world point in the player's VR? True where the player's claim, scaled by
+# SIGHT, still beats the strongest rival there — so VR fills the player's actual
+# influence and reaches 1.5x in front of the contested border.
+func _player_vr_at(p: Vector2, ids: Array, pos: Array, infl: Array, reach: Array,
+		pk: int) -> bool:
+	if pk == -1:
+		return false
+	var pc := _claim_at(p, pos[pk], infl[pk], reach[pk])
+	if pc <= 0.0:
+		return false
+	var best := pc
+	for k in ids.size():
+		if k != pk:
+			best = maxf(best, _claim_at(p, pos[k], infl[k], reach[k]))
+	return pc * SimConstants.SIGHT_INFLUENCE_FACTOR >= best
 
 
 func _best_other(claims: Array, k: int, pi: int) -> float:
@@ -426,14 +456,14 @@ func _draw() -> void:
 
 func _draw_galaxy() -> void:
 	var font := ThemeDB.fallback_font
-	# Fog halos on the black background: a lit grey disc under LIVE systems, a
-	# darker grey disc under EXPLORED (out-of-VR) systems, nothing under
-	# never-seen. So the lost-VR area reads as grey, unexplored as black.
-	for sys in sim.systems.values():
-		if _sys_live(sys.id):
-			draw_circle(sys.map_pos, FOG_DISC, Color(0.13, 0.13, 0.15))
-		elif _sys_known(sys.id):
-			draw_circle(sys.map_pos, FOG_DISC, Color(0.07, 0.07, 0.08))
+	# Influence-shaped fog on the black background: lit cells hug the player's
+	# actual influence (and reach in front of the border); explored-but-lost cells
+	# are darker grey; never-seen stays black. Cells are precomputed in the border
+	# refresh from the field, so this is the influence shape, not discs.
+	for r in _fog_gray:
+		draw_rect(r, Color(0.07, 0.07, 0.08))
+	for r in _fog_lit:
+		draw_rect(r, Color(0.13, 0.13, 0.15))
 	# Deformed influence borders (already fog-gated to VR in _recompute_borders).
 	for seg in _border_segments:
 		draw_line(seg[0], seg[1], seg[2], 2.0)
