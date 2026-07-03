@@ -82,6 +82,7 @@ var depot_btn: Button
 var ship_f_btns: Array = []   # fighter build buttons, tier 1-5
 var ship_b_btns: Array = []   # bomber build buttons, tier 1-5
 var menu_overlay: PanelContainer
+var intro_overlay: PanelContainer
 var legend_panel: PanelContainer
 var overlay_title: Label
 var overlay_resume: Button
@@ -108,12 +109,17 @@ func _ready() -> void:
 	player_empire_id = sim.empires.keys()[0]  # first empire = human player
 	_build_ui()
 	_init_camera()
-	if Session.load_path != "":
+	var is_load := Session.load_path != ""
+	if is_load:
 		var p := Session.load_path
 		Session.load_path = ""
 		load_game(p)
 	if "--autoshot" in OS.get_cmdline_user_args():
 		_autoshot()
+	elif not is_load:
+		# New game: welcome the player (paused) with the goal + first steps.
+		intro_overlay.visible = true
+		speed_idx = 0
 
 
 func save_game(path: String = SAVE_PATH) -> void:
@@ -993,6 +999,44 @@ func _build_ui() -> void:
 	_build_ship_panel(layer)
 	_build_menu_overlay(layer)
 	_build_legend(layer)
+	_build_intro(layer)
+
+
+# One-time welcome for a new game: what this game is and the first things to do.
+# Shown paused; dismissed with Begin. Not shown on a loaded save or the autoshot.
+func _build_intro(layer: CanvasLayer) -> void:
+	intro_overlay = PanelContainer.new()
+	intro_overlay.set_anchors_preset(Control.PRESET_CENTER)
+	intro_overlay.anchor_left = 0.5
+	intro_overlay.anchor_right = 0.5
+	intro_overlay.anchor_top = 0.5
+	intro_overlay.anchor_bottom = 0.5
+	intro_overlay.offset_left = -270
+	intro_overlay.offset_right = 270
+	intro_overlay.offset_top = -160
+	intro_overlay.offset_bottom = 160
+	intro_overlay.visible = false
+	layer.add_child(intro_overlay)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	intro_overlay.add_child(v)
+	var title := Label.new()
+	title.text = "Welcome, cultivator"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 24)
+	v.add_child(title)
+	var body := Label.new()
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.custom_minimum_size = Vector2(520, 0)
+	body.text = "You have no body and no direct control — you cultivate a population and it does the rest.\n\n• Click a system to open its planets. Found a colony (costs alloys) or build a mine on a deposit.\n• Colonies grow on food: water mines → food in established cities. Minerals → alloys. Population drives influence, and influence sets your borders.\n• Cluster colonies across nearby systems — neighbours boost each other. Same-system colonies compete instead.\n• Build ships (top-right) to defend and to bombard enemy worlds. Use the speed dial (top-right) to skip slow stretches.\n• Press L for a legend of every map symbol.\n\nGoal: grow, spread, and outlast the rival empires."
+	v.add_child(body)
+	var begin := Button.new()
+	begin.text = "Begin"
+	begin.custom_minimum_size = Vector2(0, 38)
+	begin.pressed.connect(func() -> void:
+		intro_overlay.visible = false
+		speed_idx = 1)
+	v.add_child(begin)
 
 
 # A bottom-left key explaining the map symbols/colours. Hidden by default, toggled
