@@ -145,10 +145,12 @@ const MIL_EXP := 0.8
 # steady, deficit -> shrink.
 const FOOD_PER_POP := 0.01
 
-# Fog of war: an empire sees this multiple of a colony's influence reach around
-# it (1.2-2x; separate from influence itself). Mines have no influence, so they
-# grant a small flat sensor range instead.
-const SIGHT_INFLUENCE_FACTOR := 1.5
+# Fog of war: how far VR reaches past your influence. It's the claim-ratio margin
+# in the field VR test (visible where player_claim * this >= rival_claim). At 1.5
+# the margin was ~10% of the inter-system distance — visually flush with the
+# border; 3.0 puts the VR edge ~1.5x the border distance from your source, i.e.
+# clearly IN FRONT of the border (early warning). Tunable.
+const SIGHT_INFLUENCE_FACTOR := 3.0
 const SIGHT_MINE_RANGE := 260.0
 
 # Influence (vision.md core formulas): influence = A1 * pop of the strongest
