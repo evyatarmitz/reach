@@ -368,23 +368,24 @@ func point_owner(pos: Vector2) -> int:
 
 # --- neighbor bonus (vision.md: cluster-across-systems) ----------------------
 
-# Growth multiplier for a colony: the bonus it gets for being near major centers
-# (other systems where the same empire has influence), = Σ A * influence_j / R,
-# 1/R falloff, summed. Uses system influence (max per system, non-stacking), so a
-# small colony near a big center gets a big bonus while the big center gets almost
-# nothing back. Same-system gives nothing (they compete). Multiplies growth.
+# Growth multiplier for a colony: the bonus it gets for being near other centers
+# of the same empire, = Σ A * (A1 * neighbor_pop) / R, 1/R falloff, summed over
+# every other established same-empire colony. Applies BOTH across systems (real
+# distance) and within a system (a fixed in-system distance), so a big city lifts
+# its neighbours on other planets too. Multiplies growth.
 func neighbor_growth_multiplier(colony: Colony) -> float:
 	var sys_id: int = planets[colony.planet_id].system_id
 	var bonus := 0.0
-	for sys in systems.values():
-		if sys.id == sys_id:
+	for other in colonies:
+		if other == colony or other.empire_id != colony.empire_id \
+				or not other.established:
 			continue
-		var inf := system_influence(sys.id, colony.empire_id)
-		if inf <= 0.0:
-			continue
-		var r := system_distance(sys_id, sys.id)
+		var other_sys: int = planets[other.planet_id].system_id
+		var r: float = SimConstants.IN_SYSTEM_DIST if other_sys == sys_id \
+			else system_distance(sys_id, other_sys)
 		if r > 0.0:
-			bonus += SimConstants.NEIGHBOR_COEF * inf / r
+			bonus += SimConstants.NEIGHBOR_COEF \
+				* (SimConstants.INFLUENCE_A1 * other.population) / r
 	return 1.0 + bonus
 
 
@@ -918,3 +919,27 @@ func tick(dt_days: float) -> void:
 
 	# 7. Combat: fleets auto-fight where enemies meet, else bombard (see 0.25.0).
 	_resolve_combat(dt_days)
+
+	# 8. Structures follow the border: a mine or supply depot changes hands to
+	#    whoever now controls its system. Colonies do NOT flip (a colony holds its
+	#    own system — it must be bombarded to be taken).
+	var struct_systems := {}
+	for p in planets.values():
+		if p.has_mine():
+			struct_systems[p.system_id] = true
+	for sys in systems.values():
+		if sys.depot_empire_id != -1:
+			struct_systems[sys.id] = true
+	var owner_of := {}
+	for sid in struct_systems:
+		owner_of[sid] = system_owner(sid)
+	for p in planets.values():
+		if p.has_mine():
+			var o: int = owner_of[p.system_id]
+			if o != -1 and o != p.mine_empire_id:
+				p.mine_empire_id = o
+	for sys in systems.values():
+		if sys.depot_empire_id != -1:
+			var o: int = owner_of[sys.id]
+			if o != -1 and o != sys.depot_empire_id:
+				sys.depot_empire_id = o

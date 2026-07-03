@@ -67,6 +67,7 @@ func _init() -> void:
 	_test_mine_upgrade()
 	_test_power_ceiling()
 	_test_attrition_and_depot()
+	_test_structure_capture()
 	_test_determinism()
 	if failures == 0:
 		print("ALL TESTS PASSED")
@@ -308,8 +309,8 @@ func _test_neighbor_bonus() -> void:
 	var rig5_sim: Sim = rig5.sim
 	var pa2: Planet = rig5_sim.add_planet(rig5.a.id, "A II")
 	rig5_sim.inject_colony(rig5.e.id, pa2.id, 300.0, true)
-	check(is_equal_approx(rig5_sim.neighbor_growth_multiplier(rig5.subject), 1.0),
-		"same-system established colony contributes no neighbor bonus")
+	check(rig5_sim.neighbor_growth_multiplier(rig5.subject) > 1.0,
+		"a same-system established colony now DOES boost (bonus applies in-system)")
 	# End to end: clustered colony out-grows an isolated identical one (both have
 	# unlimited food, so only the neighbor bonus differs).
 	var iso := _neighbor_rig()
@@ -761,6 +762,27 @@ func _test_attrition_and_depot() -> void:
 		"cannot build a depot outside your influence")
 	check(sim.build_depot(e.id, home.id) and sim.systems[home.id].depot_empire_id == e.id,
 		"building a depot marks the system")
+
+
+func _test_structure_capture() -> void:
+	# An empty system with a rival's undefended mine; a stronger empire's border
+	# extends over it and captures the mine (colonies would NOT flip like this).
+	var sim := Sim.new()
+	var strong := sim.add_empire("Strong", Color.RED)
+	var weak := sim.add_empire("Weak", Color.BLUE)
+	var base := sim.add_system("Base")
+	base.map_pos = Vector2.ZERO
+	sim.inject_colony(strong.id, sim.add_planet(base.id, "B").id, 400.0, true)
+	var mid := sim.add_system("Mid")     # empty system next to Strong's base
+	mid.map_pos = Vector2(150, 0)
+	var mp := sim.add_planet(mid.id, "M")
+	mp.deposit_type = SimConstants.Deposit.MINERAL
+	mp.mine_empire_id = weak.id          # weak owns a mine here, but no colony
+	check(sim.system_owner(mid.id) == strong.id,
+		"the empty system is inside the strong empire's border")
+	sim.tick(SimConstants.TICK_DAYS)
+	check(mp.mine_empire_id == strong.id,
+		"a mine changes hands to whoever controls the system as the border shifts")
 
 
 func _test_determinism() -> void:

@@ -69,6 +69,10 @@ const MIN_POP := 1.0
 # bonus multiplies growth (a 20% bonus makes 1% -> 1.2%), offsetting diminishing
 # returns so clustered colonies climb past the lone-colony flattening.
 const NEIGHBOR_COEF := 0.1
+# Effective distance used for a neighbor in the SAME system (real distance there
+# is ~0). Applying the bonus in-system means a big city also lifts its neighbours
+# on other planets of its own system.
+const IN_SYSTEM_DIST := 80.0
 
 # Emigration: a colony with the toggle on sheds this fraction of its population
 # per day to the empire's other colonies (0.1% per 0.1-day tick), letting you
