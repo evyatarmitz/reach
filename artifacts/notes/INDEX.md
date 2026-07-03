@@ -13,7 +13,9 @@ between AI sessions on this specific game.
 - `desktop/game/main.gd` — the only Godot-facing file: reads sim state, draws the
   galaxy/system views, camera pan/zoom, the sampled deformed-border field, and fog
   of war. Forwards input. Knows no game rules.
-- `desktop/tests/run_tests.gd` — 107 headless test assertions. Run:
+- `desktop/menu/menu.gd` / `menu.tscn` — the landing page (project's main scene);
+  New Game settings + Continue + Quit, hands off via `sim/session.gd`.
+- `desktop/tests/run_tests.gd` — 116 headless test assertions. Run:
   `godot --headless --path desktop --script res://tests/run_tests.gd`.
 - `run.bat` — launches the game (finds the winget Godot).
 

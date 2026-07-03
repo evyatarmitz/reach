@@ -73,9 +73,31 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — through 0.34.0 (2026-07-03, Godot 4.7) — ALPHA SHELL COMPLETE
+
+**116 headless test assertions, all passing.** Batch 0.31.0–0.34.0 (the shell to
+turn the systems into a playable alpha):
+- **0.31.0** Field-shaped fog: VR follows the actual influence field and reaches
+  ~1.5x IN FRONT of the contested border (coarse influence-shaped fill), not radius
+  discs around systems. System visibility + drawn border use the same field VR.
+- **0.32.0** Config + difficulty: Session singleton hands new-game settings to the
+  game; Empire.efficiency (AI production multiplier) applied to mining + refining;
+  player stays 1.0.
+- **0.33.0** Save/load: Sim.serialize()/deserialize() round-trip the whole sim
+  through JSON; main.gd save_game/load_game (user://reach_save.json) also persist
+  the fog memory + camera. F5/F9 quick save/load.
+- **0.34.0** Landing page (menu scene = main scene): New Game (map size / empires /
+  difficulty), Continue, Quit; in-game Menu overlay (Resume/Save/Quit to menu);
+  game-over (defeat: no player colonies; victory: only player left).
+
+This is a self-contained playable ALPHA: menu -> new game (settings) -> play (all
+systems) -> save/continue -> win/lose. Remaining before beta = balance tuning +
+real playtesting (the alpha activity), plus optional content (construction vessel,
+observation post, transportation, national/civilian split, anomalies).
+
 ## Status — through 0.30.0 (2026-07-03, Godot 4.7)
 
-**107 headless test assertions, all passing.** Batch 0.29.0–0.30.0:
+Batch 0.29.0–0.30.0:
 - **0.29.0** Mines & supply depots now change hands to the system's current owner
   as the influence border shifts (colonies still require bombardment — flagged in
   case you want colonies to flip too). Neighbor growth bonus now also applies
