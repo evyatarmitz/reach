@@ -689,19 +689,23 @@ func _draw_galaxy() -> void:
 		if not (live or _sys_known(sys.id)):
 			continue   # never seen -> stays black
 		if live:
-			# Live: bright glowing star, current owner ring + current colony count.
-			_draw_star(sys.map_pos, _star_color(sys.id), 1.0)
+			# Live: bright glowing star sized by its population, owner ring, colonies.
+			var cc := 0
+			var spop := 0.0
+			for pid in sys.planet_ids:
+				var pcol: Colony = sim.planets[pid].colony
+				if pcol != null:
+					cc += 1
+					spop += pcol.population
+			var sscale: float = 1.0 + clampf(spop / 2500.0, 0.0, 1.0) * 0.7
+			_draw_star(sys.map_pos, _star_color(sys.id), 1.0, sscale)
 			if sys.depot_empire_id != -1:   # supply depot marker
 				draw_rect(Rect2(sys.map_pos + Vector2(-16, -16), Vector2(6, 6)),
 					sim.empires[sys.depot_empire_id].color)
 			var owner: int = _system_owner.get(sys.id, -1)
 			if owner != -1:
-				draw_arc(sys.map_pos, 13.0, 0.0, TAU, 32,
+				draw_arc(sys.map_pos, 13.0 * sscale, 0.0, TAU, 32,
 					sim.empires[owner].color, 2.0)
-			var cc := 0
-			for pid in sys.planet_ids:
-				if sim.planets[pid].colony != null:
-					cc += 1
 			if cc > 0:
 				draw_string(font, sys.map_pos + Vector2(14.0, -12.0), str(cc),
 					HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.35, 1.0, 0.5))
@@ -771,9 +775,11 @@ func _draw_galaxy() -> void:
 				draw_line(fp, sim.systems[f.path[f.path.size() - 1]].map_pos,
 					Color(1, 1, 1, 0.4), 1.0)
 
-	# Hover: a row of symbols under the system showing what's inside.
+	# Hover: a faint ring for feedback + a row of symbols showing what's inside.
 	if _hover_system != -1 and sim.systems.has(_hover_system) \
 			and _sys_known(_hover_system):
+		draw_arc(sim.systems[_hover_system].map_pos, 18.0, 0.0, TAU, 32,
+			Color(1, 1, 1, 0.35), 1.0)
 		_draw_system_symbols(sim.systems[_hover_system])
 
 
@@ -790,15 +796,16 @@ func _star_color(sid: int) -> Color:
 		_: return Color(1.0, 0.62, 0.42)   # orange-red
 
 
-func _draw_star(pos: Vector2, col: Color, intensity: float) -> void:
-	# Soft glow (stacked low-alpha discs) under a bright near-white core.
+func _draw_star(pos: Vector2, col: Color, intensity: float, scale := 1.0) -> void:
+	# Soft glow (stacked low-alpha discs) under a bright near-white core. scale grows
+	# the whole star with the system's population, so bigger powers read at a glance.
 	var g := col
 	for i in 3:
 		g.a = (0.05 + i * 0.05) * intensity
-		draw_circle(pos, 12.0 - i * 3.0, g)
+		draw_circle(pos, (12.0 - i * 3.0) * scale, g)
 	var core := col.lerp(Color.WHITE, 0.45)
 	core.a = 0.55 + 0.45 * intensity
-	draw_circle(pos, 4.2 + 0.8 * intensity, core)
+	draw_circle(pos, (4.2 + 0.8 * intensity) * scale, core)
 
 
 func _draw_system_symbols(sys: StarSystem) -> void:
