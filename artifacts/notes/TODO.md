@@ -73,7 +73,19 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
-## Status — 0.41.0–0.44.0 (2026-07-03, Godot 4.7) — GRAPHICS + BALANCE PASS
+## Status — 0.41.0–0.49.0 (2026-07-03, Godot 4.7) — GRAPHICS + BALANCE PASS
+
+Later commits in the same autonomous session:
+- **0.45.0** Border glow (translucent underlay), colour-coded resource bar
+  (raw blue / goods green / military warm), landing page starfield.
+- **0.46.0** Star size scales with system population; hover ring feedback.
+- **0.47.0** Combat feedback — a fading red clash starburst on visible systems
+  where a fight/bombardment happened (Sim.combat_at, transient/not saved).
+- **0.48.0** Top-bar player standing: systems / pop / colonies (player-only).
+- **0.49.0** New-game welcome/intro overlay (goal + first steps; paused; skipped
+  on load/autoshot).
+
+Earlier in the session (detail below):
 
 Autonomous polish/graphics/balance session (user away).
 - **0.41.0** Graphics: deep-space starfield backdrop (seeded, static) + systems

@@ -17,6 +17,10 @@ between AI sessions on this specific game.
   New Game settings + Continue + Quit, hands off via `sim/session.gd`.
 - `desktop/tests/run_tests.gd` — 116 headless test assertions. Run:
   `godot --headless --path desktop --script res://tests/run_tests.gd`.
+- `desktop/tests/balance_report.gd` — headless all-AI balance probe (NOT pass/fail);
+  reports the two design pillars + economy over a full game. Run:
+  `godot --headless --path desktop --script res://tests/balance_report.gd`
+  (optional `-- seed= systems= empires= days=`).
 - `run.bat` — launches the game (finds the winget Godot).
 
 Key sim entry points: `point_owner`/`empire_claim_at` (deformed-border influence
