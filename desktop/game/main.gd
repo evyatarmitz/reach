@@ -663,6 +663,11 @@ func _draw_galaxy() -> void:
 	if _fog_tex != null:
 		draw_texture_rect(_fog_tex, _fog_rect, false)
 	# Deformed influence borders (already fog-gated to VR in _recompute_borders).
+	# Two passes: a wide translucent underlay for a soft glow, then the crisp core.
+	for seg in _border_segments:
+		var gc: Color = seg[2]
+		gc.a = 0.22
+		draw_line(seg[0], seg[1], gc, 5.0)
 	for seg in _border_segments:
 		draw_line(seg[0], seg[1], seg[2], 2.0)
 	# Lanes: full between two known systems; HALF (out to the midpoint) when one
@@ -868,6 +873,10 @@ func _build_ui() -> void:
 	day_label = Label.new()
 	for l in [raw_label, goods_label, mil_label, day_label]:
 		bar.add_child(l)
+	# Colour-code the groups so the eye separates raw / goods / military at a glance.
+	raw_label.modulate = Color(0.6, 0.8, 1.0)     # T0 raw — cool blue
+	goods_label.modulate = Color(0.6, 1.0, 0.7)   # T1 goods — green
+	mil_label.modulate = Color(1.0, 0.7, 0.55)    # military — warm
 
 	hint_label = Label.new()
 	hint_label.modulate = Color(1, 1, 1, 0.5)

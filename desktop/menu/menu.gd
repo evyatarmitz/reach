@@ -13,6 +13,30 @@ var _settings_box: VBoxContainer
 var _size_opt: OptionButton
 var _empire_opt: OptionButton
 var _diff_opt: OptionButton
+var _stars: Array = []   # backdrop starfield [pos, radius, Color]
+
+
+# Deep-space backdrop behind the menu UI: a dark fill plus a seeded starfield, so
+# the landing page matches the in-game look. Drawn on the Control's own canvas item
+# (children — the title/buttons — draw on top).
+func _draw() -> void:
+	var sz := size
+	draw_rect(Rect2(Vector2.ZERO, sz), Color(0.02, 0.02, 0.04))
+	if _stars.is_empty() and sz.x > 1.0:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 424242
+		for i in 260:
+			var p := Vector2(rng.randf_range(0.0, sz.x), rng.randf_range(0.0, sz.y))
+			var a := rng.randf_range(0.05, 0.35)
+			var col := Color(1, 1, 1, a)
+			var tint := rng.randf()
+			if tint < 0.16:
+				col = Color(0.6, 0.75, 1.0, a)
+			elif tint < 0.28:
+				col = Color(1.0, 0.85, 0.65, a)
+			_stars.append([p, rng.randf_range(0.5, 1.7), col])
+	for s in _stars:
+		draw_circle(s[0], s[1], s[2])
 
 
 func _ready() -> void:
@@ -20,10 +44,9 @@ func _ready() -> void:
 	if "--autoshot" in OS.get_cmdline_user_args():
 		get_tree().change_scene_to_file.call_deferred("res://game/main.tscn")
 		return
-	var bg := ColorRect.new()
-	bg.color = Color(0.02, 0.02, 0.04)
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(bg)
+	# Background (deep-space fill + starfield) is painted in _draw(), behind the UI
+	# children added below. queue_redraw once the size is known.
+	call_deferred("queue_redraw")
 
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
