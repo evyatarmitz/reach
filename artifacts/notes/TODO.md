@@ -119,6 +119,11 @@ Autonomous polish/graphics/balance session (user away).
     big refining capacity) — acceptable, self-corrects, violates neither pillar.
     Earlier dead-ends (neighbor-bonus cap, food-stockpile buffer) were the wrong
     lever and stay reverted.
+  - **Verified across all player-selectable configs** (balance_report.gd): Small
+    30sys/2emp → 100% pop retention (no overshoot), 50/50 split; Medium 50/4 → 51%,
+    34/28/20/18; Large 80/6 → 73%, 31/25/16/13/9/6. No steamroll (nobody >75%) in
+    any; growth self-limits; T0 stays bounded (≤~7k even at 80 systems); all five
+    military tiers produce. Balance is solid across the range.
 
 ## Status — through 0.40.0 (2026-07-03, Godot 4.7) — FOG/VR POLISH + FOW MEMORY
 
