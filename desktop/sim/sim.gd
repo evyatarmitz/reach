@@ -18,6 +18,8 @@ var lanes: Array = []          # [system_id, system_id] pairs
 var colonies: Array[Colony] = []
 var fleets: Array[Fleet] = []
 var ais: Array[EmpireAI] = []  # rival brains; step deterministically in tick()
+var combat_at: Dictionary = {} # system_id -> sim day of last combat (transient, for
+                               # the renderer's clash flash; not serialized)
 
 var _next_id := 1
 
@@ -796,9 +798,12 @@ func _resolve_combat(dt_days: float) -> void:
 		var emap: Dictionary = by_sys[sid]
 		if emap.size() >= 2:
 			_fight(emap, dt_days)
+			combat_at[sid] = day   # fleet battle here — flag for the clash flash
 		else:
-			_bombard(emap.keys()[0], emap[emap.keys()[0]], sid, dt_days,
-				destroyed_colonies)
+			var eid: int = emap.keys()[0]
+			_bombard(eid, emap[eid], sid, dt_days, destroyed_colonies)
+			if _has_enemy_colony(eid, sid):
+				combat_at[sid] = day   # bombardment underway
 	for c in destroyed_colonies:
 		planets[c.planet_id].colony = null
 		colonies.erase(c)

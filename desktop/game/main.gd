@@ -39,6 +39,7 @@ const VR_BAND := 0.6
 const SAVE_PATH := "user://reach_save.json"
 const FLEET_ICON_OFF := Vector2(0, -17)   # drawn above the system so it stays clickable
 const BORDER_INSET := 3.5    # push each empire's border curve into its own territory
+const COMBAT_FLASH_DAYS := 5.0   # how long a clash starburst lingers on the map
 
 var cam: Camera2D
 var _panning := false
@@ -730,6 +731,21 @@ func _draw_galaxy() -> void:
 					HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.5, 0.7, 0.55, 0.6))
 			draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
 				HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.35))
+
+	# Combat flash: a fading red starburst on systems where a fight/bombardment
+	# happened recently and the player can see it — so combat isn't silent.
+	for sid in sim.combat_at:
+		if not _sys_live(sid) or not sim.systems.has(sid):
+			continue
+		var age: float = sim.day - sim.combat_at[sid]
+		if age < 0.0 or age > COMBAT_FLASH_DAYS:
+			continue
+		var a: float = (1.0 - age / COMBAT_FLASH_DAYS) * 0.9
+		var p: Vector2 = sim.systems[sid].map_pos
+		var fc := Color(1.0, 0.35, 0.2, a)
+		for k in 4:
+			var d := Vector2.RIGHT.rotated(k * PI / 4.0) * 11.0
+			draw_line(p - d, p + d, fc, 2.0)
 
 	# Fleets: your own always visible; a rival's only while it sits in your VR.
 	# Drawn as an arrowhead in the empire's colour, pointed along its heading; a
