@@ -651,9 +651,16 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_3:
 				speed_idx = 3
 			KEY_ESCAPE:
-				view_system_id = -1
-				selected_planet_id = -1
-				selected_fleet_id = -1
+				# Close an open overlay first; otherwise deselect.
+				if intro_overlay != null and intro_overlay.visible:
+					intro_overlay.visible = false
+					speed_idx = 1
+				elif legend_panel != null and legend_panel.visible:
+					legend_panel.visible = false
+				else:
+					view_system_id = -1
+					selected_planet_id = -1
+					selected_fleet_id = -1
 			KEY_F5:
 				save_game()
 			KEY_F9:
