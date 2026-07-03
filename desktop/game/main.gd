@@ -68,6 +68,11 @@ var upgrade_btn: Button
 var depot_btn: Button
 var ship_f_btns: Array = []   # fighter build buttons, tier 1-5
 var ship_b_btns: Array = []   # bomber build buttons, tier 1-5
+var menu_overlay: PanelContainer
+var overlay_title: Label
+var overlay_resume: Button
+var overlay_save: Button
+var _game_over := false
 var planet_list: VBoxContainer
 var _planet_rows: Array = []   # [Button, planet_id] rows for the open system
 var _panel_system := -1        # which system the planet list was built for
@@ -76,7 +81,8 @@ var _panel_system := -1        # which system the planet list was built for
 func _ready() -> void:
 	# Black space so fogged (unseen) area reads as truly dark, not grey.
 	RenderingServer.set_default_clear_color(Color(0.02, 0.02, 0.03))
-	# New game from the menu's settings, or the default demo map.
+	# New game from the menu's settings, or the default demo map. (A pending load
+	# replaces this after the UI/camera exist.)
 	if not Session.config.is_empty():
 		sim = Sim.generate_map(Session.config)
 	else:
@@ -84,6 +90,10 @@ func _ready() -> void:
 	player_empire_id = sim.empires.keys()[0]  # first empire = human player
 	_build_ui()
 	_init_camera()
+	if Session.load_path != "":
+		var p := Session.load_path
+		Session.load_path = ""
+		load_game(p)
 	if "--autoshot" in OS.get_cmdline_user_args():
 		_autoshot()
 
@@ -119,6 +129,7 @@ func load_game(path: String = SAVE_PATH) -> bool:
 	_fog_seen = {}
 	for k in d.fog_seen:
 		_fog_seen[k] = true
+	_compute_map_bounds()
 	_galaxy_cam_pos = Vector2(d.cx, d.cy)
 	_galaxy_cam_zoom = d.cz
 	view_system_id = -1
@@ -129,11 +140,7 @@ func load_game(path: String = SAVE_PATH) -> bool:
 	return true
 
 
-func _init_camera() -> void:
-	cam = Camera2D.new()
-	add_child(cam)
-	cam.make_current()
-	# Frame the whole galaxy: center on the map's midpoint, zoom to fit.
+func _compute_map_bounds() -> void:
 	var lo := Vector2(INF, INF)
 	var hi := Vector2(-INF, -INF)
 	for sys in sim.systems.values():
@@ -141,9 +148,17 @@ func _init_camera() -> void:
 		hi = hi.max(sys.map_pos)
 	_map_lo = lo
 	_map_hi = hi
+
+
+func _init_camera() -> void:
+	cam = Camera2D.new()
+	add_child(cam)
+	cam.make_current()
+	# Frame the whole galaxy: center on the map's midpoint, zoom to fit.
+	_compute_map_bounds()
 	var vp := get_viewport_rect().size
-	var span := (hi - lo) + Vector2(240, 240)  # margin so edge systems aren't clipped
-	_galaxy_cam_pos = (lo + hi) * 0.5
+	var span := (_map_hi - _map_lo) + Vector2(240, 240)  # margin
+	_galaxy_cam_pos = (_map_lo + _map_hi) * 0.5
 	_galaxy_cam_zoom = clampf(minf(vp.x / span.x, vp.y / span.y),
 		ZOOM_MIN, ZOOM_MAX)
 
@@ -162,9 +177,31 @@ func _process(delta: float) -> void:
 		_border_timer = BORDER_REFRESH
 		_recompute_borders()
 	_update_hover()
+	_check_game_over()
 	_apply_camera()
 	_refresh_ui()
 	queue_redraw()
+
+
+# Defeat when the player holds no colonies; victory when only the player does.
+func _check_game_over() -> void:
+	if _game_over:
+		return
+	var player_has := false
+	var rival_has := false
+	for c in sim.colonies:
+		if c.empire_id == player_empire_id:
+			player_has = true
+		else:
+			rival_has = true
+	if player_has and rival_has:
+		return
+	_game_over = true
+	speed_idx = 0
+	menu_overlay.visible = true
+	overlay_resume.visible = false
+	overlay_save.visible = false
+	overlay_title.text = "Victory!" if player_has else "Defeated"
 
 
 func _update_hover() -> void:
@@ -681,6 +718,11 @@ func _build_ui() -> void:
 		bar.add_child(b)
 		speed_buttons.append(b)
 
+	var menu_btn := Button.new()
+	menu_btn.text = "Menu"
+	menu_btn.pressed.connect(func() -> void: menu_overlay.visible = not menu_overlay.visible)
+	bar.add_child(menu_btn)
+
 	panel = PanelContainer.new()
 	layer.add_child(panel)
 	# Explicit anchors/offsets — the preset helpers size from the internal
@@ -739,6 +781,45 @@ func _build_ui() -> void:
 	vbox.add_child(split_btn)
 
 	_build_ship_panel(layer)
+	_build_menu_overlay(layer)
+
+
+func _build_menu_overlay(layer: CanvasLayer) -> void:
+	menu_overlay = PanelContainer.new()
+	menu_overlay.set_anchors_preset(Control.PRESET_CENTER)
+	menu_overlay.anchor_left = 0.5
+	menu_overlay.anchor_right = 0.5
+	menu_overlay.anchor_top = 0.5
+	menu_overlay.anchor_bottom = 0.5
+	menu_overlay.offset_left = -130
+	menu_overlay.offset_right = 130
+	menu_overlay.offset_top = -110
+	menu_overlay.offset_bottom = 110
+	menu_overlay.visible = false
+	layer.add_child(menu_overlay)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	menu_overlay.add_child(v)
+	overlay_title = Label.new()
+	overlay_title.text = "Paused"
+	overlay_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	overlay_title.add_theme_font_size_override("font_size", 28)
+	v.add_child(overlay_title)
+	overlay_resume = Button.new()
+	overlay_resume.text = "Resume"
+	overlay_resume.pressed.connect(func() -> void: menu_overlay.visible = false)
+	v.add_child(overlay_resume)
+	overlay_save = Button.new()
+	overlay_save.text = "Save game"
+	overlay_save.pressed.connect(func() -> void:
+		save_game()
+		overlay_save.text = "Saved!")
+	v.add_child(overlay_save)
+	var quit := Button.new()
+	quit.text = "Quit to menu"
+	quit.pressed.connect(func() -> void:
+		get_tree().change_scene_to_file("res://menu/menu.tscn"))
+	v.add_child(quit)
 
 
 # Top-right shipyard: a Fighter and Bomber build button per tier 1-5. Each click
