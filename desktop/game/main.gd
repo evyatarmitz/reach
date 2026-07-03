@@ -64,6 +64,7 @@ var raw_label: Label
 var goods_label: Label
 var mil_label: Label
 var day_label: Label
+var standing_label: Label
 var hint_label: Label
 var speed_buttons: Array[Button] = []
 var panel: PanelContainer
@@ -802,6 +803,13 @@ func _draw_galaxy() -> void:
 # Under a hovered system: one glyph per planet — filled circle = colony (owner
 # colour), diamond = uncolonised deposit (blue water / orange minerals), a small
 # bright square overlaid = a mine; plus a square for a system supply depot.
+func _fmt_num(v: float) -> String:
+	# Compact big numbers for the status bar (21214 -> "21.2k").
+	if v >= 1000.0:
+		return "%.1fk" % (v / 1000.0)
+	return "%.0f" % v
+
+
 func _star_color(sid: int) -> Color:
 	# Deterministic spectral tint per system so the map reads as varied real stars.
 	match sid % 5:
@@ -894,7 +902,9 @@ func _build_ui() -> void:
 	goods_label = Label.new()
 	mil_label = Label.new()
 	day_label = Label.new()
-	for l in [raw_label, goods_label, mil_label, day_label]:
+	standing_label = Label.new()
+	standing_label.modulate = Color(1, 1, 1, 0.75)
+	for l in [raw_label, goods_label, mil_label, day_label, standing_label]:
 		bar.add_child(l)
 	# Colour-code the groups so the eye separates raw / goods / military at a glance.
 	raw_label.modulate = Color(0.6, 0.8, 1.0)     # T0 raw — cool blue
@@ -1214,6 +1224,20 @@ func _refresh_ui() -> void:
 	mil_label.text = "Mil T1-5: %.0f·%.0f·%.0f·%.0f·%.0f" % \
 		[player.nat[0], player.nat[1], player.nat[2], player.nat[3], player.nat[4]]
 	day_label.text = "Day %.1f" % sim.day
+	# Player's own standing (no fog concern — it's your empire): systems / pop /
+	# colonies, so you can gauge where you stand without counting the map.
+	var psys := 0
+	for sys in sim.systems.values():
+		if sim.system_owner(sys.id) == player_empire_id:
+			psys += 1
+	var ppop := 0.0
+	var pcol := 0
+	for c in sim.colonies:
+		if c.empire_id == player_empire_id:
+			ppop += c.population
+			pcol += 1
+	standing_label.text = "◆ Systems %d · Pop %s · Colonies %d" \
+		% [psys, _fmt_num(ppop), pcol]
 	for i in speed_buttons.size():
 		speed_buttons[i].button_pressed = (i == speed_idx)
 	for t in 5:   # enable ship buttons only for tiers the player can pay for
