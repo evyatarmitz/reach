@@ -110,6 +110,14 @@ const BOMBARD_DESTROY_POP := 100.0
 # exceed this, no matter how big the stack — extra ships become durability, not
 # punch, so a bigger fleet wins by outlasting, never by one decisive blow.
 const POWER_CEILING := 200.0
+# Overstay attrition: a fleet parked in space it doesn't own (and out of supply)
+# bleeds this fraction of its own hull per day after a grace period — so bigger
+# fleets bleed more in absolute terms and can't camp enemy territory forever.
+const ATTRITION_GRACE_DAYS := 20.0
+const ATTRITION_FRAC := 0.01
+# Supply depot: a structure that negates attrition for friendly fleets in its
+# system or one lane-jump away (doesn't stack).
+const DEPOT_COST_ALLOYS := 60.0
 
 # Established-city conversion: capacity/day = COEF * pop^EXP for each chain
 # (water->food, minerals->alloys). Actual output is capped by the available T0

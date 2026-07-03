@@ -13,7 +13,8 @@ var path: Array[int] = []      # remaining system ids to traverse, in order
 var progress: float = 0.0      # 0..1 along the lane from system_id to path[0]
 var fighters: Array[int] = [0, 0, 0, 0, 0]
 var bombers: Array[int] = [0, 0, 0, 0, 0]
-var damage: float = 0.0   # accumulated combat damage; destroys ships as it mounts
+var damage: float = 0.0        # accumulated combat damage; destroys ships as it mounts
+var foreign_days: float = 0.0  # days parked in unsupplied foreign space (attrition)
 
 
 func is_moving() -> bool:

@@ -491,6 +491,33 @@ func upgrade_mine(empire_id: int, planet_id: int) -> bool:
 	return true
 
 
+# Supply depot: one per system, built in your influence for alloys.
+func can_build_depot(empire_id: int, system_id: int) -> bool:
+	var e: Empire = empires.get(empire_id)
+	return e != null and systems.has(system_id) \
+		and systems[system_id].depot_empire_id == -1 \
+		and e.alloys >= SimConstants.DEPOT_COST_ALLOYS \
+		and is_under_influence(system_id, empire_id)
+
+
+func build_depot(empire_id: int, system_id: int) -> bool:
+	if not can_build_depot(empire_id, system_id):
+		return false
+	empires[empire_id].alloys -= SimConstants.DEPOT_COST_ALLOYS
+	systems[system_id].depot_empire_id = empire_id
+	return true
+
+
+# A fleet is in supply if a friendly depot sits in its system or a lane-neighbor.
+func _fleet_supplied(f: Fleet) -> bool:
+	if systems[f.system_id].depot_empire_id == f.empire_id:
+		return true
+	for nb in lane_neighbors(f.system_id):
+		if systems[nb].depot_empire_id == f.empire_id:
+			return true
+	return false
+
+
 # --- fleets -------------------------------------------------------------------
 
 func _empire_has_colony_in(empire_id: int, system_id: int) -> bool:
@@ -636,6 +663,20 @@ func _resolve_combat(dt_days: float) -> void:
 	for c in destroyed_colonies:
 		planets[c.planet_id].colony = null
 		colonies.erase(c)
+
+	# Overstay attrition: a stationary fleet in space it doesn't own and isn't
+	# supplied bleeds hull ∝ its own size after a grace period.
+	for f in fleets:
+		if f.is_moving():
+			f.foreign_days = 0.0
+			continue
+		if system_owner(f.system_id) == f.empire_id or _fleet_supplied(f):
+			f.foreign_days = 0.0
+			continue
+		f.foreign_days += dt_days
+		if f.foreign_days > SimConstants.ATTRITION_GRACE_DAYS:
+			_damage_fleet(f, SimConstants.ATTRITION_FRAC * f.hull() * dt_days)
+
 	# Cull emptied fleets.
 	var empty: Array[Fleet] = []
 	for f in fleets:

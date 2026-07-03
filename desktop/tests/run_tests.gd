@@ -66,6 +66,7 @@ func _init() -> void:
 	_test_specialization()
 	_test_mine_upgrade()
 	_test_power_ceiling()
+	_test_attrition_and_depot()
 	_test_determinism()
 	if failures == 0:
 		print("ALL TESTS PASSED")
@@ -718,6 +719,48 @@ func _window_enemy_loss(n: int) -> float:
 	var before := df.hull()
 	run_days(sim, 30.0)
 	return before - df.hull()
+
+
+func _test_attrition_and_depot() -> void:
+	# home (owned) linked to a far, unowned system where a fleet will overstay.
+	var sim := Sim.new()
+	var e := sim.add_empire("E", Color.WHITE)
+	e.food = 1.0e12
+	e.alloys = 1.0e9
+	var home := sim.add_system("Home")
+	home.map_pos = Vector2.ZERO
+	sim.inject_colony(e.id, sim.add_planet(home.id, "H").id, 150.0, true)
+	var far := sim.add_system("Far")
+	far.map_pos = Vector2(5000, 0)   # out of the home's influence
+	sim.add_planet(far.id, "F")
+	sim.add_lane(home.id, far.id)
+
+	var f := sim._fleet_at(e.id, far.id)
+	f.fighters[0] = 200
+	var hull0: float = f.hull()
+	run_days(sim, SimConstants.ATTRITION_GRACE_DAYS + 60.0)
+	check(f.hull() < hull0, "a fleet overstaying unowned space bleeds hull to attrition")
+
+	# Same, but a supply depot in the system negates attrition.
+	var sim2 := Sim.new()
+	var e2 := sim2.add_empire("E2", Color.WHITE)
+	e2.food = 1.0e12
+	var far2 := sim2.add_system("Far")
+	far2.map_pos = Vector2(5000, 0)
+	sim2.add_planet(far2.id, "F")
+	far2.depot_empire_id = e2.id   # depot present
+	var g := sim2._fleet_at(e2.id, far2.id)
+	g.fighters[0] = 200
+	var ghull0: float = g.hull()
+	run_days(sim2, SimConstants.ATTRITION_GRACE_DAYS + 60.0)
+	check(is_equal_approx(g.hull(), ghull0), "a supply depot negates overstay attrition")
+
+	# Depot build gating: allowed in your influence, not outside it.
+	check(sim.can_build_depot(e.id, home.id), "can build a depot in your own system")
+	check(not sim.can_build_depot(e.id, far.id),
+		"cannot build a depot outside your influence")
+	check(sim.build_depot(e.id, home.id) and sim.systems[home.id].depot_empire_id == e.id,
+		"building a depot marks the system")
 
 
 func _test_determinism() -> void:

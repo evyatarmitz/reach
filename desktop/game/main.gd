@@ -59,6 +59,7 @@ var split_btn: Button
 var spec_food_btn: Button
 var spec_alloy_btn: Button
 var upgrade_btn: Button
+var depot_btn: Button
 var ship_f_btns: Array = []   # fighter build buttons, tier 1-5
 var ship_b_btns: Array = []   # bomber build buttons, tier 1-5
 var planet_list: VBoxContainer
@@ -443,6 +444,9 @@ func _draw_galaxy() -> void:
 		if live:
 			# Live: bright, current owner ring + current colony count.
 			draw_circle(sys.map_pos, 9.0, Color(1.0, 0.85, 0.35))
+			if sys.depot_empire_id != -1:   # supply depot marker
+				draw_rect(Rect2(sys.map_pos + Vector2(-16, -16), Vector2(6, 6)),
+					sim.empires[sys.depot_empire_id].color)
 			var owner: int = _system_owner.get(sys.id, -1)
 			if owner != -1:
 				draw_arc(sys.map_pos, 13.0, 0.0, TAU, 32,
@@ -568,6 +572,8 @@ func _build_ui() -> void:
 	spec_alloy_btn.pressed.connect(func() -> void: _on_spec(SimConstants.Spec.ALLOY))
 	upgrade_btn = Button.new()
 	upgrade_btn.pressed.connect(_on_upgrade_mine)
+	depot_btn = Button.new()
+	depot_btn.pressed.connect(_on_build_depot)
 	vbox.add_child(panel_title)
 	vbox.add_child(planet_list)
 	vbox.add_child(panel_body)
@@ -577,6 +583,7 @@ func _build_ui() -> void:
 	vbox.add_child(emigrate_btn)
 	vbox.add_child(spec_food_btn)
 	vbox.add_child(spec_alloy_btn)
+	vbox.add_child(depot_btn)
 	vbox.add_child(merge_btn)
 	vbox.add_child(split_btn)
 
@@ -650,6 +657,11 @@ func _on_spec(kind: int) -> void:
 func _on_upgrade_mine() -> void:
 	if selected_planet_id != -1:
 		sim.upgrade_mine(player_empire_id, selected_planet_id)
+
+
+func _on_build_depot() -> void:
+	if view_system_id != -1:
+		sim.build_depot(player_empire_id, view_system_id)
 
 
 func _on_merge() -> void:
@@ -734,7 +746,7 @@ func _show_fleet_panel(fleet: Fleet) -> void:
 		"  → moving" if fleet.is_moving() else "",
 		fleet.combat_power(), fleet.bomb_power(), comp]
 	for b in [colonize_btn, mine_btn, emigrate_btn, upgrade_btn, spec_food_btn,
-			spec_alloy_btn]:
+			spec_alloy_btn, depot_btn]:
 		b.visible = false
 	merge_btn.visible = true
 	merge_btn.disabled = fleet.is_moving() or not _another_fleet_here(fleet)
@@ -759,6 +771,18 @@ func _show_system_panel(sys_id: int) -> void:
 	if _panel_system != sys_id:
 		_rebuild_planet_list(sys_id)
 		_panel_system = sys_id
+	# System-level supply depot control (independent of the selected planet).
+	if sim.systems[sys_id].depot_empire_id == player_empire_id:
+		depot_btn.visible = true
+		depot_btn.disabled = true
+		depot_btn.text = "Supply depot: built"
+	elif sim.is_under_influence(sys_id, player_empire_id):
+		depot_btn.visible = true
+		depot_btn.text = "Build supply depot (%d alloys)" \
+			% int(SimConstants.DEPOT_COST_ALLOYS)
+		depot_btn.disabled = not sim.can_build_depot(player_empire_id, sys_id)
+	else:
+		depot_btn.visible = false
 	# Refresh row labels and highlight the selected planet.
 	for row in _planet_rows:
 		var b: Button = row[0]
