@@ -57,6 +57,7 @@ var _hover_hold := false    # autoshot: freeze the hovered system for the screen
 var _fog_tex: ImageTexture  # baked fog: feathered lit / grey memory / transparent
 var _fog_rect := Rect2()    # world-space rect the fog texture covers
 var _fog_seen := {}         # "gx,gy" -> true, cells ever in VR (explored memory)
+var _starfield: Array = []  # backdrop: [pos, radius, Color] faint stars (static)
 
 var raw_label: Label
 var goods_label: Label
@@ -174,6 +175,33 @@ func _compute_map_bounds() -> void:
 		hi = hi.max(sys.map_pos)
 	_map_lo = lo
 	_map_hi = hi
+	_build_starfield()
+
+
+# A static field of faint background stars covering the map (plus generous margin),
+# so empty space reads as deep space rather than flat black. Seeded → stable across
+# frames; drawn behind the fog. Most are dim white; a few carry a cool/warm tint.
+func _build_starfield() -> void:
+	_starfield.clear()
+	if _map_lo.x == INF:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 990099   # fixed seed: identical every run
+	var lo := _map_lo - Vector2(400, 400)
+	var hi := _map_hi + Vector2(400, 400)
+	var area := (hi - lo)
+	var count := int(clampf(area.x * area.y / 4200.0, 120, 900))
+	for i in count:
+		var p := Vector2(rng.randf_range(lo.x, hi.x), rng.randf_range(lo.y, hi.y))
+		var r := rng.randf_range(0.5, 1.7)
+		var a := rng.randf_range(0.05, 0.32)
+		var col := Color(1, 1, 1, a)
+		var tint := rng.randf()
+		if tint < 0.16:
+			col = Color(0.6, 0.75, 1.0, a)      # cool blue-white
+		elif tint < 0.28:
+			col = Color(1.0, 0.85, 0.65, a)     # warm amber
+		_starfield.append([p, r, col])
 
 
 func _init_camera() -> void:
@@ -621,6 +649,9 @@ func _draw() -> void:
 
 func _draw_galaxy() -> void:
 	var font := ThemeDB.fallback_font
+	# Deep-space backdrop: faint static stars, behind everything.
+	for s in _starfield:
+		draw_circle(s[0], s[1], s[2])
 	# Influence-shaped fog on the black background: one baked texture, drawn with
 	# linear filtering (see _ready) so the feathered lit region hugs the player's
 	# actual influence with a smooth edge — no blocks, no hard reach disc. Lit fades
@@ -649,8 +680,8 @@ func _draw_galaxy() -> void:
 		if not (live or _sys_known(sys.id)):
 			continue   # never seen -> stays black
 		if live:
-			# Live: bright, current owner ring + current colony count.
-			draw_circle(sys.map_pos, 9.0, Color(1.0, 0.85, 0.35))
+			# Live: bright glowing star, current owner ring + current colony count.
+			_draw_star(sys.map_pos, _star_color(sys.id), 1.0)
 			if sys.depot_empire_id != -1:   # supply depot marker
 				draw_rect(Rect2(sys.map_pos + Vector2(-16, -16), Vector2(6, 6)),
 					sim.empires[sys.depot_empire_id].color)
@@ -668,9 +699,9 @@ func _draw_galaxy() -> void:
 			draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
 				HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.65))
 		else:
-			# Explored but out of VR: grey, showing ONLY the frozen last-seen
-			# snapshot (owner ring + colony count as of last sight — no live data).
-			draw_circle(sys.map_pos, 7.0, Color(0.45, 0.45, 0.5))
+			# Explored but out of VR: dim star + the frozen last-seen snapshot
+			# (owner ring + colony count as of last sight — no live data).
+			_draw_star(sys.map_pos, _star_color(sys.id), 0.4)
 			var snap: Dictionary = _stale.get(sys.id, {})
 			var sowner: int = snap.get("owner", -1)
 			if sowner != -1:
@@ -729,6 +760,27 @@ func _draw_galaxy() -> void:
 # Under a hovered system: one glyph per planet — filled circle = colony (owner
 # colour), diamond = uncolonised deposit (blue water / orange minerals), a small
 # bright square overlaid = a mine; plus a square for a system supply depot.
+func _star_color(sid: int) -> Color:
+	# Deterministic spectral tint per system so the map reads as varied real stars.
+	match sid % 5:
+		0: return Color(0.72, 0.83, 1.0)   # blue-white
+		1: return Color(1.0, 1.0, 1.0)     # white
+		2: return Color(1.0, 0.95, 0.82)   # warm white
+		3: return Color(1.0, 0.85, 0.5)    # amber
+		_: return Color(1.0, 0.62, 0.42)   # orange-red
+
+
+func _draw_star(pos: Vector2, col: Color, intensity: float) -> void:
+	# Soft glow (stacked low-alpha discs) under a bright near-white core.
+	var g := col
+	for i in 3:
+		g.a = (0.05 + i * 0.05) * intensity
+		draw_circle(pos, 12.0 - i * 3.0, g)
+	var core := col.lerp(Color.WHITE, 0.45)
+	core.a = 0.55 + 0.45 * intensity
+	draw_circle(pos, 4.2 + 0.8 * intensity, core)
+
+
 func _draw_system_symbols(sys: StarSystem) -> void:
 	# Live systems show current contents; explored-but-out-of-VR systems show only
 	# the frozen snapshot (colonies/mines as last seen — no colonies built after you
