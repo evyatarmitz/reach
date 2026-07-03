@@ -138,8 +138,20 @@ func load_game(path: String = SAVE_PATH) -> bool:
 		_explored[int(k)] = true
 	_stale = {}
 	for k in d.stale:
-		_stale[int(k)] = {"owner": int(d.stale[k].owner),
-			"colonies": int(d.stale[k].colonies)}
+		var s: Dictionary = d.stale[k]
+		var planets := {}
+		for pk in s.get("planets", {}):
+			var pi: Dictionary = s["planets"][pk]
+			planets[int(pk)] = {
+				"colony": bool(pi.get("colony", false)),
+				"colony_owner": int(pi.get("colony_owner", -1)),
+				"established": bool(pi.get("established", false)),
+				"mine": bool(pi.get("mine", false)),
+				"mine_owner": int(pi.get("mine_owner", -1)),
+				"mine_level": int(pi.get("mine_level", 0)),
+			}
+		_stale[int(k)] = {"owner": int(s.get("owner", -1)),
+			"depot": int(s.get("depot", -1)), "planets": planets}
 	_fog_seen = {}
 	for k in d.fog_seen:
 		_fog_seen[k] = true
@@ -296,11 +308,7 @@ func _recompute_borders() -> void:
 		if _system_vr[sys.id] >= 1:
 			_explored[sys.id] = true
 		if _system_vr[sys.id] == 2:
-			var cc := 0
-			for pid in sys.planet_ids:
-				if sim.planets[pid].colony != null:
-					cc += 1
-			_stale[sys.id] = {"owner": _system_owner[sys.id], "colonies": cc}
+			_stale[sys.id] = _snapshot_system(sys)
 
 	# Influence-shaped fog: sample a CONTINUOUS VR value on a grid and bake it into
 	# a texture (drawn with linear filtering) so the lit region reads as the smooth
@@ -421,6 +429,26 @@ func _recompute_borders() -> void:
 					# Only draw border the player can actually see (its own VR).
 					if _player_vr_at(mid, ids, pos, infl, reach_vr, pk):
 						_border_segments.append([seg[0] + off, seg[1] + off, col])
+
+
+# Freeze everything the player is allowed to REMEMBER about a system last seen in
+# full VR: system owner, depot, and per-planet colony existence/owner + mines found
+# (NO population — that's live-only). Names, positions and deposits are static, so
+# they're read live for any explored system, not stored here.
+func _snapshot_system(sys: StarSystem) -> Dictionary:
+	var planets := {}
+	for pid in sys.planet_ids:
+		var p: Planet = sim.planets[pid]
+		planets[pid] = {
+			"colony": p.colony != null,
+			"colony_owner": p.colony.empire_id if p.colony != null else -1,
+			"established": p.colony != null and p.colony.established,
+			"mine": p.has_mine(),
+			"mine_owner": p.mine_empire_id if p.has_mine() else -1,
+			"mine_level": p.mine_level if p.has_mine() else 0,
+		}
+	return {"owner": _system_owner.get(sys.id, -1),
+		"depot": sys.depot_empire_id, "planets": planets}
 
 
 # One empire's combined claim at a world point: (Σi)² / Σ(d·i) over its sources
@@ -640,7 +668,8 @@ func _draw_galaxy() -> void:
 			draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
 				HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.65))
 		else:
-			# Explored but out of VR: grey, with the STALE last-seen snapshot.
+			# Explored but out of VR: grey, showing ONLY the frozen last-seen
+			# snapshot (owner ring + colony count as of last sight — no live data).
 			draw_circle(sys.map_pos, 7.0, Color(0.45, 0.45, 0.5))
 			var snap: Dictionary = _stale.get(sys.id, {})
 			var sowner: int = snap.get("owner", -1)
@@ -648,7 +677,10 @@ func _draw_galaxy() -> void:
 				var gc: Color = sim.empires[sowner].color
 				gc.a = 0.4
 				draw_arc(sys.map_pos, 13.0, 0.0, TAU, 32, gc, 1.5)
-			var scc: int = snap.get("colonies", 0)
+			var scc := 0
+			for pinfo in snap.get("planets", {}).values():
+				if pinfo.get("colony", false):
+					scc += 1
 			if scc > 0:
 				draw_string(font, sys.map_pos + Vector2(14.0, -12.0), str(scc),
 					HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.5, 0.7, 0.55, 0.6))
@@ -698,18 +730,33 @@ func _draw_galaxy() -> void:
 # colour), diamond = uncolonised deposit (blue water / orange minerals), a small
 # bright square overlaid = a mine; plus a square for a system supply depot.
 func _draw_system_symbols(sys: StarSystem) -> void:
+	# Live systems show current contents; explored-but-out-of-VR systems show only
+	# the frozen snapshot (colonies/mines as last seen — no colonies built after you
+	# left, no live owner changes). Deposits are static, so they're always shown.
+	var live := _sys_live(sys.id)
+	var snap: Dictionary = _stale.get(sys.id, {})
+	var snap_planets: Dictionary = snap.get("planets", {})
 	var pids: Array = sys.planet_ids
-	var n := pids.size() + (1 if sys.depot_empire_id != -1 else 0)
+	var depot_owner: int = sys.depot_empire_id if live else snap.get("depot", -1)
+	var n := pids.size() + (1 if depot_owner != -1 else 0)
 	var step := 15.0
 	var start := sys.map_pos + Vector2(-(n - 1) * step * 0.5, 30.0)
 	var i := 0
 	for pid in pids:
 		var p: Planet = sim.planets[pid]
 		var c := start + Vector2(i * step, 0)
-		if p.colony != null:
-			var oc: Color = sim.empires[p.colony.empire_id].color
-			draw_circle(c, 5.0, oc)
-			if not p.colony.established:
+		# Dynamic bits (colony, mine) come from the snapshot when not live.
+		var pinfo: Dictionary = snap_planets.get(pid, {})
+		var has_colony: bool = (p.colony != null) if live else pinfo.get("colony", false)
+		var colony_owner: int = (p.colony.empire_id if p.colony != null else -1) \
+			if live else pinfo.get("colony_owner", -1)
+		var established: bool = (p.colony != null and p.colony.established) if live \
+			else pinfo.get("established", false)
+		var has_mine: bool = p.has_mine() if live else pinfo.get("mine", false)
+		var mine_owner: int = p.mine_empire_id if live else pinfo.get("mine_owner", -1)
+		if has_colony and colony_owner != -1:
+			draw_circle(c, 5.0, sim.empires[colony_owner].color)
+			if not established:
 				draw_arc(c, 5.0, 0.0, TAU, 16, Color(1, 1, 1, 0.6), 1.0)
 		elif p.has_deposit():
 			var dc := Color(0.4, 0.85, 1.0) \
@@ -720,14 +767,14 @@ func _draw_system_symbols(sys: StarSystem) -> void:
 				c + Vector2(0, 5), c + Vector2(-5, 0)]), dc)
 		else:
 			draw_circle(c, 2.5, Color(0.5, 0.5, 0.55))
-		if p.has_mine():
+		if has_mine and mine_owner != -1:
 			draw_rect(Rect2(c + Vector2(-3, -3), Vector2(6, 6)),
-				sim.empires[p.mine_empire_id].color, false, 1.5)
+				sim.empires[mine_owner].color, false, 1.5)
 		i += 1
-	if sys.depot_empire_id != -1:
+	if depot_owner != -1:
 		var dcpos := start + Vector2(i * step, 0)
 		draw_rect(Rect2(dcpos + Vector2(-4, -4), Vector2(8, 8)),
-			sim.empires[sys.depot_empire_id].color)
+			sim.empires[depot_owner].color)
 
 
 func _build_ui() -> void:
@@ -880,11 +927,14 @@ func _build_ship_panel(layer: CanvasLayer) -> void:
 	sp.offset_right = -12.0
 	sp.offset_top = 40.0
 	layer.add_child(sp)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	sp.add_child(box)
 	var grid := GridContainer.new()
 	grid.columns = 3
 	grid.add_theme_constant_override("h_separation", 4)
 	grid.add_theme_constant_override("v_separation", 3)
-	sp.add_child(grid)
+	box.add_child(grid)
 	for s in ["Build", "Fighter", "Bomber"]:
 		var h := Label.new()
 		h.text = s
@@ -905,6 +955,16 @@ func _build_ship_panel(layer: CanvasLayer) -> void:
 			sim.build_ship(player_empire_id, SimConstants.Role.BOMBER, t))
 		grid.add_child(bb)
 		ship_b_btns.append(bb)
+	# Clarify what ships are paid with — the tier's military resource ("Mil T1-5"
+	# in the top bar), NOT alloys. Alloys are the civilian material that feeds the
+	# tier-1 military resource.
+	var note := Label.new()
+	note.text = "Each ship: %d of that tier's Mil (top bar)" \
+		% int(SimConstants.SHIP_NAT_COST)
+	note.add_theme_font_size_override("font_size", 10)
+	note.modulate = Color(1, 1, 1, 0.5)
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(note)
 
 
 func _on_colonize() -> void:
@@ -968,14 +1028,42 @@ func _rebuild_planet_list(sys_id: int) -> void:
 		_planet_rows.append([b, pid])
 
 
-func _planet_row_text(planet: Planet) -> String:
+func _planet_row_text(planet: Planet, live: bool, pinfo: Dictionary) -> String:
 	var tag := planet.name
-	if planet.colony != null:
-		tag += "  ● %.0f%s" % [planet.colony.population,
-			"" if planet.colony.established else " (growing)"]
-	elif planet.has_deposit():
-		tag += "  ◆ %s" % ["", "water", "minerals"][planet.deposit_type]
+	if live:
+		if planet.colony != null:
+			tag += "  ● %.0f%s" % [planet.colony.population,
+				"" if planet.colony.established else " (growing)"]
+		elif planet.has_deposit():
+			tag += "  ◆ %s" % ["", "water", "minerals"][planet.deposit_type]
+	else:
+		# Frozen: colony existence only (no population), else the static deposit.
+		if pinfo.get("colony", false):
+			tag += "  ●"
+		elif planet.has_deposit():
+			tag += "  ◆ %s" % ["", "water", "minerals"][planet.deposit_type]
 	return tag
+
+
+# Read-only detail for a planet in an explored-but-out-of-sight system: static
+# deposit plus the frozen last-seen colony/mine — no population, no live changes.
+func _show_planet_frozen(planet: Planet, pinfo: Dictionary) -> void:
+	for b in [colonize_btn, mine_btn, emigrate_btn, upgrade_btn, spec_food_btn,
+			spec_alloy_btn]:
+		b.visible = false
+	var dep_name: String = ["none", "water", "minerals"][planet.deposit_type]
+	var lines := "Deposit: %s" % dep_name
+	if pinfo.get("colony", false):
+		var co: int = pinfo.get("colony_owner", -1)
+		var oname: String = sim.empires[co].name if co != -1 else "unknown"
+		var kind: String = "established city" if pinfo.get("established", false) \
+			else "young colony"
+		lines += "\nColony: %s (%s)" % [oname, kind]
+	if pinfo.get("mine", false):
+		var mo: int = pinfo.get("mine_owner", -1)
+		var mname: String = sim.empires[mo].name if mo != -1 else "unknown"
+		lines += "\nMine: %s (L%d)" % [mname, int(pinfo.get("mine_level", 1))]
+	panel_body.text = "%s\n\n— out of sight; last-seen intel —" % lines
 
 
 func _refresh_ui() -> void:
@@ -1050,8 +1138,15 @@ func _show_system_panel(sys_id: int) -> void:
 	if _panel_system != sys_id:
 		_rebuild_planet_list(sys_id)
 		_panel_system = sys_id
+	# Explored-but-not-live systems are read-only: everything shown is the frozen
+	# last-seen snapshot, no controls, no live population/ownership.
+	var live := _sys_live(sys_id)
+	var snap: Dictionary = _stale.get(sys_id, {})
+	var snap_planets: Dictionary = snap.get("planets", {})
 	# System-level supply depot control (independent of the selected planet).
-	if sim.systems[sys_id].depot_empire_id == player_empire_id:
+	if not live:
+		depot_btn.visible = false
+	elif sim.systems[sys_id].depot_empire_id == player_empire_id:
 		depot_btn.visible = true
 		depot_btn.disabled = true
 		depot_btn.text = "Supply depot: built"
@@ -1066,7 +1161,7 @@ func _show_system_panel(sys_id: int) -> void:
 	for row in _planet_rows:
 		var b: Button = row[0]
 		var pid: int = row[1]
-		b.text = _planet_row_text(sim.planets[pid])
+		b.text = _planet_row_text(sim.planets[pid], live, snap_planets.get(pid, {}))
 		b.modulate = Color.WHITE if pid == selected_planet_id \
 			else Color(1, 1, 1, 0.7)
 
@@ -1076,6 +1171,10 @@ func _show_system_panel(sys_id: int) -> void:
 		for b in [colonize_btn, mine_btn, emigrate_btn, upgrade_btn, spec_food_btn,
 				spec_alloy_btn]:
 			b.visible = false
+		return
+
+	if not live:
+		_show_planet_frozen(planet, snap_planets.get(planet.id, {}))
 		return
 
 	var dep_name: String = ["none", "water", "minerals"][planet.deposit_type]

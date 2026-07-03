@@ -73,6 +73,33 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — through 0.40.0 (2026-07-03, Godot 4.7) — FOG/VR POLISH + FOW MEMORY
+
+Post-alpha fixes, all from user playtest feedback on the fog of war:
+- **0.35.0** VR sight factor 1.5→3.0 (the claim-ratio margin at 1.5 reached only
+  ~10% past a contested border, so VR looked flush with it).
+- **0.36.0** Smooth fog: bake the fog to an ImageTexture drawn with LINEAR filtering
+  (was thousands of 34px draw_rect → staircase edges) + feather the VR value by
+  claim so it reads as the influence SHAPE, no blocks, no hard reach disc.
+- **0.37.0 → reverted by 0.38.0** First attempt at "border lost in fog" pulled the
+  border INWARD; wrong — it made systems sit outside their own border.
+- **0.38.0** Correct fix: border stays at the real influence edge; the FOG is pushed
+  PAST it. Sight samples the player's claim with an extended reach (VR_SIGHT_REACH
+  1.5× influence reach); ownership + border contour keep the real reach. Same
+  extended reach feeds system-visibility + border-draw gate so what's revealed
+  matches the fog. Knobs: VR_SIGHT_REACH, VR_CLAIM_FLOOR (main.gd).
+- **0.39.0** Fog-of-war MEMORY: explored-but-out-of-VR (grey) systems now show ONLY
+  a frozen last-seen snapshot — system/planet names + positions + lanes + deposits
+  (static, always shown once seen), colonies (existence + owner, NO population),
+  mines found, depot — all frozen at last full-VR sighting. The side panel and hover
+  symbols were reading LIVE sim for any explored system (leaking live pop, colonies
+  built after you left, ownership changes); both now route through the snapshot when
+  a system isn't currently live. Borders only ever draw in live VR (unchanged).
+  `_stale` expanded from {owner,colonies} to a full per-planet snapshot; save/load
+  updated.
+- **0.40.0** Build panel clarifies ship cost: ships are paid in the TIER'S military
+  resource ("Mil T1-5" in the top bar), not alloys — footer note added.
+
 ## Status — through 0.34.0 (2026-07-03, Godot 4.7) — ALPHA SHELL COMPLETE
 
 **116 headless test assertions, all passing.** Batch 0.31.0–0.34.0 (the shell to
