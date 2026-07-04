@@ -204,6 +204,12 @@ const SIGHT_MINE_RANGE := 260.0
 const INFLUENCE_A1 := 1.0
 const BORDER_A2 := 1.8
 
+# Flat planet-mesh map sizing. The map area scales with the planet count at this
+# fixed density, so more planets = a bigger map (not a denser one). Separation is
+# the minimum gap between planets.
+const MAP_AREA_PER_PLANET := 30000.0
+const MAP_MIN_SEPARATION := 90.0
+
 # Cosmic anomalies: circular regions that block influence and visibility. Placed in
 # open space (clear of systems and lanes) so they never break connectivity or
 # movement — they force influence/sight to route around them. Count scales a little

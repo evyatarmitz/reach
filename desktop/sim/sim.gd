@@ -52,12 +52,8 @@ static func _system_name(idx: int) -> String:
 static func default_map_config() -> Dictionary:
 	return {
 		"seed": 20260702,
-		"system_count": 50,
-		"size": Vector2(2000.0, 1120.0),
+		"system_count": 120,      # planets now (one per node); size derives from this
 		"empire_count": 4,
-		"density_blobs": 5,       # heatmap: number of high-density clusters
-		"density_spread": 360.0,  # heatmap: blob radius (bigger = smoother)
-		"min_separation": 95.0,   # min distance between systems
 		"extra_lane_neighbors": 2,# lanes beyond the spanning tree (loops/chokepoints)
 		"ai_efficiency": 1.0,     # difficulty: AI production multiplier
 	}
@@ -85,22 +81,26 @@ static func generate_map(cfg_in: Dictionary) -> Sim:
 	var sim := Sim.new()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = cfg.seed
-	var size: Vector2 = cfg.size
-	var numerals := ["I", "II", "III", "IV"]
-	var radii := [70.0, 115.0, 165.0, 220.0]
+	var count: int = maxi(2, int(cfg.system_count))
+	# The map is now a flat MESH OF PLANETS (one planet per node, no star systems).
+	# Size scales with the planet count at a fixed density, so a bigger map simply
+	# means more room — and influence reach, unchanged, becomes the real limiter on
+	# how fast you can expand across it (which is what lengthens a big game).
+	var area: float = count * SimConstants.MAP_AREA_PER_PLANET
+	var size := Vector2(sqrt(area * 16.0 / 9.0), sqrt(area * 9.0 / 16.0))
+	var spread: float = size.x * 0.16
+	var min_sep: float = SimConstants.MAP_MIN_SEPARATION
+	var blobs_n: int = clampi(count / 18, 3, 14)
 
-	# Density heatmap = sum of Gaussian blobs; systems are placed where it's high.
+	# Density heatmap = sum of Gaussian blobs; planets cluster where it's high.
 	var blobs: Array = []
-	for i in int(cfg.density_blobs):
+	for i in blobs_n:
 		blobs.append(Vector2(rng.randf_range(0.0, size.x),
 			rng.randf_range(0.0, size.y)))
-	var spread: float = cfg.density_spread
-	var min_sep: float = cfg.min_separation
 
 	var positions: Array = []
-	var target: int = cfg.system_count
 	var attempts := 0
-	while positions.size() < target and attempts < target * 500:
+	while positions.size() < count and attempts < count * 500:
 		attempts += 1
 		var p := Vector2(rng.randf_range(0.0, size.x), rng.randf_range(0.0, size.y))
 		var dens := 0.0
@@ -119,17 +119,16 @@ static func generate_map(cfg_in: Dictionary) -> Sim:
 
 	var sys_ids: Array = []
 	for i in positions.size():
+		# One node = one planet. We keep the StarSystem struct as the map node (its
+		# position, lanes, structures) and hang a single planet on it — that's the
+		# whole "system" now, presented to the player as just a planet.
 		var sys := sim.add_system(_system_name(i))
 		sys.map_pos = positions[i]
 		sys_ids.append(sys.id)
-		var pc := 2 + rng.randi_range(0, 2)
-		for pi in pc:
-			var pl := sim.add_planet(sys.id, "%s %s" % [sys.name, numerals[pi]])
-			pl.orbit_radius = radii[pi]
-			pl.orbit_angle = rng.randf_range(0.0, TAU)
-			if rng.randf() < 0.35:
-				pl.deposit_type = SimConstants.Deposit.WATER if rng.randf() < 0.5 \
-					else SimConstants.Deposit.MINERAL
+		var pl := sim.add_planet(sys.id, sys.name)
+		if rng.randf() < 0.35:
+			pl.deposit_type = SimConstants.Deposit.WATER if rng.randf() < 0.5 \
+				else SimConstants.Deposit.MINERAL
 
 	_connect_systems(sim, sys_ids, positions, int(cfg.extra_lane_neighbors))
 	_place_anomalies(sim, positions, size, rng)
@@ -212,9 +211,11 @@ static func _connect_systems(sim: Sim, sys_ids: Array, positions: Array,
 				sim.add_lane(sys_ids[i], sys_ids[j])
 
 
-# Place empires at maximally-separated systems (greedy farthest-point). First
-# empire is the player; the rest get an AI. Each homeworld gets a mineral mine +
-# water mine (free) so its capital is self-sustaining from tick 1.
+# Place empires at maximally-separated planets (greedy farthest-point). First
+# empire is the player; the rest get an AI. Each home planet is a water world with a
+# colony + water mine; its nearest planet is given a mineral mine — so a new empire
+# has both resource streams from tick 1 (one planet per node, so the two mines can't
+# share a node like they used to).
 static func _place_empires(sim: Sim, sys_ids: Array, positions: Array,
 		count: int, ai_efficiency: float) -> void:
 	var n := sys_ids.size()
@@ -242,14 +243,26 @@ static func _place_empires(sim: Sim, sys_ids: Array, positions: Array,
 		var emp := sim.add_empire(ename, _EMPIRE_COLORS[e_i % _EMPIRE_COLORS.size()])
 		if e_i > 0:   # AI empires scale with difficulty; the player stays at 1.0
 			emp.efficiency = ai_efficiency
-		var pids: Array = sim.systems[sid].planet_ids
-		var mineral_p: Planet = sim.planets[pids[0]]
-		var water_p: Planet = sim.planets[pids[1]]
-		mineral_p.deposit_type = SimConstants.Deposit.MINERAL
-		mineral_p.mine_empire_id = emp.id
-		water_p.deposit_type = SimConstants.Deposit.WATER
-		water_p.mine_empire_id = emp.id
-		sim.inject_colony(emp.id, pids[0], 150.0, true)
+		# Home planet: water world + water mine + the seed colony.
+		var home_p: Planet = sim.planets[sim.systems[sid].planet_ids[0]]
+		home_p.deposit_type = SimConstants.Deposit.WATER
+		home_p.mine_empire_id = emp.id
+		sim.inject_colony(emp.id, home_p.id, 150.0, true)
+		# Nearest other planet: a starting mineral mine (so alloys flow from tick 1).
+		var hi: int = chosen[e_i]
+		var best_j := -1
+		var best_d := INF
+		for j in n:
+			if chosen.has(j):
+				continue
+			var d: float = positions[hi].distance_to(positions[j])
+			if d < best_d:
+				best_d = d
+				best_j = j
+		if best_j != -1:
+			var mp: Planet = sim.planets[sim.systems[sys_ids[best_j]].planet_ids[0]]
+			mp.deposit_type = SimConstants.Deposit.MINERAL
+			mp.mine_empire_id = emp.id
 		if e_i > 0:   # first empire is the human player
 			sim.add_ai(emp.id)
 

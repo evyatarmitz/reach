@@ -736,7 +736,10 @@ func _select_at(pos: Vector2) -> void:
 	for sys in sim.systems.values():
 		if pos.distance_to(sys.map_pos) <= 20.0 and _sys_known(sys.id):
 			view_system_id = sys.id
-			selected_planet_id = -1
+			# One planet per node — auto-select it so the panel shows the planet's
+			# actions directly (no system→planet-list step).
+			selected_planet_id = sys.planet_ids[0] if not sys.planet_ids.is_empty() \
+				else -1
 			selected_fleet_id = -1
 			return
 	# Empty space -> close panel / deselect.
@@ -981,21 +984,19 @@ func _hover_summary(sid: int) -> String:
 		var owner: int = _system_owner.get(sid, -1)
 		var oname: String = sim.empires[owner].name if owner != -1 else "unclaimed"
 		var pop := 0.0
-		var cc := 0
+		var colonized := false
 		for pid in sys.planet_ids:
 			var c: Colony = sim.planets[pid].colony
 			if c != null:
 				pop += c.population
-				cc += 1
-		return "%s — %s · pop %s · %d colonies" % [sys.name, oname, _fmt_num(pop), cc]
+				colonized = true
+		if colonized:
+			return "%s — %s · pop %s" % [sys.name, oname, _fmt_num(pop)]
+		return "%s — %s · uncolonised" % [sys.name, oname]
 	var snap: Dictionary = _stale.get(sid, {})
 	var so: int = snap.get("owner", -1)
 	var oname2: String = sim.empires[so].name if so != -1 else "unknown"
-	var cc2 := 0
-	for pinfo in snap.get("planets", {}).values():
-		if pinfo.get("colony", false):
-			cc2 += 1
-	return "%s — last seen: %s · %d colonies" % [sys.name, oname2, cc2]
+	return "%s — last seen: %s" % [sys.name, oname2]
 
 
 func _builder_inbound(planet_id: int) -> bool:
@@ -1506,7 +1507,7 @@ func _refresh_ui() -> void:
 		if c.empire_id == player_empire_id:
 			ppop += c.population
 			pcol += 1
-	standing_label.text = "◆ Systems %d · Pop %s · Colonies %d" \
+	standing_label.text = "◆ Worlds %d · Pop %s · Colonies %d" \
 		% [psys, _fmt_num(ppop), pcol]
 	for i in speed_buttons.size():
 		speed_buttons[i].button_pressed = (i == speed_idx)
@@ -1518,17 +1519,17 @@ func _refresh_ui() -> void:
 	var fleet: Fleet = sim.get_fleet(selected_fleet_id) if selected_fleet_id != -1 \
 		else null
 	if fleet != null:
-		hint_label.text = "Click a system to send the fleet · Esc to deselect"
+		hint_label.text = "Click a planet to send the fleet · Esc to deselect"
 		_show_fleet_panel(fleet)
 		return
 	if view_system_id != -1 and sim.systems.has(view_system_id):
-		hint_label.text = "Pick a planet · Esc to close"
+		hint_label.text = "Planet actions · Esc to close"
 		_show_system_panel(view_system_id)
 		return
 	if _hover_system != -1 and _sys_known(_hover_system):
 		hint_label.text = _hover_summary(_hover_system)
 	else:
-		hint_label.text = "Right-drag pan · wheel zoom · click a system or fleet · L: legend"
+		hint_label.text = "Right-drag pan · wheel zoom · click a planet or fleet · L: legend"
 	panel.visible = false
 	_panel_system = -1
 
@@ -1582,7 +1583,7 @@ func _another_fleet_here(fleet: Fleet) -> bool:
 
 func _show_system_panel(sys_id: int) -> void:
 	panel.visible = true
-	planet_list.visible = true
+	planet_list.visible = false   # one planet per node — shown directly, no list
 	merge_btn.visible = false
 	split_btn.visible = false
 	panel_title.text = sim.systems[sys_id].name
@@ -1722,12 +1723,9 @@ func _show_system_panel(sys_id: int) -> void:
 # Debug hook for automated visual verification: found a colony, run fast for a
 # couple of real seconds, save galaxy + system screenshots, quit.
 func _autoshot() -> void:
-	var home: StarSystem = sim.systems.values()[0]
-	sim.build_mine(player_empire_id, home.planet_ids[0])
-	sim.found_colony(player_empire_id, home.planet_ids[1])
-	# For the screenshot only: let the player expand too (via the same AI), so it
-	# meets the rival and the border falls inside player sight — otherwise fog
-	# correctly hides it. Not part of normal play.
+	# The player already starts with a home planet + mines. For the screenshot only,
+	# let it expand too (via the same AI) so it meets a rival and the border falls
+	# inside player sight — otherwise fog correctly hides it. Not part of normal play.
 	sim.add_ai(player_empire_id)
 	# Advance the sim directly (deterministic, instant) so both empires expand
 	# and the galaxy shows a real two-color contest.
@@ -1751,6 +1749,7 @@ func _autoshot() -> void:
 	# and the border inside the player's VR all show. Force a hover so the
 	# per-system symbol row is captured.
 	_hover_hold = true
+	var home: StarSystem = sim.systems[sim.most_populated_system(player_empire_id)]
 	_hover_system = home.id
 	_recompute_borders()
 	await RenderingServer.frame_post_draw
