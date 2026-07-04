@@ -1530,11 +1530,23 @@ func _show_fleet_panel(fleet: Fleet) -> void:
 			comp += "B%d×%d  " % [t + 1, fleet.bombers[t]]
 	if comp == "":
 		comp = "(empty)"
-	panel_body.text = "At: %s%s\nCombat %.0f · Bomb %.0f\n%s" % [loc,
+	# Combat status line if this fleet's system is actively fighting — the enemy
+	# combat power it faces, so you can judge whether it's winning.
+	var combat_line := ""
+	if not fleet.is_moving() and sim.combat_kind.get(fleet.system_id, -1) == 0:
+		var enemy := 0.0
+		for eid in sim.fleet_powers_in(fleet.system_id):
+			if eid != fleet.empire_id:
+				enemy += sim.fleet_powers_in(fleet.system_id)[eid].combat
+		combat_line = "\n⚔ IN BATTLE — enemy %.0f vs your %.0f" \
+			% [enemy, fleet.combat_power()]
+	elif not fleet.is_moving() and sim.combat_kind.get(fleet.system_id, -1) == 1:
+		combat_line = "\n☄ bombarding the colony here"
+	panel_body.text = "At: %s%s\nCombat %.0f · Bomb %.0f\n%s%s" % [loc,
 		"  → moving" if fleet.is_moving() else "",
-		fleet.combat_power(), fleet.bomb_power(), comp]
+		fleet.combat_power(), fleet.bomb_power(), comp, combat_line]
 	for b in [colonize_btn, mine_btn, emigrate_btn, upgrade_btn, spec_food_btn,
-			spec_alloy_btn, depot_btn]:
+			spec_alloy_btn, depot_btn, obs_post_btn, transport_btn]:
 		b.visible = false
 	merge_btn.visible = true
 	merge_btn.disabled = fleet.is_moving() or not _another_fleet_here(fleet)
