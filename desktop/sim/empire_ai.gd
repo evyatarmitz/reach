@@ -27,7 +27,40 @@ func _act(sim: Sim) -> void:
 	_build_one_mine(sim)
 	_found_one_colony(sim)
 	_build_ships(sim)
+	_build_support(sim)
 	_move_fleets(sim)
+
+
+# Support structures, same options the player has (built instantly in own influence).
+# Priority: a transport hub at the capital (lifts the core cluster's growth), then
+# an observation post on a frontier system (early warning + border push). One per
+# interval, only with spare alloys — expansion/defence come first (called after them).
+func _build_support(sim: Sim) -> void:
+	var cap := sim.most_populated_system(empire_id)
+	if cap != -1 and sim.systems[cap].transport_empire_id == -1 \
+			and sim.can_build_transport(empire_id, cap):
+		sim.build_transport(empire_id, cap)
+		return
+	for sid in _owned_systems_sorted(sim):
+		if sim.systems[sid].obs_post_empire_id != -1:
+			continue
+		var frontier := false
+		for nb in sim.lane_neighbors(sid):
+			if sim._has_enemy_colony(empire_id, nb):
+				frontier = true
+				break
+		if frontier and sim.can_build_obs_post(empire_id, sid):
+			sim.build_obs_post(empire_id, sid)
+			return
+
+
+func _owned_systems_sorted(sim: Sim) -> Array:
+	var ids: Array = []
+	for sid in sim.systems:
+		if _has_colony_in_system(sim, sid):
+			ids.append(sid)
+	ids.sort()
+	return ids
 
 
 # Build the highest tier it can afford (alternating fighter/bomber), for defence.
