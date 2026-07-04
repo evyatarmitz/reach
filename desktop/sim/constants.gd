@@ -168,6 +168,11 @@ const RAW_STOCK_MIN := 500.0
 # unbuildable (dead content — every game showed Mil T3-5 stuck at 0). These map the
 # five tiers onto achievable city sizes: small cities make T1-2, big cities T3-5.
 const MIL_CUTOFF := [50.0, 150.0, 350.0, 700.0, 1200.0]
+# National/civilian resource split: military tiers at this index and above (0-based;
+# 2 = tiers 3-5) require the empire to mine BOTH deposit types — the vision's
+# "higher production tiers need a wider variety of resource types, rewarding diverse
+# territory over hoarding one kind."
+const VARIETY_MIN_TIER := 2
 const MIL_COEF := 0.02
 const MIL_EXP := 0.8
 

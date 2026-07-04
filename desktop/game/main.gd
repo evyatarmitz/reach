@@ -1319,8 +1319,8 @@ func _build_ship_panel(layer: CanvasLayer) -> void:
 	# in the top bar), NOT alloys. Alloys are the civilian material that feeds the
 	# tier-1 military resource.
 	var note := Label.new()
-	note.text = "Each ship: %d of that tier's Mil (top bar)" \
-		% int(SimConstants.SHIP_NAT_COST)
+	note.text = "Each ship: %d of that tier's Mil (top bar).\nHigh tiers (T%d+) need BOTH water & mineral mines." \
+		% [int(SimConstants.SHIP_NAT_COST), SimConstants.VARIETY_MIN_TIER + 1]
 	note.add_theme_font_size_override("font_size", 10)
 	note.modulate = Color(1, 1, 1, 0.5)
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

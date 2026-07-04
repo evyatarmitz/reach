@@ -1230,6 +1230,24 @@ func tick(dt_days: float) -> void:
 		e.minerals = minf(e.minerals, maxf(SimConstants.RAW_STOCK_MIN,
 			alloy_cap.get(e.id, 0.0) * SimConstants.RAW_STOCK_DAYS))
 
+	# National vs civilian variety: higher-tier military production needs a wider
+	# variety of resource types, rewarding diverse territory over hoarding one kind
+	# (vision). Concretely, an empire must mine BOTH water and minerals to refine the
+	# top military tiers (VARIETY_MIN_TIER+) — the civilian (water→food) economy and
+	# the industrial (mineral→alloy) economy both feed a modern war machine.
+	var mines_both := {}
+	var has_water := {}
+	var has_mineral := {}
+	for p in planets.values():
+		if p.has_mine():
+			if p.deposit_type == SimConstants.Deposit.WATER:
+				has_water[p.mine_empire_id] = true
+			elif p.deposit_type == SimConstants.Deposit.MINERAL:
+				has_mineral[p.mine_empire_id] = true
+	for eid in has_water:
+		if has_mineral.has(eid):
+			mines_both[eid] = true
+
 	# 2. Established cities refine T0 -> T1, capped by available input (partial
 	#    is fine). Earlier colonies draw first — deterministic by colony order.
 	for c in colonies:
@@ -1257,6 +1275,10 @@ func tick(dt_days: float) -> void:
 			* pow(c.population, SimConstants.MIL_EXP) * dt_days
 		for t in 5:
 			if c.population < SimConstants.MIL_CUTOFF[t]:
+				break
+			# Variety gate: the top tiers need diverse territory (both deposit types
+			# mined), not just a big single-resource stockpile.
+			if t >= SimConstants.VARIETY_MIN_TIER and not mines_both.has(e.id):
 				break
 			var avail: float = e.alloys if t == 0 else e.nat[t - 1]
 			var made: float = minf(mil_cap, avail)

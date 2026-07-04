@@ -69,6 +69,7 @@ func _init() -> void:
 	_test_attrition_and_depot()
 	_test_structure_capture()
 	_test_support_structures()
+	_test_resource_variety()
 	_test_construction_vessel()
 	_test_anomalies()
 	_test_difficulty()
@@ -642,6 +643,15 @@ func _test_military_resources() -> void:
 	var s := sim.add_system("S")
 	s.map_pos = Vector2.ZERO
 	sim.inject_colony(e.id, sim.add_planet(s.id, "big").id, 3000.0, true)
+	# The top tiers need deposit variety, so give this empire both mine types.
+	var wm := sim.add_planet(s.id, "w")
+	wm.deposit_type = SimConstants.Deposit.WATER
+	wm.mine_empire_id = e.id
+	var mm := sim.add_planet(s.id, "m")
+	mm.deposit_type = SimConstants.Deposit.MINERAL
+	mm.mine_empire_id = e.id
+	e.water = 1.0e9
+	e.minerals = 1.0e9
 	run_days(sim, 40.0)
 	# The chain feeds upward, so a maxed city ends holding the TOP tier (lower
 	# tiers get consumed to make the next) — that's the "spread cities for a mix"
@@ -658,6 +668,41 @@ func _test_military_resources() -> void:
 	run_days(sim2, 40.0)
 	check(e2.nat[0] > 0.0 and e2.nat[1] == 0.0,
 		"a small city (below the tier-2 cutoff) refines only tier 1")
+
+
+func _test_resource_variety() -> void:
+	# Top military tiers need diverse territory: an empire mining only minerals can't
+	# refine tier VARIETY_MIN_TIER+; adding a water mine unlocks it.
+	var sim := Sim.new()
+	var e := sim.add_empire("V", Color.WHITE)
+	e.alloys = 1.0e9
+	e.food = 1.0e9   # keep the city fed/stable
+	e.minerals = 1.0e9
+	var s := sim.add_system("S")
+	s.map_pos = Vector2.ZERO
+	sim.inject_colony(e.id, sim.add_planet(s.id, "big").id, 3000.0, true)
+	var mp := sim.add_planet(s.id, "min")   # mineral mine only
+	mp.deposit_type = SimConstants.Deposit.MINERAL
+	mp.mine_empire_id = e.id
+	run_days(sim, 30.0)
+	# The chain drains lower tiers UP, so without variety the top REACHED tier is
+	# VARIETY_MIN_TIER-1; tiers at/above the variety gate stay 0.
+	var gate := SimConstants.VARIETY_MIN_TIER
+	var blocked := true
+	for t in range(gate, 5):
+		if e.nat[t] != 0.0:
+			blocked = false
+	check(blocked, "tiers at/above the variety gate are blocked without deposit variety")
+	var lower := 0.0
+	for t in gate:
+		lower += e.nat[t]
+	check(lower > 0.0, "lower military tiers still produce without variety")
+	var wp := sim.add_planet(s.id, "wat")   # now add a water mine → variety
+	wp.deposit_type = SimConstants.Deposit.WATER
+	wp.mine_empire_id = e.id
+	run_days(sim, 40.0)
+	check(e.nat[4] > 0.0,
+		"the top tier is reached once both deposit types are mined")
 
 
 func _test_support_structures() -> void:

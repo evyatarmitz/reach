@@ -73,6 +73,29 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.55.0–0.58.0 (2026-07-04, Godot 4.7) — VISION MAJOR SYSTEMS
+
+The remaining vision features (user: "go ahead and finish this"). All keep the
+sim/render split, are covered by tests, and were balance-re-verified.
+- **0.55.0** Observation post (doubles a system's influence reach → border + VR
+  early warning) and Transportation hub (multiplies its colonies' neighbor bonus).
+  Built per-system in influence, captured with the border, side-panel buttons + map
+  markers. (AI doesn't build these yet — a same-rules parity refinement.)
+- **0.56.0** Cosmic anomalies — circular regions that block influence AND visibility
+  (no claim inside, none crosses); placed in open space clear of systems/lanes so
+  movement/connectivity are never cut. Rendered as magenta nebulae.
+- **0.57.0** Construction vessels — colonies/mines are delivered by a vessel that
+  travels lanes from the capital and can't cross enemy territory (paid at dispatch,
+  placed on arrival, refunded if spoiled). AI uses the same path. BONUS: logistics-
+  paced expansion eliminated the pop boom-bust (100% peak/final retention).
+- **0.58.0** National/civilian resource split — the economy already splits civilian
+  (water→food→growth) from national (mineral→alloy→military); added the vision's
+  variety-gating: top military tiers (T3+) require mining BOTH deposit types,
+  rewarding diverse territory over hoarding one kind. (Happiness dimension +
+  additional raw types left as a documented future refinement.)
+
+Vision feature set is now COMPLETE. Remaining is tuning/content, not new systems.
+
 ## Status — 0.41.0–0.49.0 (2026-07-03, Godot 4.7) — GRAPHICS + BALANCE PASS
 
 Later commits in the same autonomous session:
