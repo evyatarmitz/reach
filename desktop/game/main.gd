@@ -35,7 +35,12 @@ const FOG_CELL := 22.0       # sample cell for the fog texture (linearly filtere
 # feather completes around the extended sight edge (no hard disc). VR_BAND is the
 # feather width in claim-ratio units. Fog stays soft/organic; border sits inside it.
 const VR_SIGHT_REACH := 1.5
-const VR_CLAIM_FLOOR := 1.1
+# Claim threshold that both (a) separates a real contested border from open space —
+# a rival claim above this means "contested", so VR stops at the border — and (b)
+# sets how far open-space VR reaches (out to where the player's sight-claim drops to
+# this). Low, so any real neighbour counts as contested and open sight reaches well
+# out for early warning.
+const VR_CLAIM_FLOOR := 0.4
 const VR_BAND := 0.6
 const SAVE_PATH := "user://reach_save.json"
 const FLEET_ICON_OFF := Vector2(0, -17)   # drawn above the system so it stays clickable
@@ -414,7 +419,7 @@ func _recompute_borders() -> void:
 	var full := {}
 	for sys in sim.systems.values():
 		_system_owner[sys.id] = _owner_at(sys.map_pos, ids, pos, infl, reach)
-		if _player_vr_at(sys.map_pos, ids, pos, infl, reach_vr, pk) \
+		if _player_vr_at(sys.map_pos, ids, pos, infl, reach, reach_vr, pk) \
 				or sim._empire_has_colony_in(player_empire_id, sys.id) \
 				or sim.empire_fleet_in_system(player_empire_id, sys.id):
 			full[sys.id] = true
@@ -439,25 +444,11 @@ func _recompute_borders() -> void:
 	var fhi := _map_hi + Vector2(140, 140)
 	var fcols: int = maxi(1, int((fhi.x - flo.x) / FOG_CELL) + 1)
 	var frows: int = maxi(1, int((fhi.y - flo.y) / FOG_CELL) + 1)
-	var sight: float = SimConstants.SIGHT_INFLUENCE_FACTOR
 	var img := Image.create(fcols, frows, false, Image.FORMAT_RGBA8)
 	for gy in frows:
 		for gx in fcols:
 			var c := Vector2(flo.x + (gx + 0.5) * FOG_CELL, flo.y + (gy + 0.5) * FOG_CELL)
-			var v := 0.0
-			if pk != -1:
-				# Player claim on extended SIGHT reach so the fog reaches past the
-				# border; rivals on their real reach (that's their actual presence).
-				var pc := _claim_at(c, pos[pk], infl[pk], reach_vr[pk])
-				if pc > 0.0:
-					var rival := 0.0
-					for k in ids.size():
-						if k != pk:
-							rival = maxf(rival, _claim_at(c, pos[k], infl[k], reach[k]))
-					# Feather by claim ratio: fully lit well inside, fading to 0 at the
-					# VR limit (rival dominance at borders, or the open-space floor).
-					var ratio := pc * sight / maxf(rival, VR_CLAIM_FLOOR)
-					v = clampf((ratio - 1.0) / VR_BAND, 0.0, 1.0)
+			var v := _vr_at(c, ids, pos, infl, reach, reach_vr, pk)
 			var key := "%d,%d" % [gx, gy]
 			if v > 0.0:
 				_fog_seen[key] = true
@@ -544,10 +535,14 @@ func _recompute_borders() -> void:
 				for seg in _ms_segments(corners, margins):
 					var mid: Vector2 = (seg[0] + seg[1]) * 0.5
 					var off := inside_c - mid
+					var probe := mid
 					if off.length() > 0.01:
+						probe = mid + off.normalized() * 12.0   # a bit into owned side
 						off = off.normalized() * BORDER_INSET
-					# Only draw border the player can actually see (its own VR).
-					if _player_vr_at(mid, ids, pos, infl, reach_vr, pk):
+					# Draw the border where the player can see it. Probe just INSIDE the
+					# owning side (VR feathers to 0 exactly on the border line, so testing
+					# the midpoint itself would drop segments and dash the line).
+					if _player_vr_at(probe, ids, pos, infl, reach, reach_vr, pk):
 						_border_segments.append([seg[0] + off, seg[1] + off, col])
 
 
@@ -592,21 +587,36 @@ func _claim_at(p: Vector2, pv: PackedVector2Array, iv: PackedFloat32Array,
 	return 1.0e9 if sri <= 0.0 else (si * si) / sri
 
 
-# Is a world point in the player's VR? True where the player's claim, scaled by
-# SIGHT, still beats the strongest rival there — so VR fills the player's actual
-# influence and reaches 1.5x in front of the contested border.
-func _player_vr_at(p: Vector2, ids: Array, pos: Array, infl: Array, reach: Array,
-		pk: int) -> bool:
+# The player's VR value in [0,1] at a world point. Two regimes so sight tracks the
+# BORDER, not raw influence:
+#  - Contested (a real rival claims here, above the open-space floor): lit where the
+#    player's REAL claim beats the rival — VR fills owned ground and STOPS at the
+#    border. Growing your population past a border a rival is holding no longer
+#    creeps VR into their space; it moves only when the border itself moves.
+#  - Open space (no real rival): lit out to the player's extended SIGHT reach, for
+#    early warning ahead of an uncontested frontier.
+func _vr_at(p: Vector2, ids: Array, pos: Array, infl: Array, reach: Array,
+		reach_vr: Array, pk: int) -> float:
 	if pk == -1:
-		return false
-	var pc := _claim_at(p, pos[pk], infl[pk], reach[pk])
-	if pc <= 0.0:
-		return false
-	var best := pc
+		return 0.0
+	var rival := 0.0
 	for k in ids.size():
 		if k != pk:
-			best = maxf(best, _claim_at(p, pos[k], infl[k], reach[k]))
-	return pc * SimConstants.SIGHT_INFLUENCE_FACTOR >= best
+			rival = maxf(rival, _claim_at(p, pos[k], infl[k], reach[k]))
+	if rival > VR_CLAIM_FLOOR:
+		var pc_real := _claim_at(p, pos[pk], infl[pk], reach[pk])
+		if pc_real <= 0.0:
+			return 0.0
+		return clampf((pc_real / rival - 1.0) / VR_BAND, 0.0, 1.0)
+	var pc_ext := _claim_at(p, pos[pk], infl[pk], reach_vr[pk])
+	if pc_ext <= 0.0:
+		return 0.0
+	return clampf((pc_ext / VR_CLAIM_FLOOR - 1.0) / VR_BAND, 0.0, 1.0)
+
+
+func _player_vr_at(p: Vector2, ids: Array, pos: Array, infl: Array, reach: Array,
+		reach_vr: Array, pk: int) -> bool:
+	return _vr_at(p, ids, pos, infl, reach, reach_vr, pk) > 0.0
 
 
 func _best_other(claims: Array, k: int, pi: int) -> float:
