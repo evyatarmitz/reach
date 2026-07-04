@@ -73,6 +73,26 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.59.0–0.62.0 (2026-07-04, Godot 4.7) — AI + COMBAT INDICATION
+
+- **0.59.0** Clearer fleet combat: sim exposes combat_kind (0 battle / 1 bombard)
+  per tick; renderer shows a LIVE pulsing indicator (ring + crossed swords for a
+  battle; yellow streaks for bombardment) while combat is ongoing, the fading
+  starburst only as an afterglow. Hovering a combat system reads out the
+  belligerents and their combat power. New helper fleet_powers_in().
+- **0.60.0** AI stopped throwing ships away: it consolidates stationary fleets into
+  one stack and attacks an adjacent enemy colony only when undefended or when it
+  out-powers the defenders (else holds and keeps massing).
+- **0.61.0** AI parity on support structures — builds a transport hub at its
+  capital, else an observation post on a frontier, via the same commands as the
+  player. Balance re-verified (100% retention, no steamroll 36/24/22/18).
+- **0.62.0** Fleet panel shows the live matchup ("⚔ IN BATTLE — enemy X vs your Y"
+  / "☄ bombarding") for the selected fleet.
+
+Remaining AI ideas (not done): defensive fleet posture (recall/hold when a colony
+is threatened), retreat when losing a battle, target prioritisation beyond
+lowest-id. Combat is now legible; these are behaviour refinements.
+
 ## Status — 0.55.0–0.58.0 (2026-07-04, Godot 4.7) — VISION MAJOR SYSTEMS
 
 The remaining vision features (user: "go ahead and finish this"). All keep the
