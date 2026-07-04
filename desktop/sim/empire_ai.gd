@@ -85,7 +85,33 @@ func _move_fleets(sim: Sim) -> void:
 		var target := _best_attack_target(sim, f)
 		if target != -1:
 			sim.order_fleet(f.id, target)
+		elif f.combat_power() >= SimConstants.POWER_CEILING:
+			# No easy adjacent target, but the stack has massed to a decisive force
+			# (a full power-ceiling's worth) — march it to the nearest enemy colony (it
+			# fights its way there). This is what gets the AI's fleets into the war,
+			# as committed strikes rather than a trickle that gets worn down.
+			var dest := _nearest_enemy_colony(sim, f.system_id)
+			if dest != -1:
+				sim.order_fleet(f.id, dest)
 		return   # one fleet order per interval
+
+
+# Nearest enemy-colony system by lane hops (BFS). -1 if none reachable. Sorted
+# neighbours keep it deterministic.
+func _nearest_enemy_colony(sim: Sim, from_sys: int) -> int:
+	var seen := {from_sys: true}
+	var queue: Array = [from_sys]
+	while not queue.is_empty():
+		var s: int = queue.pop_front()
+		if s != from_sys and sim._has_enemy_colony(empire_id, s):
+			return s
+		var nbs: Array = sim.lane_neighbors(s)
+		nbs.sort()
+		for nb in nbs:
+			if not seen.has(nb):
+				seen[nb] = true
+				queue.append(nb)
+	return -1
 
 
 # Merge this empire's stationary fleets that share a system into one stack.
