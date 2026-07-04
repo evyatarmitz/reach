@@ -41,19 +41,48 @@ func _build_ships(sim: Sim) -> void:
 			return
 
 
-# Send a stationary fleet to the nearest enemy-owned adjacent system (attack), or
-# hold. Only commits a fleet that actually has ships. Deterministic (sorted).
+# Consolidate scattered fleets into single stacks, then send a stack to attack an
+# adjacent enemy colony ONLY when it can win (undefended, or it out-powers the
+# defenders) — so the AI fights as a massed force and stops throwing ships away.
 func _move_fleets(sim: Sim) -> void:
+	_consolidate(sim)
 	for f in sim.fleets:
 		if f.empire_id != empire_id or f.is_moving() or f.ship_count() == 0:
 			continue
-		var targets: Array = sim.lane_neighbors(f.system_id)
-		targets.sort()
-		for nb in targets:
-			if sim._has_enemy_colony(empire_id, nb):
-				sim.order_fleet(f.id, nb)
-				break
+		var target := _best_attack_target(sim, f)
+		if target != -1:
+			sim.order_fleet(f.id, target)
 		return   # one fleet order per interval
+
+
+# Merge this empire's stationary fleets that share a system into one stack.
+func _consolidate(sim: Sim) -> void:
+	var keep_by_sys := {}
+	for f in sim.fleets:
+		if f.empire_id == empire_id and not f.is_moving() \
+				and not keep_by_sys.has(f.system_id):
+			keep_by_sys[f.system_id] = f.id
+	for sid in keep_by_sys:
+		sim.merge_fleets_into(keep_by_sys[sid])
+
+
+# Lowest-id adjacent enemy-colony system this fleet can take: undefended (bombard
+# freely) or where our combat power beats the defenders'. -1 = hold and keep massing.
+func _best_attack_target(sim: Sim, f: Fleet) -> int:
+	var mine: float = f.combat_power()
+	var targets: Array = sim.lane_neighbors(f.system_id)
+	targets.sort()
+	for nb in targets:
+		if not sim._has_enemy_colony(empire_id, nb):
+			continue
+		var powers: Dictionary = sim.fleet_powers_in(nb)
+		var def := 0.0
+		for eid in powers:
+			if eid != empire_id:
+				def += powers[eid].combat
+		if def <= 0.0 or mine > def:
+			return nb
+	return -1
 
 
 func _build_one_mine(sim: Sim) -> void:
