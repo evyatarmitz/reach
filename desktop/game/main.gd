@@ -846,20 +846,38 @@ func _draw_galaxy() -> void:
 			draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
 				HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.35))
 
-	# Combat flash: a fading red starburst on systems where a fight/bombardment
-	# happened recently and the player can see it — so combat isn't silent.
+	# Combat indicators (for systems the player can see): a LIVE battle or bombardment
+	# pulses persistently and distinctly; recently-ended combat leaves a fading
+	# afterglow — so combat is legible, not silent.
+	var pulse := 0.6 + 0.4 * sin(Time.get_ticks_msec() * 0.006)
 	for sid in sim.combat_at:
 		if not _sys_live(sid) or not sim.systems.has(sid):
 			continue
-		var age: float = sim.day - sim.combat_at[sid]
-		if age < 0.0 or age > COMBAT_FLASH_DAYS:
-			continue
-		var a: float = (1.0 - age / COMBAT_FLASH_DAYS) * 0.9
 		var p: Vector2 = sim.systems[sid].map_pos
-		var fc := Color(1.0, 0.35, 0.2, a)
-		for k in 4:
-			var d := Vector2.RIGHT.rotated(k * PI / 4.0) * 11.0
-			draw_line(p - d, p + d, fc, 2.0)
+		var kind: int = sim.combat_kind.get(sid, -1)
+		if kind == 0:
+			# Live fleet battle: pulsing red-orange clash — a ring + crossed swords.
+			var bc := Color(1.0, 0.4, 0.2, 0.35 + 0.4 * pulse)
+			draw_arc(p, 15.0 + 3.0 * pulse, 0.0, TAU, 28, bc, 2.0)
+			for k in 2:
+				var d := Vector2.RIGHT.rotated(PI * 0.25 + k * PI * 0.5) * 12.0
+				draw_line(p - d, p + d, Color(1.0, 0.5, 0.25, 0.9), 2.5)
+		elif kind == 1:
+			# Live bombardment: pulsing yellow streaks raining onto the system.
+			var yc := Color(1.0, 0.85, 0.2, 0.5 + 0.4 * pulse)
+			for k in 3:
+				var x := p.x - 8.0 + k * 8.0
+				draw_line(Vector2(x, p.y - 20.0), Vector2(x, p.y - 10.0), yc, 2.0)
+			draw_arc(p, 14.0, 0.0, TAU, 24, Color(1.0, 0.8, 0.2, 0.3 * pulse), 1.5)
+		else:
+			# Ended recently: fading red starburst afterglow.
+			var age: float = sim.day - sim.combat_at[sid]
+			if age < 0.0 or age > COMBAT_FLASH_DAYS:
+				continue
+			var fc := Color(1.0, 0.35, 0.2, (1.0 - age / COMBAT_FLASH_DAYS) * 0.7)
+			for k in 4:
+				var d := Vector2.RIGHT.rotated(k * PI / 4.0) * 10.0
+				draw_line(p - d, p + d, fc, 2.0)
 
 	# Construction vessels in transit: a small hollow square (a "cargo box") in the
 	# empire's colour. Own always visible; a rival's only while in your VR.
@@ -930,6 +948,18 @@ func _draw_galaxy() -> void:
 # frozen last-seen snapshot otherwise (respects fog; no live enemy data in grey).
 func _hover_summary(sid: int) -> String:
 	var sys: StarSystem = sim.systems[sid]
+	# Live combat takes over the readout: who's fighting and how strong.
+	if _sys_live(sid) and sim.combat_kind.has(sid):
+		var powers := sim.fleet_powers_in(sid)
+		if sim.combat_kind[sid] == 0:
+			var parts: Array = []
+			for eid in powers:
+				parts.append("%s %.0f⚔" % [sim.empires[eid].name, powers[eid].combat])
+			return "%s — BATTLE: %s" % [sys.name, " vs ".join(parts)]
+		else:
+			var att: int = powers.keys()[0] if not powers.is_empty() else -1
+			var an: String = sim.empires[att].name if att != -1 else "?"
+			return "%s — %s bombarding the colony" % [sys.name, an]
 	if _sys_live(sid):
 		var owner: int = _system_owner.get(sid, -1)
 		var oname: String = sim.empires[owner].name if owner != -1 else "unclaimed"

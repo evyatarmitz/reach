@@ -20,6 +20,9 @@ var fleets: Array[Fleet] = []
 var ais: Array[EmpireAI] = []  # rival brains; step deterministically in tick()
 var combat_at: Dictionary = {} # system_id -> sim day of last combat (transient, for
                                # the renderer's clash flash; not serialized)
+var combat_kind: Dictionary = {} # system_id -> 0 battle / 1 bombardment, THIS tick's
+                               # active combat (rebuilt each tick; drives the live
+                               # combat indicator + readout; not serialized)
 var anomalies: Array = []      # [{pos: Vector2, r: float}] — cosmic anomalies that
                                # block influence AND visibility (you route around them)
 var builders: Array = []       # construction vessels in transit: [{id, eid, sys,
@@ -925,6 +928,20 @@ func empire_fleet_in_system(empire_id: int, system_id: int) -> bool:
 	return false
 
 
+# Per-empire combat power of stationary fleets in a system (for the combat readout).
+# empire_id -> {"combat": x, "bomb": y}. Empty if no stationary fleets.
+func fleet_powers_in(system_id: int) -> Dictionary:
+	var out := {}
+	for f in fleets:
+		if f.is_moving() or f.system_id != system_id or f.ship_count() == 0:
+			continue
+		var r: Dictionary = out.get(f.empire_id, {"combat": 0.0, "bomb": 0.0})
+		r.combat += f.combat_power()
+		r.bomb += f.bomb_power()
+		out[f.empire_id] = r
+	return out
+
+
 func _has_enemy_colony(empire_id: int, system_id: int) -> bool:
 	for pid in systems[system_id].planet_ids:
 		var c: Colony = planets[pid].colony
@@ -1043,16 +1060,19 @@ func _resolve_combat(dt_days: float) -> void:
 		by_sys[f.system_id] = emap
 
 	var destroyed_colonies: Array[Colony] = []
+	combat_kind.clear()   # rebuilt each tick — reflects combat happening right now
 	for sid in by_sys:
 		var emap: Dictionary = by_sys[sid]
 		if emap.size() >= 2:
 			_fight(emap, dt_days)
-			combat_at[sid] = day   # fleet battle here — flag for the clash flash
+			combat_at[sid] = day     # fleet battle here — flag for the clash flash
+			combat_kind[sid] = 0     # 0 = fleet battle
 		else:
 			var eid: int = emap.keys()[0]
 			_bombard(eid, emap[eid], sid, dt_days, destroyed_colonies)
 			if _has_enemy_colony(eid, sid):
-				combat_at[sid] = day   # bombardment underway
+				combat_at[sid] = day
+				combat_kind[sid] = 1   # 1 = bombardment
 	for c in destroyed_colonies:
 		planets[c.planet_id].colony = null
 		colonies.erase(c)
