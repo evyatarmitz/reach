@@ -73,6 +73,31 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.63.0–0.67.0 (2026-07-04, Godot 4.7) — PERF + BALANCE + VR FROM PLAYTEST
+
+Four issues from a play session:
+- **0.63.0 PERFORMANCE (was choking).** The HUD recomputed sim.system_owner() for
+  every system EVERY FRAME (O(systems²·empires)) — blocked the main thread, laggy
+  pan/input. Now standing reads the cached _system_owner; HUD/panel/hover throttled
+  to ~15 Hz (camera+redraw stay per-frame); coarser field sampling (BORDER_CELL 18,
+  FOG_CELL 22) + BORDER_REFRESH 0.5s shrink the periodic spike.
+- **0.64.0 Neighbor bonus runaway.** In-system boost (0.29.0) contradicted the
+  vision (same-system COMPETE) and drove compounding; now cross-system only, and
+  capped at NEIGHBOR_MAX_BONUS (≤4×). Largest colony 20k→~760 (AI). Tunable if the
+  user wants bigger cities (raise the cap / COEF).
+- **0.65.0 VR follows the border, not influence.** Was pc×SIGHT≥rival, so sight
+  crept into rival space as you grew. Now _vr_at has two regimes: contested → lit
+  where your REAL claim beats the rival (stops AT the border); open space → extend
+  to sight reach. Border-draw gate probes just inside owned side (else it dashed).
+- **0.66.0 AI actually uses fleets.** Was idle at capital (only attacked adjacent).
+  Now masses a power-ceiling stack then marches to the nearest enemy colony.
+- **0.67.0 Bombardment slow (vision).** 0.66 exposed that bombardment wiped colonies
+  in ~a day, depopulating the map. BOMBARD_RATE=0.15 → slow grind; colonies
+  remaining 25→66, pop stable, no steamroll.
+
+Remaining flagged: AI still doesn't retreat when losing / defend a threatened
+colony (behaviour refinements). City sizes and war intensity are tunable knobs.
+
 ## Status — 0.59.0–0.62.0 (2026-07-04, Godot 4.7) — AI + COMBAT INDICATION
 
 - **0.59.0** Clearer fleet combat: sim exposes combat_kind (0 battle / 1 bombard)
