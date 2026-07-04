@@ -69,6 +69,7 @@ func _init() -> void:
 	_test_attrition_and_depot()
 	_test_structure_capture()
 	_test_support_structures()
+	_test_construction_vessel()
 	_test_anomalies()
 	_test_difficulty()
 	_test_save_load()
@@ -335,26 +336,30 @@ func _test_ai_rival() -> void:
 	sim.inject_colony(e.id, sim.add_planet(home.id, "Home I").id, 150.0, true)
 	var near := sim.add_system("Near")
 	near.map_pos = Vector2(200, 0)
+	sim.add_lane(home.id, near.id)   # vessels travel lanes, so a route is needed
 	var near_p := sim.add_planet(near.id, "Near I")
 	near_p.deposit_type = SimConstants.Deposit.MINERAL
 	var far := sim.add_system("Far")
 	far.map_pos = Vector2(5000, 0)
+	sim.add_lane(near.id, far.id)
 	var far_p := sim.add_planet(far.id, "Far I")
 	far_p.deposit_type = SimConstants.Deposit.MINERAL
 
 	var ai := EmpireAI.new(e.id)
-	ai.maybe_act(sim)
+	ai.maybe_act(sim)   # dispatches construction vessels toward Near
+	var dispatched: int = sim.builders.size()
+	check(dispatched >= 1, "AI dispatches a construction vessel to expand")
+	ai.maybe_act(sim)   # still within the action interval — must not act again
+	check(sim.builders.size() == dispatched,
+		"AI respects its action interval (no acting every tick)")
+	run_days(sim, 12.0)   # let the vessels reach Near and build (standalone AI not ticked)
 	check(sim.planets[near_p.id].colony != null
 		and sim.planets[near_p.id].colony.empire_id == e.id,
-		"AI colonizes a reachable empty system")
+		"AI colonizes a reachable empty system (via a vessel)")
 	check(sim.planets[near_p.id].has_mine(),
-		"AI builds a mine on a reachable deposit")
+		"AI builds a mine on a reachable deposit (via a vessel)")
 	check(sim.planets[far_p.id].colony == null and not sim.planets[far_p.id].has_mine(),
-		"AI never acts outside its influence (same gating as the player)")
-	var after_first: int = sim.colonies.size()
-	ai.maybe_act(sim)
-	check(sim.colonies.size() == after_first,
-		"AI respects its action interval (no acting every tick)")
+		"AI never builds outside its influence (same gating as the player)")
 
 	var demo := Sim.new_demo()
 	var rival_id: int = demo.empires.keys()[1]
@@ -685,6 +690,49 @@ func _test_support_structures() -> void:
 	check(sim2.build_transport(e2.id, a.id), "transport hub builds in own influence")
 	var bonus_after := sim2.neighbor_growth_multiplier(ca)
 	check(bonus_after > bonus_before, "transport hub strengthens the neighbor bonus")
+
+
+func _test_construction_vessel() -> void:
+	# A dispatched vessel travels then builds on arrival (not instant).
+	var sim := Sim.new()
+	var e := sim.add_empire("C", Color.WHITE)
+	e.alloys = 100000.0
+	var a := sim.add_system("A")
+	a.map_pos = Vector2.ZERO
+	var b := sim.add_system("B")
+	b.map_pos = Vector2(200, 0)
+	sim.add_lane(a.id, b.id)
+	sim.inject_colony(e.id, sim.add_planet(a.id, "cap").id, 1000.0, true)
+	var target := sim.add_planet(b.id, "t").id
+	check(sim.order_construction(e.id, SimConstants.Build.COLONY, target),
+		"dispatch a colony construction vessel")
+	check(sim.builders.size() == 1, "a construction vessel is in transit")
+	check(sim.planets[target].colony == null,
+		"colony is NOT placed instantly — the vessel must travel")
+	run_days(sim, 40.0)
+	check(sim.planets[target].colony != null, "colony placed on vessel arrival")
+	check(sim.builders.is_empty(), "vessel is consumed on arrival")
+
+	# A vessel cannot route through another empire's territory.
+	var s2 := Sim.new()
+	var me := s2.add_empire("Me", Color.WHITE)
+	me.alloys = 100000.0
+	var foe := s2.add_empire("Foe", Color.RED)
+	var sa := s2.add_system("A")
+	sa.map_pos = Vector2.ZERO
+	var sm := s2.add_system("M")
+	sm.map_pos = Vector2(100, 0)
+	var sb := s2.add_system("B")
+	sb.map_pos = Vector2(200, 0)
+	s2.add_lane(sa.id, sm.id)
+	s2.add_lane(sm.id, sb.id)
+	s2.inject_colony(me.id, s2.add_planet(sa.id, "cap").id, 2000.0, true)
+	s2.inject_colony(foe.id, s2.add_planet(sm.id, "foe").id, 100.0, true)
+	var tb := s2.add_planet(sb.id, "tb").id
+	check(s2.system_owner(sm.id) == foe.id, "test setup: rival owns the middle system")
+	check(s2.is_under_influence(sb.id, me.id), "test setup: target is under my influence")
+	check(not s2.can_order_construction(me.id, SimConstants.Build.COLONY, tb),
+		"a vessel can't be dispatched through enemy territory")
 
 
 func _test_anomalies() -> void:

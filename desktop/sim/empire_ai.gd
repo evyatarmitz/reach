@@ -57,24 +57,25 @@ func _move_fleets(sim: Sim) -> void:
 
 
 func _build_one_mine(sim: Sim) -> void:
-	# Income first. Lowest planet id wins for determinism.
-	var best := -1
+	# Income first. Lowest planet id wins for determinism. Dispatch a construction
+	# vessel (same path as the player); skip planets already targeted in transit.
 	for pid in _sorted_planet_ids(sim):
-		if sim.can_build_mine(empire_id, pid):
-			best = pid
-			break
-	if best != -1:
-		sim.build_mine(empire_id, best)
+		if not _targeted(sim, pid, SimConstants.Build.MINE) \
+				and sim.can_order_construction(empire_id, SimConstants.Build.MINE, pid):
+			sim.order_construction(empire_id, SimConstants.Build.MINE, pid)
+			return
 
 
 func _found_one_colony(sim: Sim) -> void:
 	# Prefer an empty planet in a system where we have no colony yet — spreading
 	# into new systems is what grows influence and unlocks the neighbor bonus.
 	# Fall back to any colonizable planet. Lowest id breaks ties (deterministic).
+	# Dispatched via a construction vessel; skip planets already in transit.
 	var expansion := -1
 	var fallback := -1
 	for pid in _sorted_planet_ids(sim):
-		if not sim.can_found_colony(empire_id, pid):
+		if _targeted(sim, pid, SimConstants.Build.COLONY) \
+				or not sim.can_order_construction(empire_id, SimConstants.Build.COLONY, pid):
 			continue
 		if fallback == -1:
 			fallback = pid
@@ -84,7 +85,16 @@ func _found_one_colony(sim: Sim) -> void:
 			break
 	var target := expansion if expansion != -1 else fallback
 	if target != -1:
-		sim.found_colony(empire_id, target)
+		sim.order_construction(empire_id, SimConstants.Build.COLONY, target)
+
+
+# Is a planet already the destination of one of this empire's in-flight vessels of
+# the given build type? (A colony and a mine vessel may target the same planet.)
+func _targeted(sim: Sim, planet_id: int, build_type: int) -> bool:
+	for b in sim.builders:
+		if b.eid == empire_id and b.target == planet_id and b.type == build_type:
+			return true
+	return false
 
 
 func _has_colony_in_system(sim: Sim, system_id: int) -> bool:

@@ -99,6 +99,12 @@ const AI_ACTION_INTERVAL_DAYS := 8.0
 # paid for in that tier's national military resource. Fighters win fleet combat
 # and barely bombard; bombers barely fight but bombard hard. Stats per tier (1-5).
 enum Role { FIGHTER, BOMBER }
+
+# Construction vessels deliver expansion structures (colonies, mines): they travel
+# lanes from your capital to the target and CANNOT path through another empire's
+# territory (vision). The structure is placed on arrival; cost is paid at dispatch.
+enum Build { COLONY, MINE }
+const BUILDER_SPEED := 70.0   # map-units/day along lanes (a touch faster than fleets)
 const SHIP_NAT_COST := 15.0     # cost in the tier's military resource, per ship
 const FIGHTER_ATK := [10.0, 18.0, 28.0, 40.0, 55.0]
 const FIGHTER_BOMB := [1.0, 1.5, 2.0, 2.5, 3.0]

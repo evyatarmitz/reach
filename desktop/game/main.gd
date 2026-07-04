@@ -861,6 +861,16 @@ func _draw_galaxy() -> void:
 			var d := Vector2.RIGHT.rotated(k * PI / 4.0) * 11.0
 			draw_line(p - d, p + d, fc, 2.0)
 
+	# Construction vessels in transit: a small hollow square (a "cargo box") in the
+	# empire's colour. Own always visible; a rival's only while in your VR.
+	for b in sim.builders:
+		if not (b.eid == player_empire_id or _sys_live(b.sys)):
+			continue
+		var bp: Vector2 = sim.builder_position(b)
+		var bc: Color = sim.empires[b.eid].color
+		draw_rect(Rect2(bp - Vector2(3.5, 3.5), Vector2(7, 7)), bc, false, 1.5)
+		draw_line(bp - Vector2(2, 0), bp + Vector2(2, 0), bc, 1.0)
+
 	# Fleets: your own always visible; a rival's only while it sits in your VR.
 	# Drawn as an arrowhead in the empire's colour, pointed along its heading; a
 	# selected fleet gets a ring and a dashed line to its destination.
@@ -939,6 +949,13 @@ func _hover_summary(sid: int) -> String:
 		if pinfo.get("colony", false):
 			cc2 += 1
 	return "%s — last seen: %s · %d colonies" % [sys.name, oname2, cc2]
+
+
+func _builder_inbound(planet_id: int) -> bool:
+	for b in sim.builders:
+		if b.eid == player_empire_id and b.target == planet_id:
+			return true
+	return false
 
 
 func _fmt_num(v: float) -> String:
@@ -1172,7 +1189,7 @@ func _build_intro(layer: CanvasLayer) -> void:
 	var body := Label.new()
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body.custom_minimum_size = Vector2(520, 0)
-	body.text = "You have no body and no direct control — you cultivate a population and it does the rest.\n\n• Click a system to open its planets. Found a colony (costs alloys) or build a mine on a deposit.\n• Colonies grow on food: water mines → food in established cities. Minerals → alloys. Population drives influence, and influence sets your borders.\n• Cluster colonies across nearby systems — neighbours boost each other. Same-system colonies compete instead.\n• Build ships (top-right) to defend and to bombard enemy worlds. Use the speed dial (top-right) to skip slow stretches.\n• Press L for a legend of every map symbol.\n\nGoal: grow, spread, and outlast the rival empires."
+	body.text = "You have no body and no direct control — you cultivate a population and it does the rest.\n\n• Click a system to open its planets. Send a construction vessel to found a colony or build a mine — it travels the lanes from your capital and can't cross enemy space.\n• Colonies grow on food: water mines → food in established cities. Minerals → alloys. Population drives influence, and influence sets your borders.\n• Cluster colonies across nearby systems — neighbours boost each other. Same-system colonies compete instead.\n• Build ships (top-right) to defend and to bombard enemy worlds. Use the speed dial (top-right) to skip slow stretches.\n• Press L for a legend of every map symbol.\n\nGoal: grow, spread, and outlast the rival empires."
 	v.add_child(body)
 	var begin := Button.new()
 	begin.text = "Begin"
@@ -1311,13 +1328,17 @@ func _build_ship_panel(layer: CanvasLayer) -> void:
 
 
 func _on_colonize() -> void:
+	# Dispatch a construction vessel from the capital (it travels lanes, can't cross
+	# enemy territory, and founds the colony on arrival).
 	if selected_planet_id != -1:
-		sim.found_colony(player_empire_id, selected_planet_id)
+		sim.order_construction(player_empire_id, SimConstants.Build.COLONY,
+			selected_planet_id)
 
 
 func _on_build_mine() -> void:
 	if selected_planet_id != -1:
-		sim.build_mine(player_empire_id, selected_planet_id)
+		sim.order_construction(player_empire_id, SimConstants.Build.MINE,
+			selected_planet_id)
 
 
 func _on_emigrate() -> void:
@@ -1586,12 +1607,16 @@ func _show_system_panel(sys_id: int) -> void:
 			deposit_line += " · est. %d-%d/day" % [int(est.x), int(est.y)]
 	var influence_note := "" if sim.is_under_influence(planet.system_id,
 		player_empire_id) else "\nOutside your influence."
+	var inbound := _builder_inbound(planet.id)
 	if planet.colony == null:
-		panel_body.text = "%s%s\n\nFounding costs %d alloys; the colony eats food until it reaches %d pop and becomes a refining city." \
+		panel_body.text = "%s%s\n\nFounding costs %d alloys; a construction vessel carries it from your capital (can't cross enemy space).%s" \
 			% [deposit_line, influence_note, int(SimConstants.FOUND_COST_ALLOYS),
-				int(SimConstants.ACTIVATION_POP)]
+				"\n⚙ vessel inbound…" if inbound else ""]
 		colonize_btn.visible = true
-		colonize_btn.disabled = not sim.can_found_colony(player_empire_id, planet.id)
+		colonize_btn.text = "Send colony vessel (%d alloys)" \
+			% int(SimConstants.FOUND_COST_ALLOYS)
+		colonize_btn.disabled = not sim.can_order_construction(
+			player_empire_id, SimConstants.Build.COLONY, planet.id)
 	else:
 		var c := planet.colony
 		var status := "ESTABLISHED CITY" if c.established \
@@ -1606,7 +1631,9 @@ func _show_system_panel(sys_id: int) -> void:
 				int((nb - 1.0) * 100.0), refine, deposit_line]
 		colonize_btn.visible = false
 	mine_btn.visible = planet.has_deposit() and not planet.has_mine()
-	mine_btn.disabled = not sim.can_build_mine(player_empire_id, planet.id)
+	mine_btn.text = "Send mine vessel (%d alloys)" % int(SimConstants.MINE_COST_ALLOYS)
+	mine_btn.disabled = not sim.can_order_construction(
+		player_empire_id, SimConstants.Build.MINE, planet.id)
 	var own_colony: bool = planet.colony != null \
 		and planet.colony.empire_id == player_empire_id
 	emigrate_btn.visible = own_colony

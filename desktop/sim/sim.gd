@@ -22,6 +22,8 @@ var combat_at: Dictionary = {} # system_id -> sim day of last combat (transient,
                                # the renderer's clash flash; not serialized)
 var anomalies: Array = []      # [{pos: Vector2, r: float}] — cosmic anomalies that
                                # block influence AND visibility (you route around them)
+var builders: Array = []       # construction vessels in transit: [{id, eid, sys,
+                               # path:[sys...], prog, type, target:planet_or_system}]
 
 var _next_id := 1
 
@@ -292,9 +294,13 @@ func serialize() -> Dictionary:
 	var ans: Array = []
 	for an in anomalies:
 		ans.append({"x": an.pos.x, "y": an.pos.y, "r": an.r})
+	var bs: Array = []
+	for b in builders:
+		bs.append({"id": b.id, "eid": b.eid, "sys": b.sys, "path": b.path.duplicate(),
+			"prog": b.prog, "type": b.type, "target": b.target})
 	return {"day": day, "next_id": _next_id, "empires": es, "systems": ss,
 		"planets": ps, "colonies": cs, "fleets": fs, "lanes": lanes.duplicate(true),
-		"ais": ai, "anomalies": ans}
+		"ais": ai, "anomalies": ans, "builders": bs}
 
 
 static func deserialize(d: Dictionary) -> Sim:
@@ -377,6 +383,13 @@ static func deserialize(d: Dictionary) -> Sim:
 		sim.lanes.append([int(l[0]), int(l[1])])
 	for an in d.get("anomalies", []):
 		sim.anomalies.append({"pos": Vector2(an.x, an.y), "r": float(an.r)})
+	for b in d.get("builders", []):
+		var bpath: Array[int] = []
+		for x in b.path:
+			bpath.append(int(x))
+		sim.builders.append({"id": int(b.id), "eid": int(b.eid), "sys": int(b.sys),
+			"path": bpath, "prog": float(b.prog), "type": int(b.type),
+			"target": int(b.target)})
 	for a in d.ais:
 		var ai := EmpireAI.new(int(a.eid))
 		ai._build_count = int(a.bc)
@@ -639,12 +652,24 @@ func is_point_visible(pos: Vector2, empire_id: int) -> bool:
 # --- commands (same gating for every empire) ----------------------------------
 # Construction is paid in alloys (T1 refined from minerals).
 
-func can_found_colony(empire_id: int, planet_id: int) -> bool:
+# Target validity (no cost check) — the physical requirements to place the
+# structure. Split out so a construction vessel can re-check it on ARRIVAL (cost was
+# already paid at dispatch).
+func _colony_target_ok(empire_id: int, planet_id: int) -> bool:
 	var p: Planet = planets.get(planet_id)
-	var e: Empire = empires.get(empire_id)
-	return p != null and e != null and p.colony == null \
-		and e.alloys >= SimConstants.FOUND_COST_ALLOYS \
+	return p != null and p.colony == null and is_under_influence(p.system_id, empire_id)
+
+
+func _mine_target_ok(empire_id: int, planet_id: int) -> bool:
+	var p: Planet = planets.get(planet_id)
+	return p != null and p.has_deposit() and not p.has_mine() \
 		and is_under_influence(p.system_id, empire_id)
+
+
+func can_found_colony(empire_id: int, planet_id: int) -> bool:
+	var e: Empire = empires.get(empire_id)
+	return e != null and e.alloys >= SimConstants.FOUND_COST_ALLOYS \
+		and _colony_target_ok(empire_id, planet_id)
 
 
 func found_colony(empire_id: int, planet_id: int) -> bool:
@@ -656,13 +681,11 @@ func found_colony(empire_id: int, planet_id: int) -> bool:
 
 
 func can_build_mine(empire_id: int, planet_id: int) -> bool:
-	var p: Planet = planets.get(planet_id)
-	var e: Empire = empires.get(empire_id)
 	# "Wherever deposits exist within reach" — influence-gated, a colony in the
 	# system is not required.
-	return p != null and e != null and p.has_deposit() and not p.has_mine() \
-		and e.alloys >= SimConstants.MINE_COST_ALLOYS \
-		and is_under_influence(p.system_id, empire_id)
+	var e: Empire = empires.get(empire_id)
+	return e != null and e.alloys >= SimConstants.MINE_COST_ALLOYS \
+		and _mine_target_ok(empire_id, planet_id)
 
 
 func build_mine(empire_id: int, planet_id: int) -> bool:
@@ -671,6 +694,116 @@ func build_mine(empire_id: int, planet_id: int) -> bool:
 	empires[empire_id].alloys -= SimConstants.MINE_COST_ALLOYS
 	planets[planet_id].mine_empire_id = empire_id
 	return true
+
+
+# --- construction vessels -----------------------------------------------------
+# Expansion structures (colonies, mines) are delivered by a construction vessel:
+# it travels lanes from the empire's capital to the target and cannot pass through
+# another empire's territory. Cost is paid at dispatch; the structure is placed on
+# arrival (refunded if the target went invalid in the meantime).
+
+func _construction_cost(build_type: int) -> float:
+	return SimConstants.FOUND_COST_ALLOYS if build_type == SimConstants.Build.COLONY \
+		else SimConstants.MINE_COST_ALLOYS
+
+
+func _construction_target_ok(empire_id: int, build_type: int, target_id: int) -> bool:
+	if build_type == SimConstants.Build.COLONY:
+		return _colony_target_ok(empire_id, target_id)
+	return _mine_target_ok(empire_id, target_id)
+
+
+# BFS lane path that never ENTERS a system owned by a different empire (own/neutral
+# are traversable, and the destination itself is always allowed). [] if unreachable.
+func lane_path_friendly(from_sys: int, to_sys: int, empire_id: int) -> Array[int]:
+	var out: Array[int] = []
+	if from_sys == to_sys or not systems.has(from_sys) or not systems.has(to_sys):
+		return out
+	var prev := {from_sys: from_sys}
+	var queue: Array[int] = [from_sys]
+	while not queue.is_empty():
+		var s: int = queue.pop_front()
+		if s == to_sys:
+			break
+		for nb in lane_neighbors(s):
+			if prev.has(nb):
+				continue
+			var o := system_owner(nb)
+			if nb == to_sys or o == -1 or o == empire_id:
+				prev[nb] = s
+				queue.append(nb)
+	if not prev.has(to_sys):
+		return out
+	var cur := to_sys
+	while cur != from_sys:
+		out.push_front(cur)
+		cur = prev[cur]
+	return out
+
+
+func _target_system_of(build_type: int, target_id: int) -> int:
+	# Both colony and mine target a planet; the vessel travels to its system.
+	var p: Planet = planets.get(target_id)
+	return p.system_id if p != null else -1
+
+
+func can_order_construction(empire_id: int, build_type: int, target_id: int) -> bool:
+	var e: Empire = empires.get(empire_id)
+	if e == null or e.alloys < _construction_cost(build_type):
+		return false
+	if not _construction_target_ok(empire_id, build_type, target_id):
+		return false
+	var cap := most_populated_system(empire_id)
+	var tsys := _target_system_of(build_type, target_id)
+	if cap == -1 or tsys == -1:
+		return false
+	if cap == tsys:
+		return true   # build in the capital's own system, no travel
+	return not lane_path_friendly(cap, tsys, empire_id).is_empty()
+
+
+func order_construction(empire_id: int, build_type: int, target_id: int) -> bool:
+	if not can_order_construction(empire_id, build_type, target_id):
+		return false
+	var cap := most_populated_system(empire_id)
+	var tsys := _target_system_of(build_type, target_id)
+	empires[empire_id].alloys -= _construction_cost(build_type)
+	builders.append({"id": _next_id, "eid": empire_id, "sys": cap,
+		"path": lane_path_friendly(cap, tsys, empire_id), "prog": 0.0,
+		"type": build_type, "target": target_id})
+	_next_id += 1
+	return true
+
+
+func builder_position(b: Dictionary) -> Vector2:
+	if b.path.is_empty():
+		return systems[b.sys].map_pos
+	return systems[b.sys].map_pos.lerp(systems[b.path[0]].map_pos, b.prog)
+
+
+# Move vessels a tick; when one reaches its target system, place the structure (or
+# refund if the target is no longer valid). Called from tick().
+func _advance_builders(dt_days: float) -> void:
+	var done: Array = []
+	for b in builders:
+		if not b.path.is_empty():
+			var length: float = maxf(system_distance(b.sys, b.path[0]), 1.0)
+			b.prog += SimConstants.BUILDER_SPEED * dt_days / length
+			if b.prog >= 1.0:
+				b.sys = b.path.pop_front()
+				b.prog = 0.0
+		if b.path.is_empty():   # arrived at the target system
+			done.append(b)
+	for b in done:
+		builders.erase(b)
+		var eid: int = b.eid
+		if _construction_target_ok(eid, b.type, b.target):
+			if b.type == SimConstants.Build.COLONY:
+				inject_colony(eid, b.target, SimConstants.START_POP, false)
+			else:
+				planets[b.target].mine_empire_id = eid
+		else:   # target spoiled in transit — refund what was paid at dispatch
+			empires[eid].alloys += _construction_cost(b.type)
 
 
 func toggle_emigration(empire_id: int, planet_id: int) -> void:
@@ -1193,6 +1326,9 @@ func tick(dt_days: float) -> void:
 		if f.progress >= 1.0:
 			f.system_id = f.path.pop_front()
 			f.progress = 0.0
+
+	# 6b. Construction vessels advance and place their structure on arrival.
+	_advance_builders(dt_days)
 
 	# 7. Combat: fleets auto-fight where enemies meet, else bombard (see 0.25.0).
 	_resolve_combat(dt_days)
