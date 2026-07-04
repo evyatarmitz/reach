@@ -22,10 +22,11 @@ const ZOOM_MAX := 2.5
 # slowly, so per-frame recompute is wasted work). Each entry is [center, color]
 # for a frontier cell — drawn as a dot at the cell's own centre so each empire's
 # edge sits inside its territory and hostile seams show BOTH colours.
-const BORDER_CELL := 14.0
-const BORDER_REFRESH := 0.4
+const BORDER_CELL := 18.0   # coarser than 14 to cut the border-recompute spike
+const BORDER_REFRESH := 0.5
+const UI_REFRESH := 0.066   # HUD/panel refresh cadence (~15 Hz), decoupled from FPS
 const BORDER_EPS := 0.01     # tiny rival-claim floor so bubble-vs-empty edges draw
-const FOG_CELL := 16.0       # sample cell for the fog texture (linearly filtered)
+const FOG_CELL := 22.0       # sample cell for the fog texture (linearly filtered)
 # VR fill. The fog must reach PAST the border (the border is your influence edge;
 # the fog is your SIGHT, which sees further). VR_SIGHT_REACH is how far sight
 # extends beyond influence reach — the player's fog claim is sampled with reach
@@ -49,6 +50,7 @@ var _map_lo := Vector2.ZERO
 var _map_hi := Vector2.ZERO
 var _border_segments: Array = []   # [a, b, color] line segments
 var _border_timer := 0.0
+var _ui_timer := 0.0
 var _system_owner := {}     # system_id -> empire_id, cached with the border field
 var _system_vr := {}        # system_id -> 0 none / 1 partial / 2 full VR
 var _explored := {}         # system_id -> true, ever seen (gray once out of VR)
@@ -247,11 +249,16 @@ func _process(delta: float) -> void:
 	if _border_timer <= 0.0:
 		_border_timer = BORDER_REFRESH
 		_recompute_borders()
-	_update_hover()
-	_scan_events()
-	_check_game_over()
-	_apply_camera()
-	_refresh_ui()
+	_apply_camera()   # every frame → smooth pan/zoom
+	# HUD/panel + hover + events refresh at ~15 Hz, not every frame: they run sim
+	# queries that don't need per-frame updates and were choking input/pan.
+	_ui_timer -= delta
+	if _ui_timer <= 0.0:
+		_ui_timer = UI_REFRESH
+		_update_hover()
+		_scan_events()
+		_check_game_over()
+		_refresh_ui()
 	queue_redraw()
 
 
@@ -1480,8 +1487,8 @@ func _refresh_ui() -> void:
 	# Player's own standing (no fog concern — it's your empire): systems / pop /
 	# colonies, so you can gauge where you stand without counting the map.
 	var psys := 0
-	for sys in sim.systems.values():
-		if sim.system_owner(sys.id) == player_empire_id:
+	for sid in _system_owner:   # cached each border refresh — no per-frame recompute
+		if _system_owner[sid] == player_empire_id:
 			psys += 1
 	var ppop := 0.0
 	var pcol := 0
@@ -1535,9 +1542,10 @@ func _show_fleet_panel(fleet: Fleet) -> void:
 	var combat_line := ""
 	if not fleet.is_moving() and sim.combat_kind.get(fleet.system_id, -1) == 0:
 		var enemy := 0.0
-		for eid in sim.fleet_powers_in(fleet.system_id):
+		var powers := sim.fleet_powers_in(fleet.system_id)
+		for eid in powers:
 			if eid != fleet.empire_id:
-				enemy += sim.fleet_powers_in(fleet.system_id)[eid].combat
+				enemy += powers[eid].combat
 		combat_line = "\n⚔ IN BATTLE — enemy %.0f vs your %.0f" \
 			% [enemy, fleet.combat_power()]
 	elif not fleet.is_moving() and sim.combat_kind.get(fleet.system_id, -1) == 1:
