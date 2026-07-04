@@ -83,6 +83,8 @@ var spec_food_btn: Button
 var spec_alloy_btn: Button
 var upgrade_btn: Button
 var depot_btn: Button
+var obs_post_btn: Button
+var transport_btn: Button
 var ship_f_btns: Array = []   # fighter build buttons, tier 1-5
 var ship_b_btns: Array = []   # bomber build buttons, tier 1-5
 var menu_overlay: PanelContainer
@@ -372,7 +374,9 @@ func _recompute_borders() -> void:
 			if f > 0.0:
 				pv.append(sys.map_pos)
 				iv.append(f)
-				rv.append(SimConstants.BORDER_A2 * f)
+				# Use the sim's reach (which applies the observation-post doubling)
+				# so posts push the border AND extend VR here, not just the logic.
+				rv.append(sim.influence_reach(sys.id, e.id))
 		if pv.size() > 0:
 			ids.append(e.id)
 			pos.append(pv)
@@ -784,9 +788,18 @@ func _draw_galaxy() -> void:
 					spop += pcol.population
 			var sscale: float = 1.0 + clampf(spop / 2500.0, 0.0, 1.0) * 0.7
 			_draw_star(sys.map_pos, _star_color(sys.id), 1.0, sscale)
-			if sys.depot_empire_id != -1:   # supply depot marker
+			if sys.depot_empire_id != -1:   # supply depot: filled square
 				draw_rect(Rect2(sys.map_pos + Vector2(-16, -16), Vector2(6, 6)),
 					sim.empires[sys.depot_empire_id].color)
+			if sys.obs_post_empire_id != -1:   # observation post: ringed dot (eye)
+				var oc: Color = sim.empires[sys.obs_post_empire_id].color
+				draw_arc(sys.map_pos + Vector2(-13, -18), 4.0, 0.0, TAU, 12, oc, 1.5)
+				draw_circle(sys.map_pos + Vector2(-13, -18), 1.3, oc)
+			if sys.transport_empire_id != -1:   # transport hub: small chevron/link
+				var tc: Color = sim.empires[sys.transport_empire_id].color
+				var tp: Vector2 = sys.map_pos + Vector2(-4, -18)
+				draw_line(tp + Vector2(-3, 2), tp, tc, 1.5)
+				draw_line(tp, tp + Vector2(3, 2), tc, 1.5)
 			var owner: int = _system_owner.get(sys.id, -1)
 			if owner != -1:
 				draw_arc(sys.map_pos, 13.0 * sscale, 0.0, TAU, 32,
@@ -1091,6 +1104,10 @@ func _build_ui() -> void:
 	upgrade_btn.pressed.connect(_on_upgrade_mine)
 	depot_btn = Button.new()
 	depot_btn.pressed.connect(_on_build_depot)
+	obs_post_btn = Button.new()
+	obs_post_btn.pressed.connect(_on_build_obs_post)
+	transport_btn = Button.new()
+	transport_btn.pressed.connect(_on_build_transport)
 	vbox.add_child(panel_title)
 	vbox.add_child(planet_list)
 	vbox.add_child(panel_body)
@@ -1101,6 +1118,8 @@ func _build_ui() -> void:
 	vbox.add_child(spec_food_btn)
 	vbox.add_child(spec_alloy_btn)
 	vbox.add_child(depot_btn)
+	vbox.add_child(obs_post_btn)
+	vbox.add_child(transport_btn)
 	vbox.add_child(merge_btn)
 	vbox.add_child(split_btn)
 
@@ -1172,6 +1191,7 @@ func _build_legend(layer: CanvasLayer) -> void:
 		"bold coloured line — contested border",
 		"hover a system for its planets",
 		"● colony  ◆ mineral  ○ water  ▫ mine",
+		"□ depot  ◉ obs-post (2x reach)  ⌃ transport",
 	]
 	for i in lines.size():
 		var l := Label.new()
@@ -1306,6 +1326,16 @@ func _on_upgrade_mine() -> void:
 func _on_build_depot() -> void:
 	if view_system_id != -1:
 		sim.build_depot(player_empire_id, view_system_id)
+
+
+func _on_build_obs_post() -> void:
+	if view_system_id != -1:
+		sim.build_obs_post(player_empire_id, view_system_id)
+
+
+func _on_build_transport() -> void:
+	if view_system_id != -1:
+		sim.build_transport(player_empire_id, view_system_id)
 
 
 func _on_merge() -> void:
@@ -1479,6 +1509,35 @@ func _show_system_panel(sys_id: int) -> void:
 		depot_btn.disabled = not sim.can_build_depot(player_empire_id, sys_id)
 	else:
 		depot_btn.visible = false
+	# Observation post (doubles influence reach + early warning).
+	var sysd: StarSystem = sim.systems[sys_id]
+	if not live:
+		obs_post_btn.visible = false
+	elif sysd.obs_post_empire_id == player_empire_id:
+		obs_post_btn.visible = true
+		obs_post_btn.disabled = true
+		obs_post_btn.text = "Observation post: built"
+	elif sim.is_under_influence(sys_id, player_empire_id):
+		obs_post_btn.visible = true
+		obs_post_btn.text = "Build observation post (%d alloys)" \
+			% int(SimConstants.OBS_POST_COST_ALLOYS)
+		obs_post_btn.disabled = not sim.can_build_obs_post(player_empire_id, sys_id)
+	else:
+		obs_post_btn.visible = false
+	# Transportation hub (strengthens the neighbor bonus).
+	if not live:
+		transport_btn.visible = false
+	elif sysd.transport_empire_id == player_empire_id:
+		transport_btn.visible = true
+		transport_btn.disabled = true
+		transport_btn.text = "Transport hub: built"
+	elif sim.is_under_influence(sys_id, player_empire_id):
+		transport_btn.visible = true
+		transport_btn.text = "Build transport hub (%d alloys)" \
+			% int(SimConstants.TRANSPORT_COST_ALLOYS)
+		transport_btn.disabled = not sim.can_build_transport(player_empire_id, sys_id)
+	else:
+		transport_btn.visible = false
 	# Refresh row labels and highlight the selected planet.
 	for row in _planet_rows:
 		var b: Button = row[0]

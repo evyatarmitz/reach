@@ -233,7 +233,8 @@ func serialize() -> Dictionary:
 	var ss: Array = []
 	for s in systems.values():
 		ss.append({"id": s.id, "name": s.name, "x": s.map_pos.x, "y": s.map_pos.y,
-			"depot": s.depot_empire_id, "planets": s.planet_ids.duplicate()})
+			"depot": s.depot_empire_id, "obs": s.obs_post_empire_id,
+			"trans": s.transport_empire_id, "planets": s.planet_ids.duplicate()})
 	var ps: Array = []
 	for p in planets.values():
 		ps.append({"id": p.id, "sys": p.system_id, "name": p.name,
@@ -285,6 +286,8 @@ static func deserialize(d: Dictionary) -> Sim:
 		sys.name = s.name
 		sys.map_pos = Vector2(s.x, s.y)
 		sys.depot_empire_id = int(s.depot)
+		sys.obs_post_empire_id = int(s.get("obs", -1))
+		sys.transport_empire_id = int(s.get("trans", -1))
 		var pl: Array[int] = []
 		for pid in s.planets:
 			pl.append(int(pid))
@@ -424,7 +427,11 @@ func system_influence(system_id: int, empire_id: int) -> float:
 
 
 func influence_reach(system_id: int, empire_id: int) -> float:
-	return SimConstants.BORDER_A2 * system_influence(system_id, empire_id)
+	var r := SimConstants.BORDER_A2 * system_influence(system_id, empire_id)
+	# An observation post owned by this empire here doubles how far influence reaches.
+	if systems[system_id].obs_post_empire_id == empire_id:
+		r *= SimConstants.OBS_POST_REACH_MULT
+	return r
 
 
 # Claim on a target system: max over own influence sources of influence/distance,
@@ -526,6 +533,10 @@ func neighbor_growth_multiplier(colony: Colony) -> float:
 		if r > 0.0:
 			bonus += SimConstants.NEIGHBOR_COEF \
 				* (SimConstants.INFLUENCE_A1 * other.population) / r
+	# Transportation infrastructure in this colony's system amplifies the proximity
+	# bonus it receives (vision: strengthens the bonus between established centers).
+	if systems[sys_id].transport_empire_id == colony.empire_id:
+		bonus *= SimConstants.TRANSPORT_BONUS_MULT
 	return 1.0 + bonus
 
 
@@ -646,6 +657,42 @@ func build_depot(empire_id: int, system_id: int) -> bool:
 		return false
 	empires[empire_id].alloys -= SimConstants.DEPOT_COST_ALLOYS
 	systems[system_id].depot_empire_id = empire_id
+	return true
+
+
+# Observation post: one per system, built in your influence for alloys. Doubles the
+# system's influence reach (see influence_reach).
+func can_build_obs_post(empire_id: int, system_id: int) -> bool:
+	var e: Empire = empires.get(empire_id)
+	return e != null and systems.has(system_id) \
+		and systems[system_id].obs_post_empire_id == -1 \
+		and e.alloys >= SimConstants.OBS_POST_COST_ALLOYS \
+		and is_under_influence(system_id, empire_id)
+
+
+func build_obs_post(empire_id: int, system_id: int) -> bool:
+	if not can_build_obs_post(empire_id, system_id):
+		return false
+	empires[empire_id].alloys -= SimConstants.OBS_POST_COST_ALLOYS
+	systems[system_id].obs_post_empire_id = empire_id
+	return true
+
+
+# Transportation hub: one per system, built in your influence for alloys.
+# Strengthens the neighbor bonus for its colonies (see neighbor_growth_multiplier).
+func can_build_transport(empire_id: int, system_id: int) -> bool:
+	var e: Empire = empires.get(empire_id)
+	return e != null and systems.has(system_id) \
+		and systems[system_id].transport_empire_id == -1 \
+		and e.alloys >= SimConstants.TRANSPORT_COST_ALLOYS \
+		and is_under_influence(system_id, empire_id)
+
+
+func build_transport(empire_id: int, system_id: int) -> bool:
+	if not can_build_transport(empire_id, system_id):
+		return false
+	empires[empire_id].alloys -= SimConstants.TRANSPORT_COST_ALLOYS
+	systems[system_id].transport_empire_id = empire_id
 	return true
 
 
@@ -1089,7 +1136,8 @@ func tick(dt_days: float) -> void:
 		if p.has_mine():
 			struct_systems[p.system_id] = true
 	for sys in systems.values():
-		if sys.depot_empire_id != -1:
+		if sys.depot_empire_id != -1 or sys.obs_post_empire_id != -1 \
+				or sys.transport_empire_id != -1:
 			struct_systems[sys.id] = true
 	var owner_of := {}
 	for sid in struct_systems:
@@ -1100,7 +1148,12 @@ func tick(dt_days: float) -> void:
 			if o != -1 and o != p.mine_empire_id:
 				p.mine_empire_id = o
 	for sys in systems.values():
-		if sys.depot_empire_id != -1:
-			var o: int = owner_of[sys.id]
-			if o != -1 and o != sys.depot_empire_id:
-				sys.depot_empire_id = o
+		var o: int = owner_of.get(sys.id, -1)
+		if o == -1:
+			continue
+		if sys.depot_empire_id != -1 and o != sys.depot_empire_id:
+			sys.depot_empire_id = o
+		if sys.obs_post_empire_id != -1 and o != sys.obs_post_empire_id:
+			sys.obs_post_empire_id = o
+		if sys.transport_empire_id != -1 and o != sys.transport_empire_id:
+			sys.transport_empire_id = o

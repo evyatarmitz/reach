@@ -11,4 +11,8 @@ var planet_ids: Array[int] = []
 # Position on the galaxy map. Layout AND the distance metric for the
 # influence/neighbor-bonus math — systems are points, distance is euclidean.
 var map_pos: Vector2 = Vector2.ZERO
-var depot_empire_id: int = -1   # supply depot owner (-1 = none)
+var depot_empire_id: int = -1     # supply depot owner (-1 = none)
+var obs_post_empire_id: int = -1  # observation post owner: doubles influence reach
+                                  # here + extends visibility (early warning)
+var transport_empire_id: int = -1 # transportation hub owner: strengthens the
+                                  # neighbor/proximity growth bonus for its colonies

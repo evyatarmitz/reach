@@ -68,6 +68,7 @@ func _init() -> void:
 	_test_power_ceiling()
 	_test_attrition_and_depot()
 	_test_structure_capture()
+	_test_support_structures()
 	_test_difficulty()
 	_test_save_load()
 	_test_determinism()
@@ -651,6 +652,38 @@ func _test_military_resources() -> void:
 	run_days(sim2, 40.0)
 	check(e2.nat[0] > 0.0 and e2.nat[1] == 0.0,
 		"a small city (below the tier-2 cutoff) refines only tier 1")
+
+
+func _test_support_structures() -> void:
+	# Observation post doubles the system's influence reach.
+	var sim := Sim.new()
+	var e := sim.add_empire("O", Color.WHITE)
+	e.alloys = 100000.0
+	var s := sim.add_system("S")
+	s.map_pos = Vector2.ZERO
+	sim.inject_colony(e.id, sim.add_planet(s.id, "p").id, 200.0, true)
+	var reach_before := sim.influence_reach(s.id, e.id)
+	check(sim.build_obs_post(e.id, s.id), "observation post builds in own influence")
+	check(is_equal_approx(sim.influence_reach(s.id, e.id),
+		reach_before * SimConstants.OBS_POST_REACH_MULT),
+		"observation post doubles influence reach")
+
+	# Transport hub multiplies a colony's neighbor bonus.
+	var sim2 := Sim.new()
+	var e2 := sim2.add_empire("T", Color.WHITE)
+	e2.alloys = 100000.0
+	var a := sim2.add_system("A")
+	a.map_pos = Vector2.ZERO
+	var b := sim2.add_system("B")
+	b.map_pos = Vector2(200, 0)
+	sim2.add_lane(a.id, b.id)
+	var ca := sim2.inject_colony(e2.id, sim2.add_planet(a.id, "pa").id, 500.0, true)
+	sim2.inject_colony(e2.id, sim2.add_planet(b.id, "pb").id, 500.0, true)
+	var bonus_before := sim2.neighbor_growth_multiplier(ca)
+	check(bonus_before > 1.0, "test setup: colony has a neighbor bonus to amplify")
+	check(sim2.build_transport(e2.id, a.id), "transport hub builds in own influence")
+	var bonus_after := sim2.neighbor_growth_multiplier(ca)
+	check(bonus_after > bonus_before, "transport hub strengthens the neighbor bonus")
 
 
 func _test_specialization() -> void:

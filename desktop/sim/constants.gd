@@ -126,6 +126,16 @@ const ATTRITION_FRAC := 0.01
 # Supply depot: a structure that negates attrition for friendly fleets in its
 # system or one lane-jump away (doesn't stack).
 const DEPOT_COST_ALLOYS := 60.0
+# Observation post: doubles the influence REACH of its system (border pushes twice
+# as far, and — since VR rides influence reach — grants early warning well past the
+# border). Vision: "doubles influence range, adds a separate visibility range."
+const OBS_POST_COST_ALLOYS := 90.0
+const OBS_POST_REACH_MULT := 2.0
+# Transportation infrastructure: multiplies the neighbor/proximity growth bonus for
+# colonies in its system (vision: "strengthens the proximity bonus between
+# established centers"), so a well-connected cluster climbs higher.
+const TRANSPORT_COST_ALLOYS := 90.0
+const TRANSPORT_BONUS_MULT := 1.6
 
 # Established-city conversion: capacity/day = COEF * pop^EXP for each chain
 # (water->food, minerals->alloys). Actual output is capped by the available T0
