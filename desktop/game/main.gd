@@ -59,6 +59,7 @@ var _fog_tex: ImageTexture  # baked fog: feathered lit / grey memory / transpare
 var _fog_rect := Rect2()    # world-space rect the fog texture covers
 var _fog_seen := {}         # "gx,gy" -> true, cells ever in VR (explored memory)
 var _starfield: Array = []  # backdrop: [pos, radius, Color] faint stars (static)
+var _has_anomalies := false # cached each refresh so _claim_at skips anomaly tests
 
 var raw_label: Label
 var goods_label: Label
@@ -360,6 +361,7 @@ func _update_hover() -> void:
 func _recompute_borders() -> void:
 	_border_segments.clear()
 	_system_owner.clear()
+	_has_anomalies = not sim.anomalies.is_empty()
 	# Per-empire sources: parallel packed arrays of (position, influence, reach).
 	var ids: Array = []
 	var pos: Array = []
@@ -567,11 +569,15 @@ func _snapshot_system(sys: StarSystem) -> Dictionary:
 # marching-squares interpolation never divides by an infinity.
 func _claim_at(p: Vector2, pv: PackedVector2Array, iv: PackedFloat32Array,
 		rv: PackedFloat32Array) -> float:
+	# Anomalies block influence AND sight: no claim inside one, and a source can't
+	# project across one. Since fog rides this field too, VR routes around them.
+	if _has_anomalies and sim.point_in_anomaly(p):
+		return 0.0
 	var si := 0.0
 	var sri := 0.0
 	for j in pv.size():
 		var d := p.distance_to(pv[j])
-		if d <= rv[j]:
+		if d <= rv[j] and not (_has_anomalies and sim.segment_hits_anomaly(pv[j], p)):
 			si += iv[j]
 			sri += d * iv[j]
 	if si <= 0.0:
@@ -751,6 +757,17 @@ func _draw_galaxy() -> void:
 	# to grey explored-memory to never-seen black. Baked in the border refresh.
 	if _fog_tex != null:
 		draw_texture_rect(_fog_tex, _fog_rect, false)
+	# Cosmic anomalies: a magenta nebula haze with a darker core — physical hazards
+	# that block influence and sight, so they're always visible (you route around
+	# them). Drawn over the fog.
+	for an in sim.anomalies:
+		var ac: Vector2 = an.pos
+		var ar: float = an.r
+		for i in 5:
+			var t := float(i) / 5.0
+			var col := Color(0.5, 0.2, 0.6, 0.10 + t * 0.06)
+			draw_circle(ac, ar * (1.0 - t * 0.8), col)
+		draw_arc(ac, ar, 0.0, TAU, 48, Color(0.7, 0.4, 0.9, 0.35), 1.5)
 	# Deformed influence borders (already fog-gated to VR in _recompute_borders).
 	# Two passes: a wide translucent underlay for a soft glow, then the crisp core.
 	for seg in _border_segments:
@@ -1192,6 +1209,7 @@ func _build_legend(layer: CanvasLayer) -> void:
 		"hover a system for its planets",
 		"● colony  ◆ mineral  ○ water  ▫ mine",
 		"□ depot  ◉ obs-post (2x reach)  ⌃ transport",
+		"purple nebula — anomaly (blocks influence + sight)",
 	]
 	for i in lines.size():
 		var l := Label.new()

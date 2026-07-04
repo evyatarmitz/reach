@@ -20,6 +20,8 @@ var fleets: Array[Fleet] = []
 var ais: Array[EmpireAI] = []  # rival brains; step deterministically in tick()
 var combat_at: Dictionary = {} # system_id -> sim day of last combat (transient, for
                                # the renderer's clash flash; not serialized)
+var anomalies: Array = []      # [{pos: Vector2, r: float}] — cosmic anomalies that
+                               # block influence AND visibility (you route around them)
 
 var _next_id := 1
 
@@ -125,9 +127,41 @@ static func generate_map(cfg_in: Dictionary) -> Sim:
 					else SimConstants.Deposit.MINERAL
 
 	_connect_systems(sim, sys_ids, positions, int(cfg.extra_lane_neighbors))
+	_place_anomalies(sim, positions, size, rng)
 	_place_empires(sim, sys_ids, positions, int(cfg.empire_count),
 		float(cfg.ai_efficiency))
 	return sim
+
+
+# Scatter a few anomalies in open space — clear of every system and every lane, so
+# they block influence/visibility without ever cutting the map or a fleet's route.
+static func _place_anomalies(sim: Sim, positions: Array, size: Vector2,
+		rng: RandomNumberGenerator) -> void:
+	var target: int = clampi(int(positions.size() / 12),
+		SimConstants.ANOMALY_MIN, SimConstants.ANOMALY_MAX)
+	var attempts := 0
+	while sim.anomalies.size() < target and attempts < target * 400:
+		attempts += 1
+		var r := rng.randf_range(SimConstants.ANOMALY_RADIUS_MIN,
+			SimConstants.ANOMALY_RADIUS_MAX)
+		var p := Vector2(rng.randf_range(r, size.x - r), rng.randf_range(r, size.y - r))
+		var clear := true
+		for q in positions:   # keep off systems
+			if p.distance_to(q) < r + SimConstants.ANOMALY_SYSTEM_CLEARANCE:
+				clear = false
+				break
+		if clear:
+			for l in sim.lanes:   # keep off lanes (movement never blocked)
+				var a: Vector2 = sim.systems[l[0]].map_pos
+				var b: Vector2 = sim.systems[l[1]].map_pos
+				var ab := b - a
+				var len2 := ab.length_squared()
+				var t := 0.0 if len2 <= 0.0 else clampf((p - a).dot(ab) / len2, 0.0, 1.0)
+				if p.distance_to(a + ab * t) < r:
+					clear = false
+					break
+		if clear:
+			sim.anomalies.append({"pos": p, "r": r})
 
 
 # Minimum spanning tree (Prim) so the whole map is one connected component, plus
@@ -255,9 +289,12 @@ func serialize() -> Dictionary:
 	for a in ais:
 		ai.append({"eid": a.empire_id, "bc": a._build_count,
 			"nad": a._next_action_day})
+	var ans: Array = []
+	for an in anomalies:
+		ans.append({"x": an.pos.x, "y": an.pos.y, "r": an.r})
 	return {"day": day, "next_id": _next_id, "empires": es, "systems": ss,
 		"planets": ps, "colonies": cs, "fleets": fs, "lanes": lanes.duplicate(true),
-		"ais": ai}
+		"ais": ai, "anomalies": ans}
 
 
 static func deserialize(d: Dictionary) -> Sim:
@@ -338,6 +375,8 @@ static func deserialize(d: Dictionary) -> Sim:
 		sim.fleets.append(fl)
 	for l in d.lanes:
 		sim.lanes.append([int(l[0]), int(l[1])])
+	for an in d.get("anomalies", []):
+		sim.anomalies.append({"pos": Vector2(an.x, an.y), "r": float(an.r)})
 	for a in d.ais:
 		var ai := EmpireAI.new(int(a.eid))
 		ai._build_count = int(a.bc)
@@ -426,6 +465,35 @@ func system_influence(system_id: int, empire_id: int) -> float:
 	return best
 
 
+# --- cosmic anomalies ---------------------------------------------------------
+# Anomalies block both influence and visibility: no claim/sight inside one, and
+# neither influence nor sight crosses one (a source can't project past it).
+
+func point_in_anomaly(p: Vector2) -> bool:
+	for an in anomalies:
+		if p.distance_to(an.pos) < an.r:
+			return true
+	return false
+
+
+# True if the segment a→b passes through any anomaly (blocking influence/sight).
+func segment_hits_anomaly(a: Vector2, b: Vector2) -> bool:
+	for an in anomalies:
+		var c: Vector2 = an.pos
+		var ab := b - a
+		var len2 := ab.length_squared()
+		var t := 0.0 if len2 <= 0.0 else clampf((c - a).dot(ab) / len2, 0.0, 1.0)
+		if c.distance_to(a + ab * t) < an.r:
+			return true
+	return false
+
+
+# Influence from source system to a point is blocked if the point is inside an
+# anomaly or the line to it crosses one. Used by both the logic claim and the field.
+func influence_blocked(src: Vector2, dst: Vector2) -> bool:
+	return point_in_anomaly(dst) or segment_hits_anomaly(src, dst)
+
+
 func influence_reach(system_id: int, empire_id: int) -> float:
 	var r := SimConstants.BORDER_A2 * system_influence(system_id, empire_id)
 	# An observation post owned by this empire here doubles how far influence reaches.
@@ -447,7 +515,8 @@ func claim_strength(target_system_id: int, empire_id: int) -> float:
 		if sys.id == target_system_id:
 			return INF
 		var d := system_distance(sys.id, target_system_id)
-		if d <= influence_reach(sys.id, empire_id):
+		if d <= influence_reach(sys.id, empire_id) \
+				and not influence_blocked(sys.map_pos, systems[target_system_id].map_pos):
 			best = maxf(best, inf / d)
 	return best
 

@@ -183,3 +183,13 @@ const SIGHT_MINE_RANGE := 260.0
 # contested border sits where influence1/influence2 = r1/r2.
 const INFLUENCE_A1 := 1.0
 const BORDER_A2 := 1.8
+
+# Cosmic anomalies: circular regions that block influence and visibility. Placed in
+# open space (clear of systems and lanes) so they never break connectivity or
+# movement — they force influence/sight to route around them. Count scales a little
+# with map size (see generate_map).
+const ANOMALY_MIN := 2
+const ANOMALY_MAX := 6
+const ANOMALY_RADIUS_MIN := 110.0
+const ANOMALY_RADIUS_MAX := 190.0
+const ANOMALY_SYSTEM_CLEARANCE := 30.0   # keep this far off any system

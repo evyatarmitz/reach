@@ -69,6 +69,7 @@ func _init() -> void:
 	_test_attrition_and_depot()
 	_test_structure_capture()
 	_test_support_structures()
+	_test_anomalies()
 	_test_difficulty()
 	_test_save_load()
 	_test_determinism()
@@ -684,6 +685,34 @@ func _test_support_structures() -> void:
 	check(sim2.build_transport(e2.id, a.id), "transport hub builds in own influence")
 	var bonus_after := sim2.neighbor_growth_multiplier(ca)
 	check(bonus_after > bonus_before, "transport hub strengthens the neighbor bonus")
+
+
+func _test_anomalies() -> void:
+	var sim := Sim.new()
+	var e := sim.add_empire("A", Color.WHITE)
+	var a := sim.add_system("A")
+	a.map_pos = Vector2.ZERO
+	var b := sim.add_system("B")
+	b.map_pos = Vector2(300, 0)
+	sim.add_planet(b.id, "pb")
+	sim.inject_colony(e.id, sim.add_planet(a.id, "pa").id, 1000.0, true)
+	check(sim.claim_strength(b.id, e.id) > 0.0,
+		"influence reaches an in-range system with no anomaly between")
+	sim.anomalies.append({"pos": Vector2(150, 0), "r": 60.0})
+	check(sim.claim_strength(b.id, e.id) == 0.0,
+		"an anomaly on the line between two systems blocks influence")
+	check(sim.point_in_anomaly(Vector2(150, 0)),
+		"point_in_anomaly true inside an anomaly")
+	check(not sim.point_in_anomaly(Vector2(150, 500)),
+		"point_in_anomaly false well outside")
+	# A generated map keeps anomalies clear of every system and lane.
+	var m := Sim.new_demo()
+	var ok := true
+	for an in m.anomalies:
+		for s in m.systems.values():
+			if s.map_pos.distance_to(an.pos) < an.r:
+				ok = false
+	check(ok, "generated anomalies never overlap a system")
 
 
 func _test_specialization() -> void:
