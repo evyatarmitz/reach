@@ -613,8 +613,12 @@ func neighbor_growth_multiplier(colony: Colony) -> float:
 				or not other.established:
 			continue
 		var other_sys: int = planets[other.planet_id].system_id
-		var r: float = SimConstants.IN_SYSTEM_DIST if other_sys == sys_id \
-			else system_distance(sys_id, other_sys)
+		# Same-system colonies COMPETE for the one influence area (vision) — they do
+		# NOT boost each other's growth. Only OTHER systems boost, at 1/R. (Without
+		# this, several colonies in one system compounded into runaway growth.)
+		if other_sys == sys_id:
+			continue
+		var r := system_distance(sys_id, other_sys)
 		if r > 0.0:
 			bonus += SimConstants.NEIGHBOR_COEF \
 				* (SimConstants.INFLUENCE_A1 * other.population) / r
@@ -622,7 +626,10 @@ func neighbor_growth_multiplier(colony: Colony) -> float:
 	# bonus it receives (vision: strengthens the bonus between established centers).
 	if systems[sys_id].transport_empire_id == colony.empire_id:
 		bonus *= SimConstants.TRANSPORT_BONUS_MULT
-	return 1.0 + bonus
+	# Cap the multiplier: the bonus scales with neighbour population, so a tight,
+	# populous cluster could otherwise compound without bound. Clusters still climb
+	# well past the lone-colony softcap, just not into runaway.
+	return 1.0 + minf(bonus, SimConstants.NEIGHBOR_MAX_BONUS)
 
 
 # --- visibility (fog of war) --------------------------------------------------

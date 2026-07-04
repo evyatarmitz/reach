@@ -315,8 +315,15 @@ func _test_neighbor_bonus() -> void:
 	var rig5_sim: Sim = rig5.sim
 	var pa2: Planet = rig5_sim.add_planet(rig5.a.id, "A II")
 	rig5_sim.inject_colony(rig5.e.id, pa2.id, 300.0, true)
-	check(rig5_sim.neighbor_growth_multiplier(rig5.subject) > 1.0,
-		"a same-system established colony now DOES boost (bonus applies in-system)")
+	check(is_equal_approx(rig5_sim.neighbor_growth_multiplier(rig5.subject), 1.0),
+		"a same-system colony does NOT boost — same system competes, not clusters")
+	# The cap keeps a dense cluster's bonus finite (no runaway).
+	var rig6 := _neighbor_rig()
+	for k in 8:
+		_add_established(rig6.sim, rig6.e, Vector2(200 + k, 0), 5000.0)
+	check(rig6.sim.neighbor_growth_multiplier(rig6.subject)
+		<= 1.0 + SimConstants.NEIGHBOR_MAX_BONUS + 0.001,
+		"the neighbor multiplier is capped (no runaway from a dense cluster)")
 	# End to end: clustered colony out-grows an isolated identical one (both have
 	# unlimited food, so only the neighbor bonus differs).
 	var iso := _neighbor_rig()

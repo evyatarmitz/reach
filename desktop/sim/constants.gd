@@ -69,6 +69,11 @@ const MIN_POP := 1.0
 # bonus multiplies growth (a 20% bonus makes 1% -> 1.2%), offsetting diminishing
 # returns so clustered colonies climb past the lone-colony flattening.
 const NEIGHBOR_COEF := 0.1
+# Hard cap on the neighbor growth bonus (the multiplier tops out at 1 + this). The
+# bonus scales with neighbour population, so a dense cluster could compound without
+# bound; this keeps clusters strong-but-finite instead of runaway (a 2-system,
+# 8-colony knot was reaching thousands-of-percent growth).
+const NEIGHBOR_MAX_BONUS := 3.0
 # Effective distance used for a neighbor in the SAME system (real distance there
 # is ~0). Applying the bonus in-system means a big city also lifts its neighbours
 # on other planets of its own system.
