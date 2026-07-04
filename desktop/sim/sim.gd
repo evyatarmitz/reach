@@ -1157,7 +1157,10 @@ func _bombard(empire_id: int, fleet_list: Array, system_id: int, dt_days: float,
 	var budget := 0.0
 	for f in fleet_list:
 		budget += (f as Fleet).bomb_power()
-	budget *= dt_days
+	# BOMBARD_RATE keeps killing population SLOW (vision): a fleet must sit over a
+	# world for many days to grind it down — and it takes overstay attrition while it
+	# does — so no colony falls to a single pass.
+	budget *= dt_days * SimConstants.BOMBARD_RATE
 	if budget <= 0.0:
 		return
 	var targets: Array[Colony] = []

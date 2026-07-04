@@ -125,6 +125,10 @@ const BOMBER_HP := [12.0, 18.0, 26.0, 36.0, 48.0]
 const FLEET_SPEED := 60.0
 const COMBAT_RATE := 0.02       # hull lost per enemy-combat-power per day
 const BOMBARD_DESTROY_POP := 100.0
+# Fraction of raw bomb power that actually converts to population killed per day.
+# Low, so bombardment is a SLOW grind (vision: "killing population is slow — no war
+# won by one decisive fight"), not an instant wipe.
+const BOMBARD_RATE := 0.15
 # Hard ship-power ceiling (vision): an empire's combat DAMAGE in one battle can't
 # exceed this, no matter how big the stack — extra ships become durability, not
 # punch, so a bigger fleet wins by outlasting, never by one decisive blow.
