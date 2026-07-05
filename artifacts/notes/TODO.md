@@ -73,6 +73,25 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.71.0 (2026-07-05, Godot 4.7) — RENDER PERF: pan lag (from playtest)
+
+Playtest: "movement still laggy on a mid map right from the start." That's not tick
+cost (0.70.0 fixed that; early game has few colonies anyway) — it was per-frame RENDER
+cost. `_process` called `queue_redraw()` EVERY frame, and `_draw_galaxy` re-drew every
+system with two `draw_string`s each (text shaping is expensive) — so every pan frame
+re-shaped 100s of labels. But the camera is a real Camera2D over world-space content:
+panning is a transform, the content doesn't move, so a per-frame redraw was pure waste.
+- main.gd: redraw throttled to ~30 Hz (DRAW_REFRESH) via `_draw_timer`; `_apply_camera`
+  stays every frame so pan/zoom is still buttery. Autoshot forces a `queue_redraw()`
+  before each capture since it no longer happens per-frame.
+- Labels (system name + colony count `draw_string`) only draw at zoom ≥ LABEL_ZOOM
+  (0.85). Zoomed out they overlap into mush anyway; the hover hint-line still names the
+  hovered system.
+- Viewport culling in `_draw_galaxy`: systems outside the visible world rect (camera ±
+  half-viewport/zoom, padded) are skipped entirely. Net effect: zoomed OUT → all systems
+  on screen but labels off (cheap: just stars); zoomed IN → labels on but only for the
+  few on-screen systems (cheap). Both ends stay light regardless of map size.
+
 ## Status — 0.70.0 (2026-07-05, Godot 4.7) — VR-AT-BORDER + TICK PERF (from playtest)
 
 Two issues from the flat-mesh playtest ("game runs faster, AI uses ships, but…"):

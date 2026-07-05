@@ -30,6 +30,14 @@ const FIELD_MAX_CELLS := 150.0  # cap fog/border grid cells per axis, so the fie
                                 # recompute stays affordable on very large maps
 const BORDER_REFRESH := 0.5
 const UI_REFRESH := 0.066   # HUD/panel refresh cadence (~15 Hz), decoupled from FPS
+const DRAW_REFRESH := 0.033  # galaxy redraw cadence (~30 Hz). The camera pans every
+                             # frame (transform, cheap); the map is world-space so it
+                             # stays put under the camera — only content animation
+                             # (fleets, combat pulse) needs a redraw, so a full redraw
+                             # every frame just re-shaped 100s of labels for nothing.
+const LABEL_ZOOM := 0.85     # only draw per-system name/count labels at/above this
+                             # zoom — when zoomed out they overlap into unreadable
+                             # mush AND draw_string dominates frame cost.
 const BORDER_EPS := 0.01     # tiny rival-claim floor so bubble-vs-empty edges draw
 const FOG_CELL := 22.0       # sample cell for the fog texture (linearly filtered)
 # VR fill. The fog must reach PAST the border (the border is your influence edge;
@@ -64,6 +72,7 @@ var _map_hi := Vector2.ZERO
 var _border_segments: Array = []   # [a, b, color] line segments
 var _border_timer := 0.0
 var _ui_timer := 0.0
+var _draw_timer := 0.0
 var _system_owner := {}     # system_id -> empire_id, cached with the border field
 var _system_vr := {}        # system_id -> 0 none / 1 partial / 2 full VR
 var _explored := {}         # system_id -> true, ever seen (gray once out of VR)
@@ -279,7 +288,13 @@ func _process(delta: float) -> void:
 		_scan_events()
 		_check_game_over()
 		_refresh_ui()
-	queue_redraw()
+	# Redraw the galaxy at ~30 Hz, NOT every frame: panning is a camera transform
+	# (applied above, 60 Hz) over world-space content that doesn't move, so a per-frame
+	# redraw only re-shaped every system label for nothing — the source of pan lag.
+	_draw_timer -= delta
+	if _draw_timer <= 0.0:
+		_draw_timer = DRAW_REFRESH
+		queue_redraw()
 
 
 # Watch for autonomous happenings the player should know about — colonies lost,
@@ -796,6 +811,12 @@ func _draw() -> void:
 
 func _draw_galaxy() -> void:
 	var font := ThemeDB.fallback_font
+	# Visible world rect (camera centre ± half-viewport/zoom), padded. Systems/stars/
+	# labels outside it are skipped — without this, zooming in still drew (and shaped
+	# the labels of) every off-screen system on a big map.
+	var half := get_viewport_rect().size / (2.0 * maxf(_galaxy_cam_zoom, 0.001))
+	var view_lo := _galaxy_cam_pos - half - Vector2(80, 80)
+	var view_hi := _galaxy_cam_pos + half + Vector2(80, 80)
 	# Deep-space backdrop: faint static stars, behind everything.
 	for s in _starfield:
 		draw_circle(s[0], s[1], s[2])
@@ -839,6 +860,9 @@ func _draw_galaxy() -> void:
 		elif kb:
 			draw_line(b, (a + b) * 0.5, lane_col, 1.5)
 	for sys in sim.systems.values():
+		var sp: Vector2 = sys.map_pos
+		if sp.x < view_lo.x or sp.x > view_hi.x or sp.y < view_lo.y or sp.y > view_hi.y:
+			continue   # off-screen: skip star + labels
 		var live := _sys_live(sys.id)
 		if not (live or _sys_known(sys.id)):
 			continue   # never seen -> stays black
@@ -869,11 +893,12 @@ func _draw_galaxy() -> void:
 			if owner != -1:
 				draw_arc(sys.map_pos, 13.0 * sscale, 0.0, TAU, 32,
 					sim.empires[owner].color, 2.0)
-			if cc > 0:
-				draw_string(font, sys.map_pos + Vector2(14.0, -12.0), str(cc),
-					HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.35, 1.0, 0.5))
-			draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
-				HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.65))
+			if _galaxy_cam_zoom >= LABEL_ZOOM:
+				if cc > 0:
+					draw_string(font, sys.map_pos + Vector2(14.0, -12.0), str(cc),
+						HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.35, 1.0, 0.5))
+				draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
+					HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.65))
 		else:
 			# Explored but out of VR: dim star + the frozen last-seen snapshot
 			# (owner ring + colony count as of last sight — no live data).
@@ -884,15 +909,16 @@ func _draw_galaxy() -> void:
 				var gc: Color = sim.empires[sowner].color
 				gc.a = 0.4
 				draw_arc(sys.map_pos, 13.0, 0.0, TAU, 32, gc, 1.5)
-			var scc := 0
-			for pinfo in snap.get("planets", {}).values():
-				if pinfo.get("colony", false):
-					scc += 1
-			if scc > 0:
-				draw_string(font, sys.map_pos + Vector2(14.0, -12.0), str(scc),
-					HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.5, 0.7, 0.55, 0.6))
-			draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
-				HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.35))
+			if _galaxy_cam_zoom >= LABEL_ZOOM:
+				var scc := 0
+				for pinfo in snap.get("planets", {}).values():
+					if pinfo.get("colony", false):
+						scc += 1
+				if scc > 0:
+					draw_string(font, sys.map_pos + Vector2(14.0, -12.0), str(scc),
+						HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.5, 0.7, 0.55, 0.6))
+				draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
+					HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.35))
 
 	# Combat indicators (for systems the player can see): a LIVE battle or bombardment
 	# pulses persistently and distinctly; recently-ended combat leaves a fading
@@ -1780,11 +1806,13 @@ func _autoshot() -> void:
 	var home: StarSystem = sim.systems[sim.most_populated_system(player_empire_id)]
 	_hover_system = home.id
 	_recompute_borders()
+	queue_redraw()   # redraw is throttled in _process; force one for the capture
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://autoshot_galaxy.png")
 	view_system_id = home.id
 	selected_planet_id = home.planet_ids[0]
+	queue_redraw()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://autoshot.png")
