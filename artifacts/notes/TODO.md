@@ -73,6 +73,21 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.75.0 (2026-07-05, Godot 4.7) — fix rival border flicker inside VR
+
+Playtest: "other players' border phases in and out of frame despite being obviously
+inside VR." Root cause: the border-draw VR gate probed 12px INTO the owning side of each
+contour segment. For a RIVAL's border that's 12px into RIVAL territory, where the
+player's VR is marginal/zero — so as the rival's border drifted each rebake, a
+fluctuating subset of segments crossed the VR threshold and dropped out → flicker. The
+12px push was a stale workaround from when VR feathered to 0 AT the border; since 0.70.0
+VR is FULL at the border and feathers PAST it, so the contour point itself is the right,
+stable test. Fix: gate on the segment midpoint (`_player_vr_at(mid, …)`), drop the probe.
+Repro (robo mode): tests/border_flicker.gd runs both empires as AI until borders meet,
+then per cycle counts rival-border points that are inside player VR but that the OLD
+12px-probe rule would hide — nonzero and swinging (3→10→7→6→4→9), i.e. the flicker; the
+mid gate keeps them all. 139 tests pass; draw_smoke.gd clean.
+
 ## Status — 0.74.0 (2026-07-05, Godot 4.7) — threaded field rebake (no pan hitch)
 
 Playtest after 0.73.0: "better but still skips a frame here and there when I move it."

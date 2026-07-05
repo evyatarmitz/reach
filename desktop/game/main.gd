@@ -602,14 +602,16 @@ func _bake_field(job: Dictionary) -> Dictionary:
 				for seg in _ms_segments(corners, margins):
 					var mid: Vector2 = (seg[0] + seg[1]) * 0.5
 					var off := inside_c - mid
-					var probe := mid
 					if off.length() > 0.01:
-						probe = mid + off.normalized() * 12.0   # a bit into owned side
 						off = off.normalized() * BORDER_INSET
-					# Draw the border where the player can see it. Probe just INSIDE the
-					# owning side (VR feathers to 0 exactly on the border line, so testing
-					# the midpoint itself would drop segments and dash the line).
-					if _player_vr_at(probe, ids, pos, infl, reach, reach_vr, pk):
+					# Draw the border where the player can see it — tested at the contour
+					# point itself. Since 0.70.0 VR is FULL at the border and feathers PAST
+					# it, so the line sits in lit fog and this is stable. (The old code
+					# probed 12px into the OWNING side; for a RIVAL's border that landed deep
+					# in rival space where the player's VR is marginal, so the line flickered
+					# in and out between rebakes as the border drifted — despite the seam
+					# plainly being inside VR.)
+					if _player_vr_at(mid, ids, pos, infl, reach, reach_vr, pk):
 						segments.append([seg[0] + off, seg[1] + off, col])
 	return {"img": img, "fog_rect": fog_rect, "segments": segments}
 
