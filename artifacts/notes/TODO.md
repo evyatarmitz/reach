@@ -73,6 +73,29 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.68.0–0.69.0 (2026-07-05, Godot 4.7) — FLAT PLANET MESH (design pivot)
+
+Big deliberate pivot from a play session: DROP multi-planet star systems for a flat
+mesh of individual planets. User's call — accepts losing the vision's same-system
+"spread within / cluster across" tension; wants less compounding, cleaner visuals,
+and map SIZE as the expansion limiter (longer games). Chose the low-risk path:
+KEEP the engine (StarSystem stays as the map node) but one planet per node.
+- **0.68.0** generate_map: 1 planet/node, still clustered (heatmap); map size DERIVES
+  from planet count at fixed density (MAP_AREA_PER_PLANET) so bigger = more room,
+  not denser; default 50→120. _place_empires reworked for 1-planet homes (home =
+  water world + water mine + colony; nearest planet = mineral mine). UI: click a
+  node → its single planet's actions directly (no planet-list); relabelled
+  system→planet/world. Influence stacking LEFT AS-IS (test first, per user).
+- **0.69.0** Map-size settings: Small 60 / Medium 120 / Large 250 + a Custom slider
+  to 1000. Fog/border field uses ADAPTIVE cell size (FIELD_MAX_CELLS ≤150/axis) so
+  the recompute stays bounded on big maps. Verified 400-planet gen + tick.
+
+KNOWN / NEXT: per-source field cost still scales with planet count → 500+ planet
+maps may spike (needs source spatial-partitioning). Influence stacking on dense
+own-planet clumps is untuned by design — playtest, then decide cap/falloff. On a
+huge map, 4 empires expand very slowly (few colonies by day 400) — that's the
+intended length increase, but empire count vs map size is a knob to feel out.
+
 ## Status — 0.63.0–0.67.0 (2026-07-04, Godot 4.7) — PERF + BALANCE + VR FROM PLAYTEST
 
 Four issues from a play session:
