@@ -23,6 +23,8 @@ const ZOOM_MAX := 2.5
 # for a frontier cell — drawn as a dot at the cell's own centre so each empire's
 # edge sits inside its territory and hostile seams show BOTH colours.
 const BORDER_CELL := 18.0   # coarser than 14 to cut the border-recompute spike
+const FIELD_MAX_CELLS := 150.0  # cap fog/border grid cells per axis, so the field
+                                # recompute stays affordable on very large maps
 const BORDER_REFRESH := 0.5
 const UI_REFRESH := 0.066   # HUD/panel refresh cadence (~15 Hz), decoupled from FPS
 const BORDER_EPS := 0.01     # tiny rival-claim floor so bubble-vs-empty edges draw
@@ -442,12 +444,17 @@ func _recompute_borders() -> void:
 	# cell explored (grey memory once it later drops out of VR).
 	var flo := _map_lo - Vector2(140, 140)
 	var fhi := _map_hi + Vector2(140, 140)
-	var fcols: int = maxi(1, int((fhi.x - flo.x) / FOG_CELL) + 1)
-	var frows: int = maxi(1, int((fhi.y - flo.y) / FOG_CELL) + 1)
+	# Adaptive cell size: never finer than FOG_CELL, but coarsen on big maps so the
+	# grid never exceeds ~FIELD_MAX_CELLS per axis — keeps the recompute affordable
+	# at large planet counts (the fog is only viewed zoomed out there anyway).
+	var fspan: float = maxf(fhi.x - flo.x, fhi.y - flo.y)
+	var fcell: float = maxf(FOG_CELL, fspan / FIELD_MAX_CELLS)
+	var fcols: int = maxi(1, int((fhi.x - flo.x) / fcell) + 1)
+	var frows: int = maxi(1, int((fhi.y - flo.y) / fcell) + 1)
 	var img := Image.create(fcols, frows, false, Image.FORMAT_RGBA8)
 	for gy in frows:
 		for gx in fcols:
-			var c := Vector2(flo.x + (gx + 0.5) * FOG_CELL, flo.y + (gy + 0.5) * FOG_CELL)
+			var c := Vector2(flo.x + (gx + 0.5) * fcell, flo.y + (gy + 0.5) * fcell)
 			var v := _vr_at(c, ids, pos, infl, reach, reach_vr, pk)
 			var key := "%d,%d" % [gx, gy]
 			if v > 0.0:
@@ -472,8 +479,11 @@ func _recompute_borders() -> void:
 	# interpolated CURVE, not an axis-aligned staircase.
 	var lo := _map_lo - Vector2(140, 140)
 	var hi := _map_hi + Vector2(140, 140)
-	var pcols := int((hi.x - lo.x) / BORDER_CELL) + 2   # +1 cells -> +2 corners
-	var prows := int((hi.y - lo.y) / BORDER_CELL) + 2
+	# Adaptive like the fog grid: coarsen on big maps so the corner grid stays bounded.
+	var bspan: float = maxf(hi.x - lo.x, hi.y - lo.y)
+	var bcell: float = maxf(BORDER_CELL, bspan / FIELD_MAX_CELLS)
+	var pcols := int((hi.x - lo.x) / bcell) + 2   # +1 cells -> +2 corners
+	var prows := int((hi.y - lo.y) / bcell) + 2
 	var claims: Array = []   # claims[k] = PackedFloat32Array over all corner points
 	for k in ids.size():
 		var arr := PackedFloat32Array()
@@ -481,7 +491,7 @@ func _recompute_borders() -> void:
 		for gy in prows:
 			for gx in pcols:
 				arr[gy * pcols + gx] = _claim_at(
-					Vector2(lo.x + gx * BORDER_CELL, lo.y + gy * BORDER_CELL),
+					Vector2(lo.x + gx * bcell, lo.y + gy * bcell),
 					pos[k], infl[k], reach[k])
 		claims.append(arr)
 
@@ -508,10 +518,10 @@ func _recompute_borders() -> void:
 				if ck[i_tl] <= 0.0 and ck[i_tr] <= 0.0 \
 						and ck[i_br] <= 0.0 and ck[i_bl] <= 0.0:
 					continue
-				var p_tl := Vector2(lo.x + cx * BORDER_CELL, lo.y + cy * BORDER_CELL)
-				var p_tr := p_tl + Vector2(BORDER_CELL, 0)
-				var p_br := p_tl + Vector2(BORDER_CELL, BORDER_CELL)
-				var p_bl := p_tl + Vector2(0, BORDER_CELL)
+				var p_tl := Vector2(lo.x + cx * bcell, lo.y + cy * bcell)
+				var p_tr := p_tl + Vector2(bcell, 0)
+				var p_br := p_tl + Vector2(bcell, bcell)
+				var p_bl := p_tl + Vector2(0, bcell)
 				# Subtract a small floor from the rival claim so an empire's edge
 				# against EMPTY space (both claims ~0) still crosses zero and draws
 				# a contour — otherwise a lone/uncontested bubble showed no curve.

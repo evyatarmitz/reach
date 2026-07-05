@@ -4,13 +4,17 @@ extends Control
 # save exists), Quit. Sets Session.config / Session.load_path, then loads the game.
 
 const SAVE_PATH := "user://reach_save.json"
-const SIZES := [["Small", 30], ["Medium", 50], ["Large", 80]]
+# Planet counts (one planet per node now). -1 = use the custom slider.
+const SIZES := [["Small", 60], ["Medium", 120], ["Large", 250], ["Custom", -1]]
 const EMPIRES := [2, 3, 4, 5, 6]
 const DIFFS := [["Easy", 0.6], ["Normal", 1.0], ["Hard", 1.5]]
 
 var _main_box: VBoxContainer
 var _settings_box: VBoxContainer
 var _size_opt: OptionButton
+var _size_slider: HSlider
+var _size_slider_row: HBoxContainer
+var _size_val_label: Label
 var _empire_opt: OptionButton
 var _diff_opt: OptionButton
 var _stars: Array = []   # backdrop starfield [pos, radius, Color]
@@ -91,6 +95,28 @@ func _ready() -> void:
 	_settings_box.visible = false
 	col.add_child(_settings_box)
 	_size_opt = _labeled_option("Map size", SIZES.map(func(s): return s[0]), 1)
+	_size_opt.item_selected.connect(_on_size_changed)
+	# Custom-size slider (planets), revealed when "Custom" is picked — up to 1000.
+	_size_slider_row = HBoxContainer.new()
+	var slabel := Label.new()
+	slabel.text = "Planets"
+	slabel.custom_minimum_size = Vector2(120, 0)
+	_size_slider_row.add_child(slabel)
+	_size_slider = HSlider.new()
+	_size_slider.min_value = 20
+	_size_slider.max_value = 1000
+	_size_slider.step = 10
+	_size_slider.value = 300
+	_size_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_size_slider_row.add_child(_size_slider)
+	_size_val_label = Label.new()
+	_size_val_label.text = "300"
+	_size_val_label.custom_minimum_size = Vector2(44, 0)
+	_size_slider.value_changed.connect(func(v: float) -> void:
+		_size_val_label.text = str(int(v)))
+	_size_slider_row.add_child(_size_val_label)
+	_size_slider_row.visible = false
+	_settings_box.add_child(_size_slider_row)
 	_empire_opt = _labeled_option("Empires", EMPIRES.map(func(n): return str(n)), 2)
 	_diff_opt = _labeled_option("Difficulty", DIFFS.map(func(d): return d[0]), 1)
 	var start := _big_button("Start")
@@ -142,10 +168,17 @@ func _show_settings() -> void:
 	_settings_box.visible = true
 
 
+func _on_size_changed(idx: int) -> void:
+	_size_slider_row.visible = SIZES[idx][1] == -1   # show the slider for "Custom"
+
+
 func _on_start() -> void:
 	Session.load_path = ""
+	var count: int = SIZES[_size_opt.selected][1]
+	if count == -1:
+		count = int(_size_slider.value)
 	Session.config = {
-		"system_count": SIZES[_size_opt.selected][1],
+		"system_count": count,
 		"empire_count": EMPIRES[_empire_opt.selected],
 		"ai_efficiency": DIFFS[_diff_opt.selected][1],
 		"seed": randi(),
