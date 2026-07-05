@@ -19,6 +19,17 @@ func _init() -> void:
 	for i in 2000:
 		main.sim.tick(SimConstants.TICK_DAYS)
 	main._recompute_borders()
+	# Exercise the async (threaded) rebake path: kick a worker, pump frames until it
+	# lands, and confirm it produced a fog texture.
+	main._start_rebake()
+	var spins := 0
+	while main._rebake_thread != null and spins < 600:
+		main._poll_rebake()
+		await process_frame
+		spins += 1
+	assert(main._rebake_thread == null, "async rebake did not finish")
+	assert(main._fog_tex != null, "async rebake produced no fog texture")
+	print("ASYNC REBAKE OK")
 	# Exercise _draw at zoomed-out (labels off, all on screen) and zoomed-in
 	# (labels on, culling active) levels.
 	for z in [0.35, 0.6, 1.0, 1.8, 2.5]:

@@ -75,6 +75,8 @@ var _map_hi := Vector2.ZERO
 var _border_segments: Array = []   # [a, b, color] line segments
 var _border_timer := 0.0
 var _ui_timer := 0.0
+var _rebake_thread: Thread = null   # worker baking the fog/border grids off-thread
+var _rebake_result: Dictionary = {}
 var _system_owner := {}     # system_id -> empire_id, cached with the border field
 var _system_vr := {}        # system_id -> 0 none / 1 partial / 2 full VR
 var _explored := {}         # system_id -> true, ever seen (gray once out of VR)
@@ -276,10 +278,13 @@ func _process(delta: float) -> void:
 			run += 1
 		if day_accum >= SimConstants.TICK_DAYS:
 			day_accum = 0.0   # drop the backlog rather than spiral
+	# Fog/border rebake: kick it on a worker thread on the timer, apply when it lands.
+	# Off-thread so the heavy grid bake can't drop a frame mid-pan.
+	_poll_rebake()
 	_border_timer -= delta
-	if _border_timer <= 0.0:
+	if _border_timer <= 0.0 and _rebake_thread == null:
 		_border_timer = BORDER_REFRESH
-		_recompute_borders()
+		_start_rebake()
 	_apply_camera()   # every frame → smooth pan/zoom
 	# HUD/panel + hover + events refresh at ~15 Hz, not every frame: they run sim
 	# queries that don't need per-frame updates and were choking input/pan.
@@ -400,8 +405,17 @@ func _update_hover() -> void:
 # the per-cell owner test is then pure float math over the few systems that
 # actually have colonies (not every system × its planets, per cell). This is
 # what keeps the 0.4s refresh from stalling the main thread / freezing input.
+# Synchronous field rebuild (prep on main thread + bake inline + apply). Used at
+# startup and by the autoshot. The live game uses the async path (_start_rebake /
+# _poll_rebake) so the heavy grid bake runs off the main thread and can't hitch a pan.
 func _recompute_borders() -> void:
-	_border_segments.clear()
+	_apply_field(_bake_field(_prep_field()))
+
+
+# Main-thread prep: snapshot each empire's influence sources into flat arrays and
+# resolve per-system owner/VR/explored/stale. Returns everything the (off-thread) bake
+# needs; the bake must not read live sim state beyond immutable anomalies.
+func _prep_field() -> Dictionary:
 	_system_owner.clear()
 	_has_anomalies = not sim.anomalies.is_empty()
 	# Per-empire sources: parallel packed arrays of (position, influence, reach).
@@ -464,7 +478,23 @@ func _recompute_borders() -> void:
 			_explored[sys.id] = true
 		if _system_vr[sys.id] == 2:
 			_stale[sys.id] = _snapshot_system(sys)
+	return {"ids": ids, "pos": pos, "infl": infl, "reach": reach,
+		"reach_vr": reach_vr, "pk": pk}
 
+
+# Off-thread bake: pure grid work from the prep snapshot -> a fog Image, its world rect,
+# and the border-contour segments. Reads only the job arrays, static map bounds, and
+# immutable anomalies (via the pure _claim_at/_vr_at helpers), plus _fog_seen which it
+# owns for the duration of one rebake. The caller applies the result on the main thread
+# (texture upload + segment swap) so no rendering call happens off-thread.
+func _bake_field(job: Dictionary) -> Dictionary:
+	var ids: Array = job.ids
+	var pos: Array = job.pos
+	var infl: Array = job.infl
+	var reach: Array = job.reach
+	var reach_vr: Array = job.reach_vr
+	var pk: int = job.pk
+	var segments: Array = []
 	# Influence-shaped fog: sample a CONTINUOUS VR value on a grid and bake it into
 	# a texture (drawn with linear filtering) so the lit region reads as the smooth
 	# influence shape with a feathered edge — not axis-aligned blocks, not a hard
@@ -497,8 +527,7 @@ func _recompute_borders() -> void:
 				var rgb: Vector3 = (lit + mem) / fa
 				col = Color(rgb.x, rgb.y, rgb.z, fa)
 			img.set_pixel(gx, gy, col)
-	_fog_tex = ImageTexture.create_from_image(img)
-	_fog_rect = Rect2(flo, fhi - flo)
+	var fog_rect := Rect2(flo, fhi - flo)
 
 	# Sample each empire's claim on a grid of POINTS (cell corners), then trace a
 	# smooth marching-squares contour of every empire's dominance margin
@@ -581,7 +610,44 @@ func _recompute_borders() -> void:
 					# owning side (VR feathers to 0 exactly on the border line, so testing
 					# the midpoint itself would drop segments and dash the line).
 					if _player_vr_at(probe, ids, pos, infl, reach, reach_vr, pk):
-						_border_segments.append([seg[0] + off, seg[1] + off, col])
+						segments.append([seg[0] + off, seg[1] + off, col])
+	return {"img": img, "fog_rect": fog_rect, "segments": segments}
+
+
+# Apply a baked field result on the main thread: upload the fog texture and swap in the
+# new border segments. (ImageTexture creation is a GPU op, so it stays on the main thread.)
+func _apply_field(res: Dictionary) -> void:
+	_fog_tex = ImageTexture.create_from_image(res.img)
+	_fog_rect = res.fog_rect
+	_border_segments = res.segments
+
+
+# --- async field rebake -------------------------------------------------------
+# The live game runs _prep_field on the main thread (cheap; snapshots sim state) then
+# bakes the grids on a worker thread, so the ~2x/sec rebake never blocks a frame. The
+# result is applied on the next frame once the thread finishes.
+func _start_rebake() -> void:
+	if _rebake_thread != null:
+		return
+	var job := _prep_field()
+	_rebake_result = {}
+	_rebake_thread = Thread.new()
+	_rebake_thread.start(_bake_field.bind(job))
+
+
+func _poll_rebake() -> void:
+	if _rebake_thread != null and not _rebake_thread.is_alive():
+		_rebake_result = _rebake_thread.wait_to_finish()
+		_rebake_thread = null
+		if not _rebake_result.is_empty():
+			_apply_field(_rebake_result)
+
+
+func _exit_tree() -> void:
+	# Don't leak/crash on a worker mid-bake when the scene tears down.
+	if _rebake_thread != null:
+		_rebake_thread.wait_to_finish()
+		_rebake_thread = null
 
 
 # Freeze everything the player is allowed to REMEMBER about a system last seen in

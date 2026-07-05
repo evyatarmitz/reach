@@ -73,6 +73,26 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.74.0 (2026-07-05, Godot 4.7) — threaded field rebake (no pan hitch)
+
+Playtest after 0.73.0: "better but still skips a frame here and there when I move it."
+The 0.73.0 coarsening shrank the rebake spike but it still ran synchronously on the main
+thread, so it dropped a frame whenever it landed during a pan. Proper fix: run the bake
+off-thread. Split `_recompute_borders` into:
+- `_prep_field()` (main thread): snapshots each empire's influence sources into flat
+  arrays + resolves per-system owner/VR/explored/stale. Returns a job dict.
+- `_bake_field(job)` (threadable, PURE): fog Image + border-contour segments from the
+  snapshot. Reads only job arrays, static map bounds, immutable anomalies (via the pure
+  _claim_at/_vr_at helpers), and _fog_seen (worker-owned per rebake). No sim mutation,
+  no rendering calls.
+- `_apply_field(res)` (main thread): uploads the fog texture + swaps border segments.
+Live loop: `_start_rebake()` runs prep + kicks a Thread on _bake_field; `_poll_rebake()`
+applies the result the frame the worker finishes. `_recompute_borders()` stays as a
+synchronous prep+bake+apply for startup/autoshot. `_exit_tree` joins any live worker.
+Safe because sim.anomalies is immutable after gen (only appended in generate_map/load)
+and the source arrays are snapshotted on the main thread before the worker starts.
+Verified: 139 tests pass; draw_smoke.gd now also drives the async path (ASYNC REBAKE OK).
+
 ## Status — 0.73.0 (2026-07-05, Godot 4.7) — border-rebake hitch + VR reach +20%
 
 Playtest: "fr is ok even at high speeds but at normal speeds camera movement lags" +
