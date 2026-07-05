@@ -30,11 +30,6 @@ const FIELD_MAX_CELLS := 150.0  # cap fog/border grid cells per axis, so the fie
                                 # recompute stays affordable on very large maps
 const BORDER_REFRESH := 0.5
 const UI_REFRESH := 0.066   # HUD/panel refresh cadence (~15 Hz), decoupled from FPS
-const DRAW_REFRESH := 0.033  # galaxy redraw cadence (~30 Hz). The camera pans every
-                             # frame (transform, cheap); the map is world-space so it
-                             # stays put under the camera — only content animation
-                             # (fleets, combat pulse) needs a redraw, so a full redraw
-                             # every frame just re-shaped 100s of labels for nothing.
 const LABEL_ZOOM := 0.85     # only draw per-system name/count labels at/above this
                              # zoom — when zoomed out they overlap into unreadable
                              # mush AND draw_string dominates frame cost.
@@ -72,7 +67,6 @@ var _map_hi := Vector2.ZERO
 var _border_segments: Array = []   # [a, b, color] line segments
 var _border_timer := 0.0
 var _ui_timer := 0.0
-var _draw_timer := 0.0
 var _system_owner := {}     # system_id -> empire_id, cached with the border field
 var _system_vr := {}        # system_id -> 0 none / 1 partial / 2 full VR
 var _explored := {}         # system_id -> true, ever seen (gray once out of VR)
@@ -288,13 +282,11 @@ func _process(delta: float) -> void:
 		_scan_events()
 		_check_game_over()
 		_refresh_ui()
-	# Redraw the galaxy at ~30 Hz, NOT every frame: panning is a camera transform
-	# (applied above, 60 Hz) over world-space content that doesn't move, so a per-frame
-	# redraw only re-shaped every system label for nothing — the source of pan lag.
-	_draw_timer -= delta
-	if _draw_timer <= 0.0:
-		_draw_timer = DRAW_REFRESH
-		queue_redraw()
+	# Redraw every frame: the viewport doesn't retain the canvas between frames here, so
+	# skipping a redraw shows a cleared background (a visible flicker). The pan-lag fix is
+	# instead to make each _draw cheap — viewport culling + zoom-gated labels in
+	# _draw_galaxy — not to redraw less often.
+	queue_redraw()
 
 
 # Watch for autonomous happenings the player should know about — colonies lost,
@@ -1806,13 +1798,11 @@ func _autoshot() -> void:
 	var home: StarSystem = sim.systems[sim.most_populated_system(player_empire_id)]
 	_hover_system = home.id
 	_recompute_borders()
-	queue_redraw()   # redraw is throttled in _process; force one for the capture
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://autoshot_galaxy.png")
 	view_system_id = home.id
 	selected_planet_id = home.planet_ids[0]
-	queue_redraw()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://autoshot.png")

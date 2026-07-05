@@ -73,6 +73,17 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.72.0 (2026-07-05, Godot 4.7) — fix white flashing from 0.71.0
+
+0.71.0's redraw throttle (~30 Hz) caused the screen to flash white a few times/sec: in
+this project the viewport does NOT retain the canvas between frames, so any frame that
+skipped `queue_redraw()` showed a cleared background. Reverted to redrawing EVERY frame;
+removed DRAW_REFRESH/`_draw_timer`. The pan-lag fix now rests entirely on making each
+_draw cheap — the viewport CULLING + zoom-gated LABELS from 0.71.0 are kept (those were
+never the problem). So: per-frame redraw, but each redraw only touches on-screen systems
+and skips labels when zoomed out. Verified via draw_smoke.gd (no runtime error) — visual
+confirmation still needs an on-machine playtest (headless can't render here).
+
 ## Status — 0.71.0 (2026-07-05, Godot 4.7) — RENDER PERF: pan lag (from playtest)
 
 Playtest: "movement still laggy on a mid map right from the start." That's not tick
