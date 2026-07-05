@@ -73,6 +73,24 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.73.0 (2026-07-05, Godot 4.7) — border-rebake hitch + VR reach +20%
+
+Playtest: "fr is ok even at high speeds but at normal speeds camera movement lags" +
+"give the vr around 20% more from border."
+- Camera-pan stutter: `_recompute_borders()` (every 0.5s) samples up to two grids (fog
+  + per-empire border claims) and calls `_claim_at`/`_vr_at` per cell — millions of
+  inner ops, a synchronous main-thread spike ~2x/sec. FR was fine (per-frame draw is
+  cheap now) but the rebake spike stuttered pans, most felt at normal speed when you're
+  actively panning (at high speed you're watching, not moving). Coarsened the grids:
+  FIELD_MAX_CELLS 150→100, FOG_CELL 22→30, BORDER_CELL 18→26, BORDER_REFRESH 0.5→0.6.
+  Cost ~cells², so this is a >2x cut; fog is linearly filtered and the border is a
+  smooth contour, so coarser grids barely change the look. (If still not smooth, the
+  deeper fix is amortizing the rebake across frames or threading it off a sim snapshot.)
+- VR reach +20%: VR_SIGHT_REACH 1.5→1.8 (open-space sight past your bubble) and
+  VR_BORDER_FEATHER 0.18→0.30 (contested band bleeds further into a rival's side) — so
+  VR shows ~20% more ground past the border in both open and contested cases.
+Verified: 139 tests pass; draw_smoke.gd clean. Visual/feel is for on-machine playtest.
+
 ## Status — 0.72.0 (2026-07-05, Godot 4.7) — fix white flashing from 0.71.0
 
 0.71.0's redraw throttle (~30 Hz) caused the screen to flash white a few times/sec: in

@@ -25,16 +25,21 @@ const ZOOM_MAX := 2.5
 # slowly, so per-frame recompute is wasted work). Each entry is [center, color]
 # for a frontier cell — drawn as a dot at the cell's own centre so each empire's
 # edge sits inside its territory and hostile seams show BOTH colours.
-const BORDER_CELL := 18.0   # coarser than 14 to cut the border-recompute spike
-const FIELD_MAX_CELLS := 150.0  # cap fog/border grid cells per axis, so the field
-                                # recompute stays affordable on very large maps
-const BORDER_REFRESH := 0.5
+const BORDER_CELL := 26.0   # coarser (was 18) to cut the border-recompute cost — the
+                            # 0.5s rebake was a synchronous main-thread spike that
+                            # stuttered camera pans. Contour is drawn as a smooth curve
+                            # so a coarser grid barely changes how the border looks.
+const FIELD_MAX_CELLS := 100.0  # cap fog/border grid cells per axis (was 150); keeps
+                                # the rebake affordable — cost is ~cells², so 150→100
+                                # is a >2x cut on maps that hit the cap.
+const BORDER_REFRESH := 0.6
 const UI_REFRESH := 0.066   # HUD/panel refresh cadence (~15 Hz), decoupled from FPS
 const LABEL_ZOOM := 0.85     # only draw per-system name/count labels at/above this
                              # zoom — when zoomed out they overlap into unreadable
                              # mush AND draw_string dominates frame cost.
 const BORDER_EPS := 0.01     # tiny rival-claim floor so bubble-vs-empty edges draw
-const FOG_CELL := 22.0       # sample cell for the fog texture (linearly filtered)
+const FOG_CELL := 30.0       # sample cell for the fog texture (was 22; linearly
+                             # filtered, so coarser stays smooth — cuts rebake cost)
 # VR fill. The fog must reach PAST the border (the border is your influence edge;
 # the fog is your SIGHT, which sees further). VR_SIGHT_REACH is how far sight
 # extends beyond influence reach — the player's fog claim is sampled with reach
@@ -42,7 +47,8 @@ const FOG_CELL := 22.0       # sample cell for the fog texture (linearly filtere
 # hard-cutting at it. VR_CLAIM_FLOOR is the open-space fade threshold, tuned so the
 # feather completes around the extended sight edge (no hard disc). VR_BAND is the
 # feather width in claim-ratio units. Fog stays soft/organic; border sits inside it.
-const VR_SIGHT_REACH := 1.5
+const VR_SIGHT_REACH := 1.8   # was 1.5; ~20% more sight reach so VR shows more ground
+                              # past the border (open space beyond your bubble edge).
 # Claim threshold that both (a) separates a real contested border from open space —
 # a rival claim above this means "contested", so VR stops at the border — and (b)
 # sets how far open-space VR reaches (out to where the player's sight-claim drops to
@@ -50,9 +56,11 @@ const VR_SIGHT_REACH := 1.5
 # out for early warning.
 const VR_CLAIM_FLOOR := 0.4
 const VR_BAND := 0.6
-# Contested VR: fog is full across owned ground and feathers to 0 across this thin
-# band just past the border, so the border sits on the lit edge (not outside it).
-const VR_BORDER_FEATHER := 0.18
+# Contested VR: fog is full across owned ground and feathers to 0 across this band
+# just past the border, so the border sits on the lit edge (not outside it). Wider
+# band (was 0.18) = VR bleeds further into a rival's side before fading — ~20% more
+# visible ground past a contested border, matching the open-space sight bump.
+const VR_BORDER_FEATHER := 0.30
 const SAVE_PATH := "user://reach_save.json"
 const FLEET_ICON_OFF := Vector2(0, -17)   # drawn above the system so it stays clickable
 const BORDER_INSET := 3.5    # push each empire's border curve into its own territory
