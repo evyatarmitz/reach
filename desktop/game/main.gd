@@ -6,6 +6,9 @@ const SPEEDS: Array[float] = [0.0, 1.0, 3.0, 10.0]
 # Base clock slowed (1.0 -> 0.5 -> 0.4) so the whole sim reads slower in real
 # time; the speed dial multiplies this, so fast-forward is still one click away.
 const DAYS_PER_REAL_SECOND := 0.4
+# Ceiling on sim ticks executed in one frame (see _process). Steady-state 10× needs
+# <1/frame; this only bites when a frame hitches, keeping input responsive.
+const MAX_TICKS_PER_FRAME := 8
 
 var sim: Sim
 var player_empire_id := -1
@@ -44,6 +47,9 @@ const VR_SIGHT_REACH := 1.5
 # out for early warning.
 const VR_CLAIM_FLOOR := 0.4
 const VR_BAND := 0.6
+# Contested VR: fog is full across owned ground and feathers to 0 across this thin
+# band just past the border, so the border sits on the lit edge (not outside it).
+const VR_BORDER_FEATHER := 0.18
 const SAVE_PATH := "user://reach_save.json"
 const FLEET_ICON_OFF := Vector2(0, -17)   # drawn above the system so it stays clickable
 const BORDER_INSET := 3.5    # push each empire's border curve into its own territory
@@ -249,9 +255,16 @@ func _process(delta: float) -> void:
 		day_accum += delta * DAYS_PER_REAL_SECOND * speed
 		# Fixed-size ticks regardless of speed/framerate: determinism lives in
 		# the sim, the dial only changes how many ticks run per real second.
-		while day_accum >= SimConstants.TICK_DAYS:
+		# Cap ticks-per-frame so a single slow frame (GC hitch, big border rebuild)
+		# can't leave a huge day_accum that then runs dozens of ticks next frame and
+		# starves input/pan — better to run the sim a hair slow than to freeze.
+		var run := 0
+		while day_accum >= SimConstants.TICK_DAYS and run < MAX_TICKS_PER_FRAME:
 			sim.tick(SimConstants.TICK_DAYS)
 			day_accum -= SimConstants.TICK_DAYS
+			run += 1
+		if day_accum >= SimConstants.TICK_DAYS:
+			day_accum = 0.0   # drop the backlog rather than spiral
 	_border_timer -= delta
 	if _border_timer <= 0.0:
 		_border_timer = BORDER_REFRESH
@@ -617,7 +630,12 @@ func _vr_at(p: Vector2, ids: Array, pos: Array, infl: Array, reach: Array,
 		var pc_real := _claim_at(p, pos[pk], infl[pk], reach[pk])
 		if pc_real <= 0.0:
 			return 0.0
-		return clampf((pc_real / rival - 1.0) / VR_BAND, 0.0, 1.0)
+		# FULL brightness across owned ground, feathering to 0 in a thin band right
+		# AT the border — so the fog reaches the border (border sits on the lit edge),
+		# not fading short of it. (Feathering up-from-the-border pulled VR inward and
+		# left your own border floating outside the lit area.)
+		return clampf((pc_real / rival - (1.0 - VR_BORDER_FEATHER)) / VR_BORDER_FEATHER,
+			0.0, 1.0)
 	var pc_ext := _claim_at(p, pos[pk], infl[pk], reach_vr[pk])
 	if pc_ext <= 0.0:
 		return 0.0

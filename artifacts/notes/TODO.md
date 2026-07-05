@@ -73,6 +73,34 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.70.0 (2026-07-05, Godot 4.7) — VR-AT-BORDER + TICK PERF (from playtest)
+
+Two issues from the flat-mesh playtest ("game runs faster, AI uses ships, but…"):
+
+- **VR pulled back from the border.** The contested-branch feather in `_vr_at`
+  faded brightness to 0 *at* the border, so when your border met a rival's, the lit
+  fog stopped short and your own border floated outside the visible area. Fixed:
+  feather now runs FULL brightness across owned ground and fades only in a thin band
+  just PAST the border (VR_BORDER_FEATHER=0.18), so the border sits on the lit edge.
+  `return clampf((pc_real/rival - (1-FEATHER))/FEATHER, 0, 1)`.
+- **High-speed lag from the very start (not just endgame).** Root cause: `claim_strength`
+  iterated EVERY system as a candidate influence source on every call, and `system_owner`
+  (O(empires·planets)) was hammered by AI pathfinding + gating → O(empires·planets²)
+  ownership resolution per tick, independent of colony count (so it bit even an empty
+  early map). Fixes in sim.gd, all per-tick caches keyed on `day`:
+  - `_influence_sources(empire)` — the few systems that actually project influence,
+    built once per tick; `claim_strength` now iterates only those, not all planets.
+  - `owner_cached(sid)` — `system_owner` memoised once per tick; wired into
+    `lane_path_friendly`, `is_under_influence`, attrition, and structure-flip.
+  - `_adj` adjacency cache for `lane_neighbors` (was O(lanes) per call in BFS).
+  - Caches invalidate on any mid-tick source change (add_system/add_planet/inject/
+    destroy colony) via `_invalidate_influence_caches()` so a frozen `day` can't
+    hand back stale ownership.
+  - main.gd: MAX_TICKS_PER_FRAME=8 cap so a hitched frame can't spiral day_accum and
+    starve input; backlog is dropped, not accumulated.
+  Tests: 139 assertions pass (border-contest test now calls _invalidate after its
+  direct pop write). 400-planet autoshot renders; VR hugs the border.
+
 ## Status — 0.68.0–0.69.0 (2026-07-05, Godot 4.7) — FLAT PLANET MESH (design pivot)
 
 Big deliberate pivot from a play session: DROP multi-planet star systems for a flat

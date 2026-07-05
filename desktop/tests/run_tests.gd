@@ -221,6 +221,7 @@ func _test_border_contest() -> void:
 	check(sim.system_owner(right.id) == e2.id,
 		"contested: right of the influence-ratio point goes to the weaker")
 	sim.planets[sim.systems[b.id].planet_ids[0]].colony.population = 400.0
+	sim._invalidate_influence_caches()   # direct pop write within a frozen tick
 	check(sim.system_owner(left.id) == e2.id,
 		"borders are live: outgrowing the rival moves the line")
 

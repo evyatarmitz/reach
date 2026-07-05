@@ -29,6 +29,11 @@ var builders: Array = []       # construction vessels in transit: [{id, eid, sys
                                # path:[sys...], prog, type, target:planet_or_system}]
 
 var _next_id := 1
+var _adj: Dictionary = {}          # system_id -> [neighbor ids], cached adjacency
+var _owner_cache: Dictionary = {}  # system_id -> owner, rebuilt once per tick (day)
+var _owner_cache_day: float = -1.0
+var _src_cache: Dictionary = {}    # empire_id -> [influence sources], per-tick (day)
+var _src_cache_day: float = -1.0
 
 
 # Name syllables — combined by index for readable, unique system names.
@@ -432,6 +437,7 @@ func add_system(system_name: String) -> StarSystem:
 	_next_id += 1
 	sys.name = system_name
 	systems[sys.id] = sys
+	_invalidate_influence_caches()   # a new system can be a claim target
 	return sys
 
 
@@ -443,11 +449,13 @@ func add_planet(system_id: int, planet_name: String) -> Planet:
 	p.name = planet_name
 	planets[p.id] = p
 	systems[system_id].planet_ids.append(p.id)
+	_invalidate_influence_caches()   # deposits/colonies here can change influence
 	return p
 
 
 func add_lane(a_system_id: int, b_system_id: int) -> void:
 	lanes.append([a_system_id, b_system_id])
+	_adj.clear()   # invalidate cached adjacency
 
 
 # Scenario/test loader — bypasses cost and influence gating deliberately.
@@ -461,19 +469,41 @@ func inject_colony(empire_id: int, planet_id: int, pop: float,
 	c.established = established
 	planets[planet_id].colony = c
 	colonies.append(c)
+	_invalidate_influence_caches()
 	return c
+
+
+# Force the per-tick owner/source caches to rebuild on the next query. Called when
+# the set of influence sources changes mid-tick (colony founded/destroyed/split) so
+# `day`-keyed caching can't hand back a stale ownership picture within the same tick.
+func _invalidate_influence_caches() -> void:
+	_owner_cache_day = -1.0
+	_src_cache_day = -1.0
 
 
 # --- topology ----------------------------------------------------------------
 
 func lane_neighbors(system_id: int) -> Array[int]:
+	# Cached adjacency (rebuilt lazily; invalidated on add_lane). Returns a COPY so
+	# callers that sort/mutate the list don't corrupt the cache. Was O(lanes) per
+	# call — a killer inside BFS/AI loops on big maps.
+	if _adj.is_empty() and not lanes.is_empty():
+		_build_adjacency()
 	var out: Array[int] = []
-	for l in lanes:
-		if l[0] == system_id:
-			out.append(l[1])
-		elif l[1] == system_id:
-			out.append(l[0])
+	for nb in _adj.get(system_id, []):
+		out.append(nb)
 	return out
+
+
+func _build_adjacency() -> void:
+	_adj.clear()
+	for l in lanes:
+		if not _adj.has(l[0]):
+			_adj[l[0]] = []
+		if not _adj.has(l[1]):
+			_adj[l[1]] = []
+		_adj[l[0]].append(l[1])
+		_adj[l[1]].append(l[0])
 
 
 func system_distance(a_system_id: int, b_system_id: int) -> float:
@@ -531,22 +561,41 @@ func influence_reach(system_id: int, empire_id: int) -> float:
 	return r
 
 
+# Per-tick cache of every empire's influence sources. Only systems that actually
+# project influence (have a colony) contribute to any claim, but there are few of
+# them relative to the whole map — iterating all systems per claim_strength call
+# made owner-resolution O(planets²) even on an empty early-game map. Rebuilt once
+# per tick, keyed by `day`. Each entry: {id, inf, reach, pos}.
+func _influence_sources(empire_id: int) -> Array:
+	if _src_cache_day != day:
+		_src_cache_day = day
+		_src_cache.clear()
+	if _src_cache.has(empire_id):
+		return _src_cache[empire_id]
+	var out: Array = []
+	for sys in systems.values():
+		var inf := system_influence(sys.id, empire_id)
+		if inf <= 0.0:
+			continue
+		out.append({"id": sys.id, "inf": inf, "reach": influence_reach(sys.id, empire_id),
+			"pos": sys.map_pos})
+	_src_cache[empire_id] = out
+	return out
+
+
 # Claim on a target system: max over own influence sources of influence/distance,
 # counting only sources whose reach actually covers the target. Own presence in
 # the target system is an absolute claim. The influence/distance form makes
 # contested borders sit exactly where border1/border2 = influence1/influence2.
 func claim_strength(target_system_id: int, empire_id: int) -> float:
 	var best := 0.0
-	for sys in systems.values():
-		var inf := system_influence(sys.id, empire_id)
-		if inf <= 0.0:
-			continue
-		if sys.id == target_system_id:
+	var tpos: Vector2 = systems[target_system_id].map_pos
+	for src in _influence_sources(empire_id):
+		if src.id == target_system_id:
 			return INF
-		var d := system_distance(sys.id, target_system_id)
-		if d <= influence_reach(sys.id, empire_id) \
-				and not influence_blocked(sys.map_pos, systems[target_system_id].map_pos):
-			best = maxf(best, inf / d)
+		var d: float = src.pos.distance_to(tpos)
+		if d <= src.reach and not influence_blocked(src.pos, tpos):
+			best = maxf(best, src.inf / d)
 	return best
 
 
@@ -564,8 +613,20 @@ func system_owner(system_id: int) -> int:
 	return best_empire
 
 
+# Cached owner, rebuilt once per tick (keyed by `day`). system_owner is O(planets²)
+# and gets hammered inside AI pathfinding and gating; the cache turns those into O(1)
+# lookups. Safe within a tick — ownership only shifts gradually between ticks.
+func owner_cached(system_id: int) -> int:
+	if _owner_cache_day != day:
+		_owner_cache_day = day
+		_owner_cache.clear()
+		for sid in systems:
+			_owner_cache[sid] = system_owner(sid)
+	return _owner_cache.get(system_id, -1)
+
+
 func is_under_influence(system_id: int, empire_id: int) -> bool:
-	return system_owner(system_id) == empire_id
+	return owner_cached(system_id) == empire_id
 
 
 # --- influence field (deformed borders) --------------------------------------
@@ -751,7 +812,7 @@ func lane_path_friendly(from_sys: int, to_sys: int, empire_id: int) -> Array[int
 		for nb in lane_neighbors(s):
 			if prev.has(nb):
 				continue
-			var o := system_owner(nb)
+			var o := owner_cached(nb)
 			if nb == to_sys or o == -1 or o == empire_id:
 				prev[nb] = s
 				queue.append(nb)
@@ -1096,6 +1157,8 @@ func _resolve_combat(dt_days: float) -> void:
 	for c in destroyed_colonies:
 		planets[c.planet_id].colony = null
 		colonies.erase(c)
+	if not destroyed_colonies.is_empty():
+		_invalidate_influence_caches()
 
 	# Overstay attrition: a stationary fleet in space it doesn't own and isn't
 	# supplied bleeds hull ∝ its own size after a grace period.
@@ -1103,7 +1166,7 @@ func _resolve_combat(dt_days: float) -> void:
 		if f.is_moving():
 			f.foreign_days = 0.0
 			continue
-		if system_owner(f.system_id) == f.empire_id or _fleet_supplied(f):
+		if owner_cached(f.system_id) == f.empire_id or _fleet_supplied(f):
 			f.foreign_days = 0.0
 			continue
 		f.foreign_days += dt_days
@@ -1411,7 +1474,7 @@ func tick(dt_days: float) -> void:
 			struct_systems[sys.id] = true
 	var owner_of := {}
 	for sid in struct_systems:
-		owner_of[sid] = system_owner(sid)
+		owner_of[sid] = owner_cached(sid)
 	for p in planets.values():
 		if p.has_mine():
 			var o: int = owner_of[p.system_id]
