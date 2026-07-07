@@ -11,3 +11,11 @@ config/features=PackedStringArray("4.7")
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
+
+[rendering]
+
+; Compatibility (OpenGL 3.3 / ES 3.0) instead of the default Forward+ (Vulkan). This is
+; a flat 2D game, so it costs nothing visually, and it lets the alpha launch on old or
+; integrated GPUs and virtual machines that lack Vulkan — fewer "won't start" reports.
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
