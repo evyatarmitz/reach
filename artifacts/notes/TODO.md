@@ -73,6 +73,34 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.77.0 (2026-07-07, Godot 4.7) — COMBAT BATCH 1 (from playtest list)
+
+First batch off the user's fix list. (Deferred by the user, next batch: bombers start
+bombing before a lopsided fleet battle ends.)
+- **Force-ratio scaling.** The old flat POWER_CEILING=200 damage cap made every ratio
+  (10:1, 100:1, 1000:1) kill at the SAME tiny rate. Removed the per-battle cap in
+  `_fight` (full stack power now sets the kill rate) and raised COMBAT_RATE 0.02→0.06.
+  Result (probe): 10:1 wipes the loser in ~1.5 days (~3.8s at 1x); 100:1 in ~0.2 days
+  (~0.5s). Ratio, not absolute size, drives speed (50:5 == 10:1), which is correct
+  (Lanchester). Vision's "hard ship-power ceiling" now lives PER SHIP (tier ATK caps =
+  no god-ships); un-steamroll still held by throughput-limited production + overstay
+  attrition + slow population bombardment. POWER_CEILING kept only as the AI's
+  "massed a decisive strike" threshold.
+- **FTL inhibitor (Stellaris-style pin).** Fleet gained `prev_system` (set each hop).
+  `fleet_pin(f)`: 2 = LOCKED when an enemy fleet is present (a battle — no jump until
+  it's decided), 1 = RETREAT-ONLY when sitting over an enemy colony (may only fall back
+  to prev_system; can't advance deeper — take the world or withdraw), 0 = free.
+  `order_fleet` now returns bool and enforces it, so the AI can no longer teleport-dodge
+  out of a losing fight. (Interpretation per the user's own examples: the retreat-only
+  clause was described for the colony case; the battle case is "no one leaves until
+  someone wins" = fully locked. Flag if you want retreat-from-battle too.)
+- **Combat readout.** Fleet panel now shows a who-vs-who block: each belligerent by name
+  + combat power (yours marked), a plain verdict by power ratio ("crushing them",
+  "evenly matched — a grind", "being overwhelmed — retreat?"), and the pin state
+  (🔒 held / ⚓ retreat-only). Refused move orders now log why (pin), instead of silence.
+Tests: replaced the obsolete hard-cap test with `_test_combat_scaling` (big fleet kills
+>4x faster) and added `_test_fleet_pin`; 140 assertions pass. draw_smoke clean.
+
 ## Status — 0.75.0 (2026-07-05, Godot 4.7) — fix rival border flicker inside VR
 
 Playtest: "other players' border phases in and out of frame despite being obviously

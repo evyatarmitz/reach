@@ -123,15 +123,22 @@ const BOMBER_HP := [12.0, 18.0, 26.0, 36.0, 48.0]
 # decisive fight). Otherwise a fleet bombards enemy colonies weakest-first; a
 # colony under BOMBARD_DESTROY_POP left when bombed is destroyed.
 const FLEET_SPEED := 60.0
-const COMBAT_RATE := 0.02       # hull lost per enemy-combat-power per day
+const COMBAT_RATE := 0.06       # hull lost per enemy-combat-power per day (each side's
+                                # kill rate scales with the OTHER side's full power, so
+                                # a bigger fleet kills faster and force ratio decides how
+                                # fast — a curbstomp ends near-instantly, an even fight
+                                # grinds). Tune for feel.
 const BOMBARD_DESTROY_POP := 100.0
 # Fraction of raw bomb power that actually converts to population killed per day.
 # Low, so bombardment is a SLOW grind (vision: "killing population is slow — no war
 # won by one decisive fight"), not an instant wipe.
 const BOMBARD_RATE := 0.15
-# Hard ship-power ceiling (vision): an empire's combat DAMAGE in one battle can't
-# exceed this, no matter how big the stack — extra ships become durability, not
-# punch, so a bigger fleet wins by outlasting, never by one decisive blow.
+# The vision's "hard ship-power ceiling" lives PER SHIP (each tier's ATK is capped, so
+# there are no god-ships — investing past the top tier buys more ships, i.e. capacity,
+# not stronger ones). Fleet-vs-fleet damage is NOT capped: total punch scales with the
+# stack, so a 100:1 advantage curbstomps and a 10:1 does not — force ratio matters (a
+# flat per-battle cap used to flatten every ratio to the same tiny kill rate). This
+# constant is now just the AI's "I've massed a decisive strike force" threshold.
 const POWER_CEILING := 200.0
 # Overstay attrition: a fleet parked in space it doesn't own (and out of supply)
 # bleeds this fraction of its own hull per day after a grace period — so bigger

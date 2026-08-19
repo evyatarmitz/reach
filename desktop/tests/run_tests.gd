@@ -65,7 +65,8 @@ func _init() -> void:
 	_test_military_resources()
 	_test_specialization()
 	_test_mine_upgrade()
-	_test_power_ceiling()
+	_test_combat_scaling()
+	_test_fleet_pin()
 	_test_attrition_and_depot()
 	_test_structure_capture()
 	_test_support_structures()
@@ -860,19 +861,20 @@ func _test_mine_upgrade() -> void:
 	check(p.mine_output() > out0, "an upgraded mine outputs more")
 
 
-func _test_power_ceiling() -> void:
-	# Two attacker stacks both well over the ceiling (and staying over it across
-	# the window) inflict the SAME damage — extra ships add no punch, only hull.
-	var lost_at_cap := _window_enemy_loss(8)
-	var lost_over_cap := _window_enemy_loss(30)
-	check(is_equal_approx(lost_at_cap, lost_over_cap),
-		"combat damage is hard-capped: a huge stack hits no harder than the ceiling")
-	check(lost_at_cap > 0.0, "combat still does damage")
+func _test_combat_scaling() -> void:
+	# Force ratio decides the kill rate: a 10x-bigger attacker inflicts far more damage
+	# in the same window (the old flat per-battle cap made every ratio kill at one rate).
+	var small := _attacker_output(5, 2.0)
+	var big := _attacker_output(50, 2.0)
+	check(small > 0.0, "fleet combat does damage")
+	check(big > small * 4.0,
+		"a much bigger fleet kills much faster — force ratio matters, no flat cap")
 
 
-# Defender hull lost over 30 days when attacked by `n` tier-5 fighters. The
-# defender is huge (survives) so we read the attacker's (capped) damage output.
-func _window_enemy_loss(n: int) -> float:
+# Defender hull lost over `days` when attacked by `n` tier-5 fighters. The defender is
+# a big, tanky, LOW-attack bomber wall: it survives the window and barely returns fire,
+# so we read (near-)purely the attacker's damage output, which now scales with n.
+func _attacker_output(n: int, days: float) -> float:
 	var sim := Sim.new()
 	var atk := sim.add_empire("A", Color.RED)
 	var def := sim.add_empire("D", Color.BLUE)
@@ -881,10 +883,46 @@ func _window_enemy_loss(n: int) -> float:
 	var af := sim._fleet_at(atk.id, s.id)
 	af.fighters[4] = n
 	var df := sim._fleet_at(def.id, s.id)
-	df.fighters[0] = 100000   # huge defender: survives, and its own damage stays capped
+	df.bombers[0] = 500   # tanky + weak return fire, so the attacker survives the window
 	var before := df.hull()
-	run_days(sim, 30.0)
+	run_days(sim, days)
 	return before - df.hull()
+
+
+func _test_fleet_pin() -> void:
+	# FTL inhibitor: over an enemy colony a fleet may only retreat the way it came;
+	# in a fleet battle it can't jump at all.
+	var sim := Sim.new()
+	var me := sim.add_empire("Me", Color.BLUE)
+	var foe := sim.add_empire("Foe", Color.RED)
+	var a := sim.add_system("A"); a.map_pos = Vector2.ZERO
+	var b := sim.add_system("B"); b.map_pos = Vector2(100, 0)
+	var c := sim.add_system("C"); c.map_pos = Vector2(200, 0)
+	sim.add_lane(a.id, b.id)
+	sim.add_lane(b.id, c.id)
+	var f := sim._fleet_at(me.id, a.id)
+	f.fighters[0] = 3
+	check(sim.order_fleet(f.id, b.id), "free fleet accepts a move order")
+	run_days(sim, 5.0)
+	check(f.system_id == b.id and not f.is_moving(), "fleet advanced A->B")
+	check(f.prev_system == a.id, "fleet remembers it came from A")
+	# Enemy colony appears at B -> retreat-only pin.
+	sim.inject_colony(foe.id, sim.add_planet(b.id, "B I").id, 100.0, true)
+	check(sim.fleet_pin(f) == 1, "over an enemy colony -> retreat-only pin")
+	check(not sim.order_fleet(f.id, c.id), "cannot advance past a pinning colony")
+	check(f.path.is_empty(), "the refused advance left the fleet in place")
+	check(sim.order_fleet(f.id, a.id), "may retreat the way it came (to A)")
+	# Hard pin: an enemy fleet in the same system locks movement entirely.
+	var sim2 := Sim.new()
+	var m2 := sim2.add_empire("M", Color.BLUE)
+	var f2 := sim2.add_empire("F", Color.RED)
+	var x := sim2.add_system("X"); x.map_pos = Vector2.ZERO
+	var y := sim2.add_system("Y"); y.map_pos = Vector2(100, 0)
+	sim2.add_lane(x.id, y.id)
+	var g := sim2._fleet_at(m2.id, x.id); g.fighters[0] = 3
+	var h := sim2._fleet_at(f2.id, x.id); h.fighters[0] = 3
+	check(sim2.fleet_pin(g) == 2, "enemy fleet present -> locked (battle)")
+	check(not sim2.order_fleet(g.id, y.id), "cannot jump out of an active battle")
 
 
 func _test_attrition_and_depot() -> void:

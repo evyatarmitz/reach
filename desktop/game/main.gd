@@ -833,7 +833,13 @@ func _select_at(pos: Vector2) -> void:
 	if selected_fleet_id != -1:
 		for sys in sim.systems.values():
 			if pos.distance_to(sys.map_pos) <= 20.0 and _sys_known(sys.id):
-				sim.order_fleet(selected_fleet_id, sys.id)
+				var fl := sim.get_fleet(selected_fleet_id)
+				if not sim.order_fleet(selected_fleet_id, sys.id) and fl != null:
+					# Refused by the FTL pin — tell the player why instead of silence.
+					if sim.fleet_pin(fl) == 2:
+						_log_event("🔒 Fleet held in battle — can't jump until it's decided")
+					else:
+						_log_event("⚓ Fleet pinned over an enemy world — can only retreat")
 				selected_fleet_id = -1
 				return
 	# 2. Click near one of your fleets (drawn above its system) to select it.
@@ -1656,6 +1662,44 @@ func _refresh_ui() -> void:
 	_panel_system = -1
 
 
+# A who-vs-who battle readout for a system: every belligerent by name and combat
+# power (yours first, marked), then a plain-language verdict of how it's going for you.
+# Text-only (the panel is a plain Label), so it reads clearly without colour.
+func _battle_readout(sid: int, my_eid: int) -> String:
+	var powers := sim.fleet_powers_in(sid)
+	var mine: float = powers[my_eid].combat if powers.has(my_eid) else 0.0
+	var enemy := 0.0
+	var lines: Array = ["⚔ BATTLE at %s" % sim.systems[sid].name]
+	lines.append("   you: %.0f⚔" % mine)
+	for eid in powers:
+		if eid == my_eid:
+			continue
+		enemy += powers[eid].combat
+		lines.append("   %s: %.0f⚔" % [sim.empires[eid].name, powers[eid].combat])
+	lines.append("   → %s" % _battle_verdict(mine, enemy))
+	return "\n".join(lines)
+
+
+# Plain-language read on a fleet fight from the player's side, by power ratio.
+func _battle_verdict(mine: float, enemy: float) -> String:
+	if mine <= 0.0:
+		return "your fleet is spent"
+	if enemy <= 0.0:
+		return "enemy broken — mopping up"
+	var r := mine / enemy
+	if r >= 3.0:
+		return "crushing them — near-instant"
+	if r >= 1.5:
+		return "winning clearly"
+	if r >= 1.1:
+		return "upper hand"
+	if r >= 0.9:
+		return "evenly matched — a grind"
+	if r >= 0.5:
+		return "outgunned — losing ground"
+	return "being overwhelmed — retreat?"
+
+
 func _show_fleet_panel(fleet: Fleet) -> void:
 	panel.visible = true
 	planet_list.visible = false
@@ -1670,19 +1714,19 @@ func _show_fleet_panel(fleet: Fleet) -> void:
 			comp += "B%d×%d  " % [t + 1, fleet.bombers[t]]
 	if comp == "":
 		comp = "(empty)"
-	# Combat status line if this fleet's system is actively fighting — the enemy
-	# combat power it faces, so you can judge whether it's winning.
+	# Combat status: a full who-vs-who readout with a verdict, plus the pin state so
+	# you know whether this fleet is locked in the fight or free to move.
 	var combat_line := ""
-	if not fleet.is_moving() and sim.combat_kind.get(fleet.system_id, -1) == 0:
-		var enemy := 0.0
-		var powers := sim.fleet_powers_in(fleet.system_id)
-		for eid in powers:
-			if eid != fleet.empire_id:
-				enemy += powers[eid].combat
-		combat_line = "\n⚔ IN BATTLE — enemy %.0f vs your %.0f" \
-			% [enemy, fleet.combat_power()]
-	elif not fleet.is_moving() and sim.combat_kind.get(fleet.system_id, -1) == 1:
-		combat_line = "\n☄ bombarding the colony here"
+	if not fleet.is_moving():
+		var pin := sim.fleet_pin(fleet)
+		if pin == 2:   # enemy fleet present — a live battle
+			combat_line = "\n\n" + _battle_readout(fleet.system_id, fleet.empire_id)
+			combat_line += "\n🔒 held in the fight — no jump until it's decided"
+		elif pin == 1:   # over an enemy world, no enemy fleet — bombarding
+			combat_line = "\n\n☄ bombarding the enemy world here"
+			if fleet.prev_system != -1 and sim.systems.has(fleet.prev_system):
+				combat_line += "\n⚓ pinned — can only fall back to %s" \
+					% sim.systems[fleet.prev_system].name
 	panel_body.text = "At: %s%s\nCombat %.0f · Bomb %.0f\n%s%s" % [loc,
 		"  → moving" if fleet.is_moving() else "",
 		fleet.combat_power(), fleet.bomb_power(), comp, combat_line]

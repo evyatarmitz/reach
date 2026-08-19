@@ -1031,6 +1031,31 @@ func _has_enemy_colony(empire_id: int, system_id: int) -> bool:
 	return false
 
 
+# A stationary enemy fleet (with ships) sitting in this system — i.e. a live battle.
+func _has_enemy_fleet(empire_id: int, system_id: int) -> bool:
+	for f in fleets:
+		if f.empire_id != empire_id and not f.is_moving() \
+				and f.system_id == system_id and f.ship_count() > 0:
+			return true
+	return false
+
+
+# FTL-inhibitor pin (Stellaris-style), so fleets can't teleport-dodge in and out of an
+# engagement. Returns for a stationary fleet:
+#   2 = LOCKED — an enemy fleet is here (a battle): no jump at all until it resolves.
+#   1 = RETREAT-ONLY — sitting over an enemy colony: may only fall back the way it came
+#       (prev_system); it can't advance deeper, it must take the world or withdraw.
+#   0 = FREE.
+func fleet_pin(f: Fleet) -> int:
+	if f.is_moving():
+		return 0
+	if _has_enemy_fleet(f.empire_id, f.system_id):
+		return 2
+	if _has_enemy_colony(f.empire_id, f.system_id):
+		return 1
+	return 0
+
+
 # The empire's most-populated colony's system — its de-facto shipyard, where new
 # ships appear. -1 if the empire has no colonies.
 func most_populated_system(empire_id: int) -> int:
@@ -1110,11 +1135,22 @@ func lane_path(from_sys: int, to_sys: int) -> Array[int]:
 	return out
 
 
-func order_fleet(fleet_id: int, dest_system: int) -> void:
+# Order a fleet to a system. Returns false (order refused) when the fleet is pinned:
+# locked in a fleet battle (can't move), or over an enemy colony and told to advance
+# somewhere other than its retreat lane. This is the FTL inhibitor — it stops fleets
+# (the AI especially) from jumping away the instant a fight turns against them.
+func order_fleet(fleet_id: int, dest_system: int) -> bool:
 	var f := get_fleet(fleet_id)
-	if f != null:
-		f.path = lane_path(f.system_id, dest_system)
-		f.progress = 0.0
+	if f == null:
+		return false
+	var pin := fleet_pin(f)
+	if pin == 2:
+		return false   # in a battle — held until it resolves
+	if pin == 1 and dest_system != f.prev_system:
+		return false   # over an enemy colony — retreat the way you came, or take it
+	f.path = lane_path(f.system_id, dest_system)
+	f.progress = 0.0
+	return true
 
 
 func fleet_position(f: Fleet) -> Vector2:
@@ -1188,9 +1224,11 @@ func _fight(emap: Dictionary, dt_days: float) -> void:
 		var p := 0.0
 		for f in emap[eid]:
 			p += (f as Fleet).combat_power()
-		# Hard ceiling: damage output can't exceed the cap regardless of stack
-		# size, so mass buys survival (hull), not a one-shot.
-		power[eid] = minf(p, SimConstants.POWER_CEILING)
+		# No per-battle cap: full stack power decides the kill rate, so force ratio
+		# actually matters (a 100:1 fleet melts the enemy far faster than a 10:1 one).
+		# Un-steamroll comes from throughput-limited production, overstay attrition, and
+		# slow population bombardment — not from flattening every battle to one rate.
+		power[eid] = p
 	for eid in emap:
 		var enemy := 0.0
 		for oid in power:
@@ -1452,6 +1490,7 @@ func tick(dt_days: float) -> void:
 		var length: float = maxf(system_distance(f.system_id, f.path[0]), 1.0)
 		f.progress += SimConstants.FLEET_SPEED * dt_days / length
 		if f.progress >= 1.0:
+			f.prev_system = f.system_id   # remember where we came from (legal retreat)
 			f.system_id = f.path.pop_front()
 			f.progress = 0.0
 

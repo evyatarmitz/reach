@@ -9,6 +9,7 @@ extends RefCounted
 var id: int = -1
 var empire_id: int = -1
 var system_id: int = -1        # current system (stationary, or the one being left)
+var prev_system: int = -1      # system this fleet arrived FROM (its one legal retreat)
 var path: Array[int] = []      # remaining system ids to traverse, in order
 var progress: float = 0.0      # 0..1 along the lane from system_id to path[0]
 var fighters: Array[int] = [0, 0, 0, 0, 0]
