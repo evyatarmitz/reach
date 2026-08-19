@@ -4,19 +4,20 @@ extends RefCounted
 # An empire is any population-driving actor — human or AI, same rules, same
 # code paths (multiplayer-shaped by design; no player-only special cases).
 #
-# Four stockpiles: two T0 raw (water, minerals) filled by mines, two T1 goods
-# (food, alloys) refined by established cities. Food drives population; alloys
-# pay for construction.
+# Economy: MINERALS are the one banked raw resource (mined), refined up the single
+# ALLOY tier chain nat[0..4] = T1..T5 (also banked; T1 is the construction currency).
+# WATER is population's need and a FLOW — not banked: water_income vs water_demand
+# each tick decides whether population grows or shrinks (see Sim.tick).
 
 var id: int = -1
 var name: String = ""
 var color: Color = Color.WHITE
 
-var water: float = SimConstants.START_WATER
 var minerals: float = SimConstants.START_MINERALS
-var food: float = SimConstants.START_FOOD
-var alloys: float = SimConstants.START_ALLOYS
-# National military resources, tiers 1-5 (index 0-4), refined in cities.
-var nat: Array[float] = [0.0, 0.0, 0.0, 0.0, 0.0]
+# Alloy tiers 1-5 (index 0-4), refined in cities. nat[0] (T1) also pays for building.
+var nat: Array[float] = [SimConstants.START_NAT0, 0.0, 0.0, 0.0, 0.0]
+# Water flow this tick (recomputed every tick — display/growth only, never banked).
+var water_income: float = 0.0    # water produced by this empire's mines this tick
+var water_demand: float = 0.0    # water its whole population needs this tick
 # Production multiplier — 1.0 for the player; AI empires scale by difficulty.
 var efficiency: float = 1.0

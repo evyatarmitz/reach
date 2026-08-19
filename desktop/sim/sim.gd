@@ -285,8 +285,7 @@ func serialize() -> Dictionary:
 	for e in empires.values():
 		es.append({"id": e.id, "name": e.name,
 			"color": [e.color.r, e.color.g, e.color.b, e.color.a],
-			"water": e.water, "minerals": e.minerals, "food": e.food,
-			"alloys": e.alloys, "nat": e.nat.duplicate(), "eff": e.efficiency})
+			"minerals": e.minerals, "nat": e.nat.duplicate(), "eff": e.efficiency})
 	var ss: Array = []
 	for s in systems.values():
 		ss.append({"id": s.id, "name": s.name, "x": s.map_pos.x, "y": s.map_pos.y,
@@ -334,10 +333,7 @@ static func deserialize(d: Dictionary) -> Sim:
 		emp.name = e.name
 		var col: Array = e.color
 		emp.color = Color(col[0], col[1], col[2], col[3])
-		emp.water = e.water
 		emp.minerals = e.minerals
-		emp.food = e.food
-		emp.alloys = e.alloys
 		emp.efficiency = e.eff
 		var nat: Array[float] = []
 		for v in e.nat:
@@ -680,6 +676,8 @@ func point_owner(pos: Vector2) -> int:
 # distance) and within a system (a fixed in-system distance), so a big city lifts
 # its neighbours on other planets too. Multiplies growth.
 func neighbor_growth_multiplier(colony: Colony) -> float:
+	if not SimConstants.NEIGHBOR_BONUS_ENABLED:
+		return 1.0   # master switch OFF (see NEIGHBOR_BONUS_ENABLED); code kept for later
 	var sys_id: int = planets[colony.planet_id].system_id
 	var bonus := 0.0
 	for other in colonies:
@@ -752,14 +750,14 @@ func _mine_target_ok(empire_id: int, planet_id: int) -> bool:
 
 func can_found_colony(empire_id: int, planet_id: int) -> bool:
 	var e: Empire = empires.get(empire_id)
-	return e != null and e.alloys >= SimConstants.FOUND_COST_ALLOYS \
+	return e != null and e.nat[0] >= SimConstants.FOUND_COST_ALLOYS \
 		and _colony_target_ok(empire_id, planet_id)
 
 
 func found_colony(empire_id: int, planet_id: int) -> bool:
 	if not can_found_colony(empire_id, planet_id):
 		return false
-	empires[empire_id].alloys -= SimConstants.FOUND_COST_ALLOYS
+	empires[empire_id].nat[0] -= SimConstants.FOUND_COST_ALLOYS
 	var c := inject_colony(empire_id, planet_id, SimConstants.START_POP, false)
 	return c != null
 
@@ -768,14 +766,14 @@ func can_build_mine(empire_id: int, planet_id: int) -> bool:
 	# "Wherever deposits exist within reach" — influence-gated, a colony in the
 	# system is not required.
 	var e: Empire = empires.get(empire_id)
-	return e != null and e.alloys >= SimConstants.MINE_COST_ALLOYS \
+	return e != null and e.nat[0] >= SimConstants.MINE_COST_ALLOYS \
 		and _mine_target_ok(empire_id, planet_id)
 
 
 func build_mine(empire_id: int, planet_id: int) -> bool:
 	if not can_build_mine(empire_id, planet_id):
 		return false
-	empires[empire_id].alloys -= SimConstants.MINE_COST_ALLOYS
+	empires[empire_id].nat[0] -= SimConstants.MINE_COST_ALLOYS
 	planets[planet_id].mine_empire_id = empire_id
 	return true
 
@@ -833,7 +831,7 @@ func _target_system_of(build_type: int, target_id: int) -> int:
 
 func can_order_construction(empire_id: int, build_type: int, target_id: int) -> bool:
 	var e: Empire = empires.get(empire_id)
-	if e == null or e.alloys < _construction_cost(build_type):
+	if e == null or e.nat[0] < _construction_cost(build_type):
 		return false
 	if not _construction_target_ok(empire_id, build_type, target_id):
 		return false
@@ -851,7 +849,7 @@ func order_construction(empire_id: int, build_type: int, target_id: int) -> bool
 		return false
 	var cap := most_populated_system(empire_id)
 	var tsys := _target_system_of(build_type, target_id)
-	empires[empire_id].alloys -= _construction_cost(build_type)
+	empires[empire_id].nat[0] -= _construction_cost(build_type)
 	builders.append({"id": _next_id, "eid": empire_id, "sys": cap,
 		"path": lane_path_friendly(cap, tsys, empire_id), "prog": 0.0,
 		"type": build_type, "target": target_id})
@@ -887,7 +885,7 @@ func _advance_builders(dt_days: float) -> void:
 			else:
 				planets[b.target].mine_empire_id = eid
 		else:   # target spoiled in transit — refund what was paid at dispatch
-			empires[eid].alloys += _construction_cost(b.type)
+			empires[eid].nat[0] += _construction_cost(b.type)
 
 
 func toggle_emigration(empire_id: int, planet_id: int) -> void:
@@ -914,7 +912,7 @@ func can_upgrade_mine(empire_id: int, planet_id: int) -> bool:
 		return false
 	if p.mine_level >= SimConstants.MINE_MAX_LEVEL:
 		return false
-	if e.alloys < SimConstants.MINE_UPGRADE_COST_ALLOYS:
+	if e.nat[0] < SimConstants.MINE_UPGRADE_COST_ALLOYS:
 		return false
 	var c: Colony = p.colony
 	return c != null and c.empire_id == empire_id \
@@ -924,7 +922,7 @@ func can_upgrade_mine(empire_id: int, planet_id: int) -> bool:
 func upgrade_mine(empire_id: int, planet_id: int) -> bool:
 	if not can_upgrade_mine(empire_id, planet_id):
 		return false
-	empires[empire_id].alloys -= SimConstants.MINE_UPGRADE_COST_ALLOYS
+	empires[empire_id].nat[0] -= SimConstants.MINE_UPGRADE_COST_ALLOYS
 	planets[planet_id].mine_level += 1
 	return true
 
@@ -934,14 +932,14 @@ func can_build_depot(empire_id: int, system_id: int) -> bool:
 	var e: Empire = empires.get(empire_id)
 	return e != null and systems.has(system_id) \
 		and systems[system_id].depot_empire_id == -1 \
-		and e.alloys >= SimConstants.DEPOT_COST_ALLOYS \
+		and e.nat[0] >= SimConstants.DEPOT_COST_ALLOYS \
 		and is_under_influence(system_id, empire_id)
 
 
 func build_depot(empire_id: int, system_id: int) -> bool:
 	if not can_build_depot(empire_id, system_id):
 		return false
-	empires[empire_id].alloys -= SimConstants.DEPOT_COST_ALLOYS
+	empires[empire_id].nat[0] -= SimConstants.DEPOT_COST_ALLOYS
 	systems[system_id].depot_empire_id = empire_id
 	return true
 
@@ -952,14 +950,14 @@ func can_build_obs_post(empire_id: int, system_id: int) -> bool:
 	var e: Empire = empires.get(empire_id)
 	return e != null and systems.has(system_id) \
 		and systems[system_id].obs_post_empire_id == -1 \
-		and e.alloys >= SimConstants.OBS_POST_COST_ALLOYS \
+		and e.nat[0] >= SimConstants.OBS_POST_COST_ALLOYS \
 		and is_under_influence(system_id, empire_id)
 
 
 func build_obs_post(empire_id: int, system_id: int) -> bool:
 	if not can_build_obs_post(empire_id, system_id):
 		return false
-	empires[empire_id].alloys -= SimConstants.OBS_POST_COST_ALLOYS
+	empires[empire_id].nat[0] -= SimConstants.OBS_POST_COST_ALLOYS
 	systems[system_id].obs_post_empire_id = empire_id
 	return true
 
@@ -970,14 +968,14 @@ func can_build_transport(empire_id: int, system_id: int) -> bool:
 	var e: Empire = empires.get(empire_id)
 	return e != null and systems.has(system_id) \
 		and systems[system_id].transport_empire_id == -1 \
-		and e.alloys >= SimConstants.TRANSPORT_COST_ALLOYS \
+		and e.nat[0] >= SimConstants.TRANSPORT_COST_ALLOYS \
 		and is_under_influence(system_id, empire_id)
 
 
 func build_transport(empire_id: int, system_id: int) -> bool:
 	if not can_build_transport(empire_id, system_id):
 		return false
-	empires[empire_id].alloys -= SimConstants.TRANSPORT_COST_ALLOYS
+	empires[empire_id].nat[0] -= SimConstants.TRANSPORT_COST_ALLOYS
 	systems[system_id].transport_empire_id = empire_id
 	return true
 
@@ -1346,39 +1344,34 @@ func tick(dt_days: float) -> void:
 	for ai in ais:
 		ai.maybe_act(self)
 
-	# 1. Mines extract their deposit's T0 resource (at the deposit's own richness)
-	#    into the empire stockpile.
+	# 1. Mines. Water is a FLOW into per-tick water_income (never banked); minerals are
+	#    banked (they feed the alloy chain). Reset the water flow at the top of the tick.
+	for e in empires.values():
+		e.water_income = 0.0
+		e.water_demand = 0.0
 	for p in planets.values():
 		if p.has_mine():
 			var e: Empire = empires[p.mine_empire_id]
 			var out: float = p.mine_output() * dt_days * e.efficiency
 			if p.deposit_type == SimConstants.Deposit.WATER:
-				e.water += out
+				e.water_income += out
 			elif p.deposit_type == SimConstants.Deposit.MINERAL:
 				e.minerals += out
 
-	# 1b. Cap raw stockpiles: you can't hoard T0 beyond what your cities could soon
-	#     refine. A throughput limit — mine output past the cap is wasted, so raw
-	#     stays a real constraint (build more cities) AND there's no giant buffer to
-	#     fuel a population boom-then-famine. Cap scales with current refining
-	#     capacity so it never starves refining.
-	var food_cap := {}   # empire -> total water/day it can refine into food
-	var alloy_cap := {}  # empire -> total minerals/day it can refine into alloys
+	# 1b. Cap the banked MINERAL stockpile to a few days of refining budget, so mining
+	#     past what cities can process is wasted (minerals stay a real constraint) and
+	#     there's no giant buffer. Scales with refining budget so it never starves.
+	var refine_cap := {}   # empire -> total refining budget/day
 	for c in colonies:
 		if c.established:
-			food_cap[c.empire_id] = food_cap.get(c.empire_id, 0.0) + c.food_capacity()
-			alloy_cap[c.empire_id] = alloy_cap.get(c.empire_id, 0.0) + c.alloy_capacity()
+			refine_cap[c.empire_id] = refine_cap.get(c.empire_id, 0.0) \
+				+ c.refine_capacity()
 	for e in empires.values():
-		e.water = minf(e.water, maxf(SimConstants.RAW_STOCK_MIN,
-			food_cap.get(e.id, 0.0) * SimConstants.RAW_STOCK_DAYS))
 		e.minerals = minf(e.minerals, maxf(SimConstants.RAW_STOCK_MIN,
-			alloy_cap.get(e.id, 0.0) * SimConstants.RAW_STOCK_DAYS))
+			refine_cap.get(e.id, 0.0) * SimConstants.RAW_STOCK_DAYS))
 
-	# National vs civilian variety: higher-tier military production needs a wider
-	# variety of resource types, rewarding diverse territory over hoarding one kind
-	# (vision). Concretely, an empire must mine BOTH water and minerals to refine the
-	# top military tiers (VARIETY_MIN_TIER+) — the civilian (water→food) economy and
-	# the industrial (mineral→alloy) economy both feed a modern war machine.
+	# Variety gate: tiers VARIETY_MIN_TIER+ need BOTH deposit types mined (diverse
+	# territory), not just a big single-resource stockpile.
 	var mines_both := {}
 	var has_water := {}
 	var has_mineral := {}
@@ -1392,65 +1385,60 @@ func tick(dt_days: float) -> void:
 		if has_mineral.has(eid):
 			mines_both[eid] = true
 
-	# 2. Established cities refine T0 -> T1, capped by available input (partial
-	#    is fine). Earlier colonies draw first — deterministic by colony order.
+	# 2. Refining — the single alloy pyramid. Each established city splits its budget
+	#    EQUALLY across the tiers it qualifies for (pop gates + variety), minerals->T1,
+	#    T(n-1)->T(n). Each tier yields TIER_YIELD^tier per unit of budget, so higher
+	#    tiers are progressively harder (the pyramid); a tier whose input ran out passes
+	#    its unused budget UP to the next. Earlier colonies draw first (deterministic).
 	for c in colonies:
 		if not c.established:
 			continue
 		var e: Empire = empires[c.empire_id]
-		# Specialization ramps in over time (inertia); it multiplies its output.
 		if c.spec != SimConstants.Spec.NONE and c.spec_strength < 1.0:
 			c.spec_strength = minf(1.0,
 				c.spec_strength + dt_days / SimConstants.SPEC_RAMP_DAYS)
-		var food_made: float = minf(
-			c.food_capacity() * c.spec_factor(SimConstants.Spec.FOOD) \
-			* e.efficiency * dt_days, e.water)
-		e.water -= food_made
-		e.food += food_made
-		var alloy_made: float = minf(
-			c.alloy_capacity() * c.spec_factor(SimConstants.Spec.ALLOY) \
-			* e.efficiency * dt_days, e.minerals)
-		e.minerals -= alloy_made
-		e.alloys += alloy_made
-		# Military refining chain: tier 1 from alloys, each higher tier from the
-		# one below, each gated by a city pop cutoff (cutoffs increase, so a
-		# too-small city stops the chain early).
-		var mil_cap := SimConstants.MIL_COEF \
-			* pow(c.population, SimConstants.MIL_EXP) * dt_days
+		var maxtier := 0
 		for t in 5:
 			if c.population < SimConstants.MIL_CUTOFF[t]:
 				break
-			# Variety gate: the top tiers need diverse territory (both deposit types
-			# mined), not just a big single-resource stockpile.
 			if t >= SimConstants.VARIETY_MIN_TIER and not mines_both.has(e.id):
 				break
-			var avail: float = e.alloys if t == 0 else e.nat[t - 1]
-			var made: float = minf(mil_cap, avail)
+			maxtier = t + 1
+		if maxtier == 0:
+			continue
+		var budget: float = c.refine_capacity() \
+			* c.spec_factor(SimConstants.Spec.ALLOY) * e.efficiency * dt_days
+		var share: float = budget / maxtier
+		var carry := 0.0
+		for t in maxtier:
+			var cap_t: float = share + carry
+			var yld: float = pow(SimConstants.TIER_YIELD, t)
+			var input_avail: float = e.minerals if t == 0 else e.nat[t - 1]
+			var made: float = minf(cap_t * yld, input_avail)
 			if t == 0:
-				e.alloys -= made
+				e.minerals -= made
 			else:
 				e.nat[t - 1] -= made
 			e.nat[t] += made
+			carry = cap_t - (made / yld if yld > 0.0 else cap_t)
 
-	# 3. Food is empire-wide: the sign of the end-of-tick balance (food produced
-	#    this tick minus what the whole population eats) sets growth direction.
+	# 3. Population's need is WATER, as a FLOW. Compare this tick's water income to the
+	#    whole population's demand; the SIGN sets growth direction. No bank — so pop
+	#    settles where water income supports it (income / WATER_PER_POP), never banks a
+	#    surplus to over-grow on, and never crashes off a drained reserve.
 	var grow_sign := {}
 	for e in empires.values():
 		var total_pop := 0.0
 		for c in colonies:
 			if c.empire_id == e.id:
 				total_pop += c.population
-		var consumption := total_pop * SimConstants.FOOD_PER_POP * dt_days
-		var balance: float = e.food - consumption
-		if balance > 0.0:
-			e.food = balance
-			grow_sign[e.id] = 1
-		else:
-			e.food = 0.0
-			grow_sign[e.id] = 0 if balance == 0.0 else -1
+		e.water_demand = total_pop * SimConstants.WATER_PER_POP * dt_days
+		var balance: float = e.water_income - e.water_demand
+		grow_sign[e.id] = 0 if is_zero_approx(balance) \
+			else (1 if balance > 0.0 else -1)
 
 	# 4. Apply population change. Surplus -> grow by the diminishing-returns curve
-	#    × neighbor bonus; deficit -> shrink (pops CAN decrease now); zero -> hold.
+	#    × neighbor bonus (off by default); deficit -> shrink; zero -> hold.
 	for c in colonies:
 		var sign: int = grow_sign.get(c.empire_id, 0)
 		if sign > 0:

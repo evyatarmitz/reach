@@ -1365,7 +1365,7 @@ func _build_intro(layer: CanvasLayer) -> void:
 	var body := Label.new()
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body.custom_minimum_size = Vector2(520, 0)
-	body.text = "You have no body and no direct control — you cultivate a population and it does the rest.\n\n• Click a system to open its planets. Send a construction vessel to found a colony or build a mine — it travels the lanes from your capital and can't cross enemy space.\n• Colonies grow on food: water mines → food in established cities. Minerals → alloys. Population drives influence, and influence sets your borders.\n• Cluster colonies across nearby systems — neighbours boost each other. Same-system colonies compete instead.\n• Build ships (top-right) to defend and to bombard enemy worlds. Use the speed dial (top-right) to skip slow stretches.\n• Press L for a legend of every map symbol.\n\nGoal: grow, spread, and outlast the rival empires."
+	body.text = "You have no body and no direct control — you cultivate a population and it does the rest.\n\n• Click a planet to open it. Send a construction vessel to found a colony or build a mine — it travels the lanes from your capital and can't cross enemy space.\n• Population lives on WATER: your water mines feed it directly, and it's a flow, not a stockpile — grow only as far as your water income supports, or it shrinks. Population drives influence, and influence sets your borders.\n• Minerals refine up a single alloy chain (T1→T5): small cities make lots of cheap T1 (which also pays for building), big cities reach the rare high tiers. High tiers need both water and mineral mines.\n• Build ships (top-right) to defend and to bombard enemy worlds. Use the speed dial (top-right) to skip slow stretches.\n• Press L for a legend of every map symbol.\n\nGoal: grow, spread, and outlast the rival empires."
 	v.add_child(body)
 	var begin := Button.new()
 	begin.text = "Begin"
@@ -1618,9 +1618,13 @@ func _show_planet_frozen(planet: Planet, pinfo: Dictionary) -> void:
 
 func _refresh_ui() -> void:
 	var player: Empire = sim.empires[player_empire_id]
-	raw_label.text = "Water %.0f · Minerals %.0f" % [player.water, player.minerals]
-	goods_label.text = "Food %.0f · Alloys %.0f" % [player.food, player.alloys]
-	mil_label.text = "Mil T1-5: %.0f·%.0f·%.0f·%.0f·%.0f" % \
+	# Water is a flow (income vs population demand, per day — never banked); minerals are
+	# the one banked raw; the five alloy tiers are the refined goods (T1 also builds).
+	var w_in: float = player.water_income / SimConstants.TICK_DAYS
+	var w_need: float = player.water_demand / SimConstants.TICK_DAYS
+	raw_label.text = "Water %+.0f/day · Minerals %.0f" % [w_in - w_need, player.minerals]
+	goods_label.text = "(water in %.0f · pop needs %.0f)" % [w_in, w_need]
+	mil_label.text = "Alloys T1-5: %.0f·%.0f·%.0f·%.0f·%.0f" % \
 		[player.nat[0], player.nat[1], player.nat[2], player.nat[3], player.nat[4]]
 	day_label.text = "Day %.1f" % sim.day
 	# Player's own standing (no fog concern — it's your empire): systems / pop /
@@ -1848,14 +1852,16 @@ func _show_system_panel(sys_id: int) -> void:
 		var c := planet.colony
 		var status := "ESTABLISHED CITY" if c.established \
 			else "growing… %d%% to activation" % int(c.activation_progress() * 100.0)
-		var nb := sim.neighbor_growth_multiplier(c)
 		var refine := ""
 		if c.established:
-			refine = "\nRefines ≤%.1f food, ≤%.1f alloys /day" \
-				% [c.food_capacity(), c.alloy_capacity()]
-		panel_body.text = "Owner: %s\n%s\nPop: %.1f · neighbor +%d%%%s\n%s" \
-			% [sim.empires[c.empire_id].name, status, c.population,
-				int((nb - 1.0) * 100.0), refine, deposit_line]
+			var mt := 0
+			for t in 5:
+				if c.population >= SimConstants.MIL_CUTOFF[t]:
+					mt = t + 1
+			refine = "\nRefines ≈%.1f/day, up to alloy T%d (T%d+ needs both mine types)" \
+				% [c.refine_capacity(), mt, SimConstants.VARIETY_MIN_TIER + 1]
+		panel_body.text = "Owner: %s\n%s\nPop: %.1f%s\n%s" \
+			% [sim.empires[c.empire_id].name, status, c.population, refine, deposit_line]
 		colonize_btn.visible = false
 	mine_btn.visible = planet.has_deposit() and not planet.has_mine()
 	mine_btn.text = "Send mine vessel (%d alloys)" % int(SimConstants.MINE_COST_ALLOYS)
@@ -1876,14 +1882,12 @@ func _show_system_panel(sys_id: int) -> void:
 		upgrade_btn.disabled = not sim.can_upgrade_mine(player_empire_id, planet.id)
 	# Specialization (own established city).
 	var can_spec: bool = own_colony and planet.colony.established
-	spec_food_btn.visible = can_spec
+	spec_food_btn.visible = false   # food removed; only the refining spec remains
 	spec_alloy_btn.visible = can_spec
 	if can_spec:
 		var sp: int = planet.colony.spec
-		spec_food_btn.text = ("◆ " if sp == SimConstants.Spec.FOOD else "") \
-			+ "Specialize food"
 		spec_alloy_btn.text = ("◆ " if sp == SimConstants.Spec.ALLOY else "") \
-			+ "Specialize alloys"
+			+ "Specialize refining"
 
 
 # Debug hook for automated visual verification: found a colony, run fast for a

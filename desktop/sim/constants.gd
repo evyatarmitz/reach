@@ -28,16 +28,16 @@ const MINE_MAX_LEVEL := 4
 # deterministic; the speed dial changes how many ticks run per real second.
 const TICK_DAYS := 0.1
 
-# Starting empire stockpiles. A buffer of food + alloys so the opening isn't
-# instant starvation; the homeworld also starts with free mines (see new_demo).
-const START_FOOD := 1500.0
-const START_ALLOYS := 400.0
-const START_WATER := 0.0
-const START_MINERALS := 0.0
+# Starting empire stockpiles. Water is a FLOW now (not banked — see the tick), so
+# there's no starting water; a little starting T1 alloy + minerals so the opening
+# isn't dead while the home mines spin up.
+const START_MINERALS := 0.0      # none — mines provide minerals from tick 1
+const START_NAT0 := 300.0        # starting tier-1 alloy (the construction currency)
 
 const START_POP := 10.0
 
-# Construction is paid in alloys (a T1 good refined from minerals).
+# Construction is paid in TIER-1 alloy (nat[0]) — the base refined good. (These keep
+# the _ALLOYS suffix for continuity; there is no separate untiered "alloys" resource.)
 const FOUND_COST_ALLOYS := 100.0
 const MINE_COST_ALLOYS := 50.0
 
@@ -53,13 +53,23 @@ const ACTIVATION_POP := 100.0
 # than you could gather resources or expand, so it never paid to found a second
 # system (and the neighbor bonus, which needs colonies in OTHER systems, stayed 0
 # all game). Slower growth keeps pop in step with development.
-const GROWTH_RATE := 0.004
+# Raised 0.004 -> 0.014 now that the neighbor bonus is OFF (it used to supply much of a
+# clustered colony's growth) and water is the real ceiling: faster growth just lets a
+# colony climb to the level its water income supports (income / WATER_PER_POP), where it
+# holds — no bank to over-shoot, so no boom-bust. Water, not this rate, is the limiter.
+const GROWTH_RATE := 0.014
 const GROWTH_SOFTCAP := 2000.0
 const GROWTH_EXP := 2.0
 # Population decline per day while the empire is in food deficit, floored so a
 # colony persists (can regrow) rather than vanishing.
 const SHRINK_RATE := 0.03
 const MIN_POP := 1.0
+
+# Neighbor bonus MASTER SWITCH. OFF for now: the flat planet-mesh map has no real
+# clusters, and whatever the values, the bonus compounds into a late-game population
+# explosion. Kept (not deleted) so a future game mode can switch it back on. When false,
+# neighbor_growth_multiplier() returns 1.0 and none of the tuning below matters.
+const NEIGHBOR_BONUS_ENABLED := false
 
 # Neighbor bonus: a colony's growth bonus = Σ over OTHER systems of
 # NEIGHBOR_COEF * that system's influence / distance. It's the reward for being
@@ -159,43 +169,40 @@ const OBS_POST_REACH_MULT := 2.0
 const TRANSPORT_COST_ALLOYS := 90.0
 const TRANSPORT_BONUS_MULT := 1.6
 
-# Established-city conversion: capacity/day = COEF * pop^EXP for each chain
-# (water->food, minerals->alloys). Actual output is capped by the available T0
-# input — partial is fine (20W wanted but only 5W left -> 5F made). As pop rises,
-# capacity grows sublinearly while food demand grows linearly, so a food ceiling
-# emerges on its own.
-const CONV_EXP := 0.8
-const FOOD_CONV_COEF := 0.05
-const ALLOY_CONV_COEF := 0.05
+# --- refining: the single tiered ALLOY chain (minerals -> T1 -> T2 -> ... -> T5) ---
+# One chain now, no separate "alloys" resource: minerals refine into tier-1 alloy,
+# each higher tier from the one below. An established colony has a total refining
+# budget = REFINE_COEF * pop^REFINE_EXP, split EQUALLY across the tiers it qualifies
+# for (by MIL_CUTOFF pop gates), and each step yields TIER_YIELD^(tier) per unit of
+# budget — so higher tiers are progressively harder and a natural PYRAMID emerges
+# (lots of minerals -> many T1 -> fewer T2 -> ...). If a tier's input runs out, its
+# unused budget flows UP to the next tier (minerals gone -> that budget makes T2 from
+# T1, etc.). Kept modest so an empire doesn't drown in alloys it can't spend.
+const REFINE_COEF := 0.06
+const REFINE_EXP := 0.8
+const TIER_YIELD := 0.3           # each tier produces at this fraction of the one below
+const CONV_EXP := 0.8             # (kept for any external refs; refining uses REFINE_EXP)
 
-# Raw (T0) stockpile ceiling, as days of the empire's current refining capacity
-# (floored so a young empire can still buffer a little). Mine output beyond this is
-# wasted — a throughput limit that keeps raw a real constraint and removes the giant
-# buffer that fuelled the population boom-then-famine. See tests/balance_report.gd.
+# Raw MINERAL stockpile ceiling, as days of the empire's current refining budget
+# (floored so a young empire can buffer a little). Mine output past this is wasted —
+# a throughput limit so minerals stay a real constraint. Water is NOT banked (flow).
 const RAW_STOCK_DAYS := 20.0
 const RAW_STOCK_MIN := 500.0
 
-# National MILITARY resources, one per ship tier (1-5). A refining chain: tier 1
-# is made from alloys, each higher tier from the one below it, and each tier is
-# gated by a city population cutoff (higher tiers need bigger cities — "more
-# resources for higher-tier production"). Ships of tier T cost the tier-T resource.
-# Lowered from [100,400,900,1600,2500]: cities in a real game top out around a few
-# hundred to ~1500 pop, so the old high cutoffs left ship tiers 3-5 permanently
-# unbuildable (dead content — every game showed Mil T3-5 stuck at 0). These map the
-# five tiers onto achievable city sizes: small cities make T1-2, big cities T3-5.
+# Per-tier city population gate: a colony refines tier T only once it passes this pop
+# (higher tiers need bigger cities). Small cities make T1-2; big cities reach T3-5.
 const MIL_CUTOFF := [50.0, 150.0, 350.0, 700.0, 1200.0]
-# National/civilian resource split: military tiers at this index and above (0-based;
-# 2 = tiers 3-5) require the empire to mine BOTH deposit types — the vision's
-# "higher production tiers need a wider variety of resource types, rewarding diverse
-# territory over hoarding one kind."
+# Variety: tiers at this index and above (0-based; 2 = tiers 3-5) require the empire
+# to mine BOTH water and minerals — "higher tiers need a wider variety of territory."
 const VARIETY_MIN_TIER := 2
-const MIL_COEF := 0.02
-const MIL_EXP := 0.8
 
-# Food demand: each pop eats this per day. The sign of the empire's end-of-tick
-# food balance decides population direction: surplus -> grow, exactly zero ->
-# steady, deficit -> shrink.
-const FOOD_PER_POP := 0.01
+# WATER is population's only need, and it's a FLOW, not a bank: each tick a pop needs
+# WATER_PER_POP of water; if the empire's water income (from water mines) that tick
+# covers total demand -> population grows, else it shrinks. Surplus is NOT stored, so
+# an empire can't bank water, over-grow, and then crash — pop settles where water
+# income supports it (income / WATER_PER_POP), a ceiling set by how much water
+# territory you hold (map geometry).
+const WATER_PER_POP := 0.01
 
 # Fog of war: how far VR reaches past your influence. It's the claim-ratio margin
 # in the field VR test (visible where player_claim * this >= rival_claim). At 1.5

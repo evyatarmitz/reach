@@ -73,6 +73,37 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.78.0 (2026-08-20, Godot 4.7) — ECONOMY BATCH 2 (from playtest list)
+
+Three interlocked economy changes from the user's list.
+- **Neighbor bonus OFF.** `NEIGHBOR_BONUS_ENABLED = false`; `neighbor_growth_multiplier`
+  early-returns 1.0. All the code kept for a possible future mode. (Flat mesh has no real
+  clusters and it always compounded into a late-game pop explosion.)
+- **Food removed; WATER is population's need, as a FLOW (not banked).** Dropped `food`
+  and the untiered `alloys` empire fields. Mines feed `water_income` per tick (reset each
+  tick); population demand = pop·WATER_PER_POP; the SIGN of income−demand sets growth. No
+  bank -> pop settles where water income supports it (income/WATER_PER_POP, a map-geometry
+  ceiling) and can't over-grow then crash. Balance report now shows final = 100% of peak
+  (was boom-bust). Raised GROWTH_RATE 0.004→0.014 to compensate for the lost neighbor
+  growth and make WATER the actual limiter (pop was growth-limited, not water-limited).
+- **Single alloy PYRAMID (minerals→T1→…→T5), no separate "alloys".** Each established
+  city splits a budget (REFINE_COEF·pop^0.8) EQUALLY across the tiers it qualifies for
+  (MIL_CUTOFF pop gates + variety for T3+), each tier yielding TIER_YIELD^tier per unit
+  budget; a tier whose input ran out passes its budget UP. TIER_YIELD tuned 0.5→0.3 to get
+  a clean stockpile pyramid (seed 7: minerals capped ~1k, T1 49609 / T2 18008 / T3 1364 /
+  T4 23 / T5 42). Construction + tier-1 ships cost nat[0] (T1). Removed the food/refining
+  spec (only the refining spec remains). HUD top bar: "Water ±/day · Minerals" +
+  "(water in · pop needs)" + "Alloys T1-5" — no more duplicated alloys/mil rows.
+- Balance across seeds 3/7/11: no boom-bust (100% of peak), no steamroll (leader 52-63%,
+  4 empires alive), clean pyramid. 140 assertions pass (economy tests rewritten for the
+  new model), draw_smoke clean.
+
+NOTES / open tuning for the user: (a) T4/T5 are very rare (tens of units) — high-tier
+ships are a real investment now; raise TIER_YIELD if that's too harsh. (b) The map leader
+sits at ~55-63% — under the 75% steamroll line but combat batch 1 made things decisive;
+watch it. (c) Numbers (REFINE_COEF, TIER_YIELD, GROWTH_RATE, WATER_PER_POP, mine richness)
+are all playtest knobs.
+
 ## Status — 0.77.0 (2026-07-07, Godot 4.7) — COMBAT BATCH 1 (from playtest list)
 
 First batch off the user's fix list. (Deferred by the user, next batch: bombers start

@@ -33,8 +33,9 @@ func _totals(sim: Sim) -> Dictionary:
 	var out := {}
 	for e in sim.empires.values():
 		out[e.id] = {"pop": 0.0, "col": 0, "sys": 0,
-			"water": e.water, "minerals": e.minerals, "food": e.food,
-			"alloys": e.alloys, "mil": 0.0, "hull": 0.0, "ships": 0}
+			"water": e.water_income, "minerals": e.minerals, "food": 0.0,
+			"alloys": e.nat[0], "mil": 0.0, "hull": 0.0, "ships": 0,
+			"tiers": e.nat.duplicate()}
 		for v in e.nat:
 			out[e.id]["mil"] += v
 	for c in sim.colonies:
@@ -151,9 +152,15 @@ func _init() -> void:
 	# Economy: T0 balloon check (raw water+minerals dwarfing what cities refine).
 	var worst_t0 := 0.0
 	for id in ids:
-		worst_t0 = maxf(worst_t0, last[id].water + last[id].minerals)
-	print("Economy: largest final raw T0 stockpile (water+minerals) = %d" % int(worst_t0))
+		worst_t0 = maxf(worst_t0, last[id].minerals)
+	print("Economy: largest final raw mineral stockpile = %d" % int(worst_t0))
 	print("  (if this is enormous vs pop, mines out-produce refining — a known knob)")
+	var tsum := [0.0, 0.0, 0.0, 0.0, 0.0]
+	for id in ids:
+		for t in 5:
+			tsum[t] += last[id].tiers[t]
+	print("Alloy pyramid (total T1-5) = %d/%d/%d/%d/%d"
+		% [int(tsum[0]), int(tsum[1]), int(tsum[2]), int(tsum[3]), int(tsum[4])])
 	var total_ships := 0
 	for id in ids:
 		total_ships += last[id].ships

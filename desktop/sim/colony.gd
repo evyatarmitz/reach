@@ -27,18 +27,12 @@ static func growth_per_day(pop: float) -> float:
 		/ (1.0 + pow(pop / SimConstants.GROWTH_SOFTCAP, SimConstants.GROWTH_EXP))
 
 
-# Per-day conversion capacity of an established city (T0 -> T1); actual output is
-# capped by available input in Sim.tick.
-func food_capacity() -> float:
+# Total per-day refining budget of an established city, split across the alloy tiers
+# it qualifies for (see Sim.tick). Actual output is capped by available input.
+func refine_capacity() -> float:
 	if not established:
 		return 0.0
-	return SimConstants.FOOD_CONV_COEF * pow(population, SimConstants.CONV_EXP)
-
-
-func alloy_capacity() -> float:
-	if not established:
-		return 0.0
-	return SimConstants.ALLOY_CONV_COEF * pow(population, SimConstants.CONV_EXP)
+	return SimConstants.REFINE_COEF * pow(population, SimConstants.REFINE_EXP)
 
 
 func activation_progress() -> float:

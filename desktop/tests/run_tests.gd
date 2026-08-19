@@ -26,8 +26,7 @@ func run_days(sim: Sim, days: float) -> void:
 func make_scenario() -> Dictionary:
 	var sim := Sim.new()
 	var e := sim.add_empire("Alpha", Color.WHITE)
-	e.alloys = 100000.0
-	e.food = 1.0e12
+	e.nat[0] = 100000.0   # plenty of T1 alloy so construction never blocks these tests
 	var s1 := sim.add_system("Home")
 	s1.map_pos = Vector2.ZERO
 	var deposit_p := sim.add_planet(s1.id, "Home I")
@@ -58,7 +57,7 @@ func _init() -> void:
 	_test_ai_rival()
 	_test_mining()
 	_test_conversion()
-	_test_food_growth()
+	_test_water_growth()
 	_test_diminishing_returns()
 	_test_emigration()
 	_test_fleets()
@@ -148,18 +147,18 @@ func _test_founding() -> void:
 	var sc := make_scenario()
 	var sim: Sim = sc.sim
 	var e: Empire = sc.e
-	var alloys_before: float = e.alloys
+	var alloys_before: float = e.nat[0]
 	check(sim.found_colony(e.id, sc.plain_p.id),
 		"founding succeeds on empty planet under influence with alloys")
-	check(is_equal_approx(e.alloys, alloys_before - SimConstants.FOUND_COST_ALLOYS),
+	check(is_equal_approx(e.nat[0], alloys_before - SimConstants.FOUND_COST_ALLOYS),
 		"founding deducts exactly the alloy cost")
 	check(not sim.found_colony(e.id, sc.plain_p.id),
 		"founding fails on already-colonized planet")
 	var sc2 := make_scenario()
-	sc2.e.alloys = SimConstants.FOUND_COST_ALLOYS - 1.0
+	sc2.e.nat[0] = SimConstants.FOUND_COST_ALLOYS - 1.0
 	check(not sc2.sim.found_colony(sc2.e.id, sc2.plain_p.id),
 		"founding fails when alloys are short")
-	check(sc2.e.alloys == SimConstants.FOUND_COST_ALLOYS - 1.0,
+	check(sc2.e.nat[0] == SimConstants.FOUND_COST_ALLOYS - 1.0,
 		"failed founding costs nothing")
 
 
@@ -287,7 +286,6 @@ func _test_fog_of_war() -> void:
 func _neighbor_rig() -> Dictionary:
 	var sim := Sim.new()
 	var e := sim.add_empire("N", Color.WHITE)
-	e.food = 1.0e12   # never food-limited; this tests the neighbor multiplier
 	var a := sim.add_system("A")
 	a.map_pos = Vector2.ZERO
 	var pa := sim.add_planet(a.id, "A I")
@@ -302,45 +300,27 @@ func _add_established(sim: Sim, e: Empire, pos: Vector2, pop: float) -> void:
 
 
 func _test_neighbor_bonus() -> void:
+	# The neighbor bonus is OFF (NEIGHBOR_BONUS_ENABLED = false): the multiplier is a
+	# flat 1.0 no matter the neighbours. Code is kept for a possible future mode; these
+	# assertions lock in that the master switch actually neutralises it.
 	var rig := _neighbor_rig()
 	check(is_equal_approx(rig.sim.neighbor_growth_multiplier(rig.subject), 1.0),
-		"isolated colony has neighbor multiplier 1.0")
+		"isolated colony: neighbor multiplier 1.0")
 	var rig2 := _neighbor_rig()
 	_add_established(rig2.sim, rig2.e, Vector2(250, 0), 200.0)
-	var m_near: float = rig2.sim.neighbor_growth_multiplier(rig2.subject)
-	check(m_near > 1.0, "an established neighbor in another system boosts growth")
-	var rig3 := _neighbor_rig()
-	_add_established(rig3.sim, rig3.e, Vector2(500, 0), 200.0)
-	check(rig3.sim.neighbor_growth_multiplier(rig3.subject) < m_near,
-		"a farther neighbor boosts less (1/R falloff)")
-	var rig5 := _neighbor_rig()
-	var rig5_sim: Sim = rig5.sim
-	var pa2: Planet = rig5_sim.add_planet(rig5.a.id, "A II")
-	rig5_sim.inject_colony(rig5.e.id, pa2.id, 300.0, true)
-	check(is_equal_approx(rig5_sim.neighbor_growth_multiplier(rig5.subject), 1.0),
-		"a same-system colony does NOT boost — same system competes, not clusters")
-	# The cap keeps a dense cluster's bonus finite (no runaway).
+	check(is_equal_approx(rig2.sim.neighbor_growth_multiplier(rig2.subject), 1.0),
+		"even WITH a nearby established neighbour the multiplier stays 1.0 (bonus off)")
 	var rig6 := _neighbor_rig()
 	for k in 8:
 		_add_established(rig6.sim, rig6.e, Vector2(200 + k, 0), 5000.0)
-	check(rig6.sim.neighbor_growth_multiplier(rig6.subject)
-		<= 1.0 + SimConstants.NEIGHBOR_MAX_BONUS + 0.001,
-		"the neighbor multiplier is capped (no runaway from a dense cluster)")
-	# End to end: clustered colony out-grows an isolated identical one (both have
-	# unlimited food, so only the neighbor bonus differs).
-	var iso := _neighbor_rig()
-	var clu := _neighbor_rig()
-	_add_established(clu.sim, clu.e, Vector2(250, 0), 300.0)
-	run_days(iso.sim, 100.0)
-	run_days(clu.sim, 100.0)
-	check(clu.subject.population > iso.subject.population,
-		"over time, a clustered colony grows past an isolated one")
+	check(is_equal_approx(rig6.sim.neighbor_growth_multiplier(rig6.subject), 1.0),
+		"a dense cluster still gives 1.0 — no bonus, no runaway (switch off)")
 
 
 func _test_ai_rival() -> void:
 	var sim := Sim.new()
 	var e := sim.add_empire("AI", Color.RED)
-	e.alloys = 10000.0
+	e.nat[0] = 10000.0
 	var home := sim.add_system("Home")
 	home.map_pos = Vector2.ZERO
 	sim.inject_colony(e.id, sim.add_planet(home.id, "Home I").id, 150.0, true)
@@ -373,18 +353,24 @@ func _test_ai_rival() -> void:
 
 	var demo := Sim.new_demo()
 	var rival_id: int = demo.empires.keys()[1]
-	run_days(demo, 400.0)
-	var rival_colonies := 0
-	for c in demo.colonies:
-		if c.empire_id == rival_id:
-			rival_colonies += 1
-	check(rival_colonies >= 2, "rival AI expands to multiple colonies over time")
-	# The AI also builds ships once its cities produce military resources.
-	var rival_ships := 0
-	for f in demo.fleets:
-		if f.empire_id == rival_id:
-			rival_ships += f.ship_count()
-	check(rival_ships >= 1, "rival AI builds ships once it can afford them")
+	# Track PEAK expansion/military over the run — a colony or fleet lost to a rival's
+	# attack later shouldn't fail an "it can expand and arm" test.
+	var max_colonies := 0
+	var max_ships := 0
+	for _i in 4000:   # 400 days at 0.1/tick
+		demo.tick(SimConstants.TICK_DAYS)
+		var cc := 0
+		for c in demo.colonies:
+			if c.empire_id == rival_id:
+				cc += 1
+		max_colonies = maxi(max_colonies, cc)
+		var sc := 0
+		for f in demo.fleets:
+			if f.empire_id == rival_id:
+				sc += f.ship_count()
+		max_ships = maxi(max_ships, sc)
+	check(max_colonies >= 2, "rival AI expands to multiple colonies over time")
+	check(max_ships >= 1, "rival AI builds ships once it can afford them")
 
 
 func _test_mining() -> void:
@@ -393,9 +379,9 @@ func _test_mining() -> void:
 	var sim: Sim = sc.sim
 	var e: Empire = sc.e
 	check(not sim.can_build_mine(e.id, sc.plain_p.id), "mine requires a deposit")
-	var alloys_before: float = e.alloys
+	var alloys_before: float = e.nat[0]
 	check(sim.build_mine(e.id, sc.deposit_p.id), "mine builds on reachable deposit")
-	check(is_equal_approx(e.alloys, alloys_before - SimConstants.MINE_COST_ALLOYS),
+	check(is_equal_approx(e.nat[0], alloys_before - SimConstants.MINE_COST_ALLOYS),
 		"mine deducts its alloy cost")
 	check(not sim.can_build_mine(e.id, sc.deposit_p.id),
 		"no second mine on the same planet")
@@ -412,12 +398,12 @@ func _test_mining() -> void:
 	var mp := sim2.add_planet(sysw.id, "mp")
 	mp.deposit_type = SimConstants.Deposit.MINERAL
 	mp.mine_empire_id = w.id
-	run_days(sim2, 10.0)
-	check(is_equal_approx(w.water, wp.mine_output() * 10.0),
-		"water-deposit mine yields water at this deposit's richness")
-	check(is_equal_approx(w.minerals, mp.mine_output() * 10.0),
-		"mineral-deposit mine yields minerals at this deposit's richness")
-	check(other.water == 0.0 and other.minerals == 0.0,
+	sim2.tick(SimConstants.TICK_DAYS)
+	check(is_equal_approx(w.water_income, wp.mine_output() * SimConstants.TICK_DAYS),
+		"water-deposit mine feeds the per-tick water FLOW at this deposit's richness")
+	check(is_equal_approx(w.minerals, mp.mine_output() * SimConstants.TICK_DAYS),
+		"mineral-deposit mine banks minerals at this deposit's richness")
+	check(other.water_income == 0.0 and other.minerals == 0.0,
 		"other empires get nothing from a rival's mines")
 	# Richness varies by deposit and its estimate bracket contains the truth.
 	check(wp.mine_output() != mp.mine_output(),
@@ -428,79 +414,70 @@ func _test_mining() -> void:
 
 
 func _test_conversion() -> void:
+	# Refining: an established city turns banked minerals into tier-1 alloy.
 	var sim := Sim.new()
 	var e := sim.add_empire("C", Color.WHITE)
-	e.food = 0.0
-	e.alloys = 0.0
 	var s := sim.add_system("S")
 	s.map_pos = Vector2.ZERO
-	var city := sim.inject_colony(e.id, sim.add_planet(s.id, "p").id, 200.0, true)
-	# Ample input (but under the raw-stockpile cap so it isn't clamped): a full tick
-	# converts up to capacity of each chain. Measure WATER consumed (food is also
-	# eaten by pop the same tick, so the food stockpile isn't a clean readout).
-	e.water = 400.0
+	sim.inject_colony(e.id, sim.add_planet(s.id, "p").id, 200.0, true)
 	e.minerals = 400.0
-	var cap_before: float = city.food_capacity()   # pop grows during the tick
+	e.nat = [0.0, 0.0, 0.0, 0.0, 0.0]
 	sim.tick(SimConstants.TICK_DAYS)
-	check(is_equal_approx(400.0 - e.water, cap_before * SimConstants.TICK_DAYS),
-		"established city refines water into food at capacity when input is ample")
-	check(e.alloys > 0.0, "established city refines minerals into alloys")
+	check(e.nat[0] > 0.0, "an established city refines minerals into tier-1 alloy")
+	check(e.minerals < 400.0, "refining consumes minerals")
 
-	# Partial: only a little water (below one tick's capacity) -> all of it is
-	# consumed and that's all the food made (5W -> 5F, not a full-capacity 20F).
+	# Input-limited: with only a sliver of minerals, all of it is consumed (no more).
 	var sim2 := Sim.new()
 	var e2 := sim2.add_empire("C2", Color.WHITE)
-	e2.food = 0.0
 	var s2 := sim2.add_system("S")
 	s2.map_pos = Vector2.ZERO
-	var city2 := sim2.inject_colony(e2.id, sim2.add_planet(s2.id, "p").id, 200.0, true)
-	e2.water = 0.3   # far below one tick's capacity
-	check(0.3 < city2.food_capacity() * SimConstants.TICK_DAYS,
-		"test setup: available water is below full conversion capacity")
+	# Small city (pop 100 -> tier 1 only, so no tier-2 step eats the T1 it makes) with a
+	# sliver of minerals below one tick's budget: all of it is consumed, and only that.
+	sim2.inject_colony(e2.id, sim2.add_planet(s2.id, "p").id, 100.0, true)
+	e2.minerals = 0.05   # far below one tick's tier-1 refining budget
+	e2.nat = [0.0, 0.0, 0.0, 0.0, 0.0]
 	sim2.tick(SimConstants.TICK_DAYS)
-	check(is_equal_approx(e2.water, 0.0) and e2.food > 0.0,
-		"conversion is partial and input-limited (all 0.3W consumed, not more)")
+	check(is_equal_approx(e2.minerals, 0.0) and e2.nat[0] > 0.0,
+		"refining is partial and input-limited (all 0.05 minerals used, not more)")
 
 	# Unestablished colonies refine nothing.
 	var sim3 := Sim.new()
 	var e3 := sim3.add_empire("C3", Color.WHITE)
-	e3.food = 1.0e9   # keep it alive (surplus), isolate the conversion check
 	var s3 := sim3.add_system("S")
 	s3.map_pos = Vector2.ZERO
 	sim3.inject_colony(e3.id, sim3.add_planet(s3.id, "p").id, 50.0, false)
-	e3.water = 400.0   # under the raw-stockpile cap floor so it isn't clamped
-	var water_before: float = e3.water
+	e3.minerals = 400.0   # under the raw-stockpile cap floor so it isn't clamped
 	sim3.tick(SimConstants.TICK_DAYS)
-	check(is_equal_approx(e3.water, water_before),
-		"an unestablished colony refines no water into food")
+	check(is_equal_approx(e3.minerals, 400.0),
+		"an unestablished colony refines no minerals")
 
 
-func _test_food_growth() -> void:
-	# Surplus -> grow.
+func _test_water_growth() -> void:
+	# Water income above demand -> grow.
 	var sim := Sim.new()
 	var e := sim.add_empire("G", Color.WHITE)
-	e.food = 1.0e6
 	var s := sim.add_system("S")
 	s.map_pos = Vector2.ZERO
+	var wp := sim.add_planet(s.id, "w")   # a water mine feeds the population
+	wp.deposit_type = SimConstants.Deposit.WATER
+	wp.mine_empire_id = e.id
 	var c := sim.inject_colony(e.id, sim.add_planet(s.id, "p").id, 50.0, false)
 	run_days(sim, 5.0)
-	check(c.population > 50.0, "food surplus makes population grow")
+	check(c.population > 50.0, "water income above demand makes population grow")
 
-	# Deficit -> shrink (population CAN decrease now — the earlier bug is fixed).
+	# No water income -> deficit -> shrink (no bank to coast on).
 	var sim2 := Sim.new()
 	var e2 := sim2.add_empire("S", Color.WHITE)
-	e2.food = 0.0   # no food, no mines -> pure deficit
 	var s2 := sim2.add_system("S")
 	s2.map_pos = Vector2.ZERO
 	var c2 := sim2.inject_colony(e2.id, sim2.add_planet(s2.id, "p").id, 200.0, true)
 	run_days(sim2, 20.0)
 	check(c2.population < 200.0,
-		"food deficit shrinks population (no longer grows on empty stores)")
+		"no water income shrinks population (nothing banked to grow on)")
 
 	# Shrink is floored: population never drops below MIN_POP or below zero.
 	var sim3 := Sim.new()
 	var e3 := sim3.add_empire("F", Color.WHITE)
-	e3.food = 0.0
 	var s3 := sim3.add_system("S")
 	s3.map_pos = Vector2.ZERO
 	var c3 := sim3.inject_colony(e3.id, sim3.add_planet(s3.id, "p").id, 5.0, false)
@@ -523,7 +500,6 @@ func _test_emigration() -> void:
 	# Big source so shedding dominates the (tiny, concurrent) growth step.
 	var sim := Sim.new()
 	var e := sim.add_empire("E", Color.WHITE)
-	e.food = 1.0e12
 	var s := sim.add_system("S")
 	s.map_pos = Vector2.ZERO
 	var src := sim.inject_colony(e.id, sim.add_planet(s.id, "a").id, 100000.0, true)
@@ -545,7 +521,6 @@ func _test_fleets() -> void:
 	# Three systems in a line A-B-C; empire has a big city at B (its shipyard).
 	var sim := Sim.new()
 	var e := sim.add_empire("E", Color.WHITE)
-	e.food = 1.0e12
 	e.nat = [1000.0, 0.0, 0.0, 0.0, 0.0]   # tier-1 military resource to build with
 	var a := sim.add_system("A")
 	a.map_pos = Vector2.ZERO
@@ -647,20 +622,18 @@ func _test_military_resources() -> void:
 	# A big city refines the whole tier chain; a small one only tier 1.
 	var sim := Sim.new()
 	var e := sim.add_empire("M", Color.WHITE)
-	e.food = 1.0e12
-	e.alloys = 1.0e9   # ample input to the chain
+	e.minerals = 1.0e9   # ample raw input to the chain
 	var s := sim.add_system("S")
 	s.map_pos = Vector2.ZERO
 	sim.inject_colony(e.id, sim.add_planet(s.id, "big").id, 3000.0, true)
-	# The top tiers need deposit variety, so give this empire both mine types.
+	# The top tiers need deposit variety, so give this empire both mine types (the water
+	# mine also feeds the population so the big city holds its size).
 	var wm := sim.add_planet(s.id, "w")
 	wm.deposit_type = SimConstants.Deposit.WATER
 	wm.mine_empire_id = e.id
 	var mm := sim.add_planet(s.id, "m")
 	mm.deposit_type = SimConstants.Deposit.MINERAL
 	mm.mine_empire_id = e.id
-	e.water = 1.0e9
-	e.minerals = 1.0e9
 	run_days(sim, 40.0)
 	# The chain feeds upward, so a maxed city ends holding the TOP tier (lower
 	# tiers get consumed to make the next) — that's the "spread cities for a mix"
@@ -669,12 +642,11 @@ func _test_military_resources() -> void:
 
 	var sim2 := Sim.new()
 	var e2 := sim2.add_empire("M2", Color.WHITE)
-	e2.food = 1.0e12
-	e2.alloys = 1.0e9
+	e2.minerals = 1.0e9   # raw input; small city should turn it into T1 only
 	var s2 := sim2.add_system("S")
 	s2.map_pos = Vector2.ZERO
 	sim2.inject_colony(e2.id, sim2.add_planet(s2.id, "small").id, 100.0, true)
-	run_days(sim2, 40.0)
+	run_days(sim2, 5.0)
 	check(e2.nat[0] > 0.0 and e2.nat[1] == 0.0,
 		"a small city (below the tier-2 cutoff) refines only tier 1")
 
@@ -684,8 +656,7 @@ func _test_resource_variety() -> void:
 	# refine tier VARIETY_MIN_TIER+; adding a water mine unlocks it.
 	var sim := Sim.new()
 	var e := sim.add_empire("V", Color.WHITE)
-	e.alloys = 1.0e9
-	e.food = 1.0e9   # keep the city fed/stable
+	e.nat = [1.0e9, 0.0, 0.0, 0.0, 0.0]   # ample T1 so the chain can cascade upward
 	e.minerals = 1.0e9
 	var s := sim.add_system("S")
 	s.map_pos = Vector2.ZERO
@@ -693,7 +664,7 @@ func _test_resource_variety() -> void:
 	var mp := sim.add_planet(s.id, "min")   # mineral mine only
 	mp.deposit_type = SimConstants.Deposit.MINERAL
 	mp.mine_empire_id = e.id
-	run_days(sim, 30.0)
+	run_days(sim, 5.0)   # short: pop stays above the tier cutoffs, cascade completes
 	# The chain drains lower tiers UP, so without variety the top REACHED tier is
 	# VARIETY_MIN_TIER-1; tiers at/above the variety gate stay 0.
 	var gate := SimConstants.VARIETY_MIN_TIER
@@ -709,7 +680,7 @@ func _test_resource_variety() -> void:
 	var wp := sim.add_planet(s.id, "wat")   # now add a water mine → variety
 	wp.deposit_type = SimConstants.Deposit.WATER
 	wp.mine_empire_id = e.id
-	run_days(sim, 40.0)
+	run_days(sim, 5.0)
 	check(e.nat[4] > 0.0,
 		"the top tier is reached once both deposit types are mined")
 
@@ -718,7 +689,7 @@ func _test_support_structures() -> void:
 	# Observation post doubles the system's influence reach.
 	var sim := Sim.new()
 	var e := sim.add_empire("O", Color.WHITE)
-	e.alloys = 100000.0
+	e.nat[0] = 100000.0
 	var s := sim.add_system("S")
 	s.map_pos = Vector2.ZERO
 	sim.inject_colony(e.id, sim.add_planet(s.id, "p").id, 200.0, true)
@@ -731,26 +702,25 @@ func _test_support_structures() -> void:
 	# Transport hub multiplies a colony's neighbor bonus.
 	var sim2 := Sim.new()
 	var e2 := sim2.add_empire("T", Color.WHITE)
-	e2.alloys = 100000.0
+	e2.nat[0] = 100000.0
 	var a := sim2.add_system("A")
 	a.map_pos = Vector2.ZERO
 	var b := sim2.add_system("B")
 	b.map_pos = Vector2(200, 0)
 	sim2.add_lane(a.id, b.id)
-	var ca := sim2.inject_colony(e2.id, sim2.add_planet(a.id, "pa").id, 500.0, true)
+	sim2.inject_colony(e2.id, sim2.add_planet(a.id, "pa").id, 500.0, true)
 	sim2.inject_colony(e2.id, sim2.add_planet(b.id, "pb").id, 500.0, true)
-	var bonus_before := sim2.neighbor_growth_multiplier(ca)
-	check(bonus_before > 1.0, "test setup: colony has a neighbor bonus to amplify")
+	# (The neighbor bonus it would amplify is switched off for now, so just confirm the
+	# hub builds; when the bonus returns, restore the amplification assertion.)
 	check(sim2.build_transport(e2.id, a.id), "transport hub builds in own influence")
-	var bonus_after := sim2.neighbor_growth_multiplier(ca)
-	check(bonus_after > bonus_before, "transport hub strengthens the neighbor bonus")
+	check(sim2.systems[a.id].transport_empire_id == e2.id, "the hub belongs to its empire")
 
 
 func _test_construction_vessel() -> void:
 	# A dispatched vessel travels then builds on arrival (not instant).
 	var sim := Sim.new()
 	var e := sim.add_empire("C", Color.WHITE)
-	e.alloys = 100000.0
+	e.nat[0] = 100000.0
 	var a := sim.add_system("A")
 	a.map_pos = Vector2.ZERO
 	var b := sim.add_system("B")
@@ -770,7 +740,7 @@ func _test_construction_vessel() -> void:
 	# A vessel cannot route through another empire's territory.
 	var s2 := Sim.new()
 	var me := s2.add_empire("Me", Color.WHITE)
-	me.alloys = 100000.0
+	me.nat[0] = 100000.0
 	var foe := s2.add_empire("Foe", Color.RED)
 	var sa := s2.add_system("A")
 	sa.map_pos = Vector2.ZERO
@@ -820,30 +790,26 @@ func _test_anomalies() -> void:
 func _test_specialization() -> void:
 	var sim := Sim.new()
 	var e := sim.add_empire("S", Color.WHITE)
-	e.food = 0.0
 	var s := sim.add_system("S")
 	s.map_pos = Vector2.ZERO
 	var c := sim.inject_colony(e.id, sim.add_planet(s.id, "p").id, 300.0, true)
-	check(is_equal_approx(c.spec_factor(SimConstants.Spec.FOOD), 1.0),
+	check(is_equal_approx(c.spec_factor(SimConstants.Spec.ALLOY), 1.0),
 		"an unspecialized colony has no bonus")
-	sim.set_specialization(e.id, c.planet_id, SimConstants.Spec.FOOD)
+	sim.set_specialization(e.id, c.planet_id, SimConstants.Spec.ALLOY)
 	check(c.spec_strength == 0.0, "a fresh specialization starts at zero strength")
-	e.water = 1.0e9   # keep the city refining so the ramp advances
 	run_days(sim, SimConstants.SPEC_RAMP_DAYS * 2.0)
 	check(is_equal_approx(c.spec_strength, 1.0), "specialization ramps to full strength")
-	check(c.spec_factor(SimConstants.Spec.FOOD) > 1.0
-		and is_equal_approx(c.spec_factor(SimConstants.Spec.ALLOY), 1.0),
-		"a food-specialized city boosts food only")
+	check(c.spec_factor(SimConstants.Spec.ALLOY) > 1.0,
+		"a refining-specialized city boosts its refining output")
 	# Switching resets the ramp (inertia).
-	sim.set_specialization(e.id, c.planet_id, SimConstants.Spec.ALLOY)
+	sim.set_specialization(e.id, c.planet_id, SimConstants.Spec.FOOD)
 	check(c.spec_strength == 0.0, "switching specialization resets the ramp (inertia)")
 
 
 func _test_mine_upgrade() -> void:
 	var sim := Sim.new()
 	var e := sim.add_empire("U", Color.WHITE)
-	e.food = 1.0e12
-	e.alloys = 1.0e9
+	e.nat[0] = 1.0e9
 	var s := sim.add_system("S")
 	s.map_pos = Vector2.ZERO
 	var p := sim.add_planet(s.id, "p")
@@ -929,8 +895,7 @@ func _test_attrition_and_depot() -> void:
 	# home (owned) linked to a far, unowned system where a fleet will overstay.
 	var sim := Sim.new()
 	var e := sim.add_empire("E", Color.WHITE)
-	e.food = 1.0e12
-	e.alloys = 1.0e9
+	e.nat[0] = 1.0e9
 	var home := sim.add_system("Home")
 	home.map_pos = Vector2.ZERO
 	sim.inject_colony(e.id, sim.add_planet(home.id, "H").id, 150.0, true)
@@ -948,7 +913,6 @@ func _test_attrition_and_depot() -> void:
 	# Same, but a supply depot in the system negates attrition.
 	var sim2 := Sim.new()
 	var e2 := sim2.add_empire("E2", Color.WHITE)
-	e2.food = 1.0e12
 	var far2 := sim2.add_system("Far")
 	far2.map_pos = Vector2(5000, 0)
 	sim2.add_planet(far2.id, "F")
@@ -1014,7 +978,7 @@ func _mined_over(eff: float) -> float:
 	p.deposit_type = SimConstants.Deposit.WATER
 	p.mine_empire_id = e.id
 	sim.tick(SimConstants.TICK_DAYS)
-	return e.water
+	return e.water_income   # water is a flow now; income this tick reflects mine output
 
 
 func _test_save_load() -> void:
@@ -1035,7 +999,8 @@ func _test_save_load() -> void:
 	for id in a.empires:
 		var ea: Empire = a.empires[id]
 		var eb: Empire = b.empires[id]
-		if not (is_equal_approx(ea.alloys, eb.alloys) and is_equal_approx(ea.food, eb.food)
+		if not (is_equal_approx(ea.nat[0], eb.nat[0])
+				and is_equal_approx(ea.minerals, eb.minerals)
 				and is_equal_approx(ea.efficiency, eb.efficiency)):
 			same_res = false
 	check(same_res, "save/load preserves empire resources + efficiency")
@@ -1062,7 +1027,7 @@ func _test_determinism() -> void:
 	for k in a.empires:
 		var ea: Empire = a.empires[k]
 		var eb: Empire = b.empires[k]
-		if ea.water != eb.water or ea.minerals != eb.minerals \
-				or ea.food != eb.food or ea.alloys != eb.alloys:
+		if ea.minerals != eb.minerals or ea.nat[0] != eb.nat[0] \
+				or ea.nat[4] != eb.nat[4]:
 			same = false
 	check(same, "identical runs produce bit-identical state")
