@@ -73,6 +73,25 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.81.0 (2026-08-21, Godot 4.7) — tier icons + anomaly spread (playtest)
+
+- **Anomalies now spread across the map.** `_place_anomalies` checked clearance from
+  systems and lanes but NOT from other anomalies, so they clumped into one open region.
+  Added an inter-anomaly minimum separation (~grid spacing of `target` points over the
+  map) + more attempts. Probe (3 seeds): closest pair ~500, span most of the map width.
+- **Tier icons replace "T1..T5" text.** The fallback font has no dice/numeral/circled
+  glyphs (verified), so generated tier-badge textures procedurally: a rounded square in
+  the tier's colour (bronze/silver/gold/cyan/violet) with dice-face pips 1-5
+  (`_build_tier_icons` / `_make_tier_icon` / `_dice_pips` / `_fill_disc`, cached in
+  `_tier_icons`). Used them in:
+  - Top bar: `goods_label` is now a RichTextLabel; the alloy line rebuilds each refresh
+    as `Alloys [icon] 49.6k [icon] 18k …` via add_image.
+  - Ship panel: reworked to a 2-col Fighter|Bomber grid where each build button carries
+    the tier badge as its icon (no "T1..T5" text). Fixed the stale "Mil T1-5" note →
+    "that tier's alloy".
+Verified: 140 tests pass, draw_smoke clean, probes confirm 5 icons build (26px), the
+alloy RTL renders inline images, and ship buttons carry icons.
+
 ## Status — 0.80.0 (2026-08-20, Godot 4.7) — batch-3 polish (playtest feedback)
 
 Three tweaks after testing 0.79.0.

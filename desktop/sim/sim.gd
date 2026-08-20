@@ -148,17 +148,26 @@ static func _place_anomalies(sim: Sim, positions: Array, size: Vector2,
 		rng: RandomNumberGenerator) -> void:
 	var target: int = clampi(int(positions.size() / 12),
 		SimConstants.ANOMALY_MIN, SimConstants.ANOMALY_MAX)
+	# Spread them across the map instead of letting them clump: reject a candidate that's
+	# too near an anomaly already placed. ~the spacing of `target` points on a grid over
+	# the map, so they distribute rather than pile into one open region.
+	var min_apart: float = sqrt(size.x * size.y / maxf(1.0, float(target))) * 0.62
 	var attempts := 0
-	while sim.anomalies.size() < target and attempts < target * 400:
+	while sim.anomalies.size() < target and attempts < target * 800:
 		attempts += 1
 		var r := rng.randf_range(SimConstants.ANOMALY_RADIUS_MIN,
 			SimConstants.ANOMALY_RADIUS_MAX)
 		var p := Vector2(rng.randf_range(r, size.x - r), rng.randf_range(r, size.y - r))
 		var clear := true
-		for q in positions:   # keep off systems
-			if p.distance_to(q) < r + SimConstants.ANOMALY_SYSTEM_CLEARANCE:
+		for an in sim.anomalies:   # keep anomalies spread apart
+			if p.distance_to(an.pos) < min_apart:
 				clear = false
 				break
+		if clear:
+			for q in positions:   # keep off systems
+				if p.distance_to(q) < r + SimConstants.ANOMALY_SYSTEM_CLEARANCE:
+					clear = false
+					break
 		if clear:
 			for l in sim.lanes:   # keep off lanes (movement never blocked)
 				var a: Vector2 = sim.systems[l[0]].map_pos

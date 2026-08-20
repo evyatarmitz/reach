@@ -91,7 +91,8 @@ var _starfield: Array = []  # backdrop: [pos, radius, Color] faint stars (static
 var _has_anomalies := false # cached each refresh so _claim_at skips anomaly tests
 
 var raw_label: Label       # what you gather: water flow + minerals
-var goods_label: Label     # what you refine: alloy tiers 1-5
+var goods_label: RichTextLabel   # alloy tiers 1-5, shown with generated tier icons
+var _tier_icons: Array = []      # [ImageTexture] tier 1-5 badge icons (index 0-4)
 var day_label: Label
 var standing_label: Label
 var hint_label: Label
@@ -146,6 +147,7 @@ func _ready() -> void:
 	else:
 		sim = Sim.new_demo()
 	player_empire_id = sim.empires.keys()[0]  # first empire = human player
+	_build_tier_icons()
 	_build_ui()
 	_init_camera()
 	var is_load := Session.load_path != ""
@@ -1358,6 +1360,69 @@ func _draw_system_symbols(sys: StarSystem) -> void:
 			sim.empires[depot_owner].color)
 
 
+# --- generated tier icons (the fallback font has no dice/numeral glyphs) -------------
+# A tier badge: a rounded square in the tier's colour with dice-face pips (1-5) so the
+# tier reads as a little icon, not "T1". Built once and cached in _tier_icons.
+func _build_tier_icons() -> void:
+	_tier_icons.clear()
+	for t in range(1, 6):
+		_tier_icons.append(_make_tier_icon(t))
+
+
+func _tier_hue(tier: int) -> Color:
+	match tier:
+		1: return Color(0.72, 0.52, 0.32)   # bronze
+		2: return Color(0.72, 0.76, 0.82)   # silver
+		3: return Color(0.95, 0.78, 0.35)   # gold
+		4: return Color(0.42, 0.8, 0.98)    # cyan
+		_: return Color(0.82, 0.5, 1.0)     # violet
+
+
+func _dice_pips(tier: int) -> Array:
+	var a := 0.3
+	var b := 0.5
+	var c := 0.7
+	match tier:
+		1: return [Vector2(b, b)]
+		2: return [Vector2(a, a), Vector2(c, c)]
+		3: return [Vector2(a, a), Vector2(b, b), Vector2(c, c)]
+		4: return [Vector2(a, a), Vector2(c, a), Vector2(a, c), Vector2(c, c)]
+		_: return [Vector2(a, a), Vector2(c, a), Vector2(b, b), Vector2(a, c), Vector2(c, c)]
+
+
+func _make_tier_icon(tier: int) -> ImageTexture:
+	var s := 26
+	var img := Image.create(s, s, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var hue := _tier_hue(tier)
+	var bg := hue.darkened(0.4)
+	var edge := hue.lightened(0.15)
+	var m := 2.0
+	var rad := 6.0
+	var lo := Vector2(m + rad, m + rad)
+	var hi := Vector2(s - m - rad, s - m - rad)
+	for y in s:
+		for x in s:
+			var pt := Vector2(x + 0.5, y + 0.5)
+			var q := Vector2(clampf(pt.x, lo.x, hi.x), clampf(pt.y, lo.y, hi.y))
+			var d := pt.distance_to(q)
+			if d <= rad:
+				img.set_pixel(x, y, edge if d > rad - 1.4 else bg)   # rim + fill
+	for p in _dice_pips(tier):
+		_fill_disc(img, p.x * s, p.y * s, s * 0.088, Color(1, 1, 1, 0.96))
+	return ImageTexture.create_from_image(img)
+
+
+func _fill_disc(img: Image, cx: float, cy: float, r: float, col: Color) -> void:
+	var r2 := r * r
+	for y in range(maxi(0, int(cy - r)), mini(img.get_height(), int(cy + r) + 1)):
+		for x in range(maxi(0, int(cx - r)), mini(img.get_width(), int(cx + r) + 1)):
+			var dx := x + 0.5 - cx
+			var dy := y + 0.5 - cy
+			if dx * dx + dy * dy <= r2:
+				img.set_pixel(x, y, col)
+
+
 # A thin vertical divider between HUD groups in the top bar.
 func _bar_sep() -> VSeparator:
 	var s := VSeparator.new()
@@ -1382,8 +1447,13 @@ func _build_ui() -> void:
 	day_label.modulate = Color(1, 1, 1, 0.9)
 	raw_label = Label.new()                        # what you GATHER
 	raw_label.modulate = Color(0.7, 0.86, 1.0)     # cool blue
-	goods_label = Label.new()                      # what you REFINE (alloy tiers)
-	goods_label.modulate = Color(1.0, 0.82, 0.55)  # warm amber
+	goods_label = RichTextLabel.new()              # what you REFINE (alloy tiers, w/ icons)
+	goods_label.bbcode_enabled = true
+	goods_label.fit_content = true
+	goods_label.scroll_active = false
+	goods_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	goods_label.custom_minimum_size = Vector2(360, 0)
+	goods_label.add_theme_font_size_override("normal_font_size", 14)
 	standing_label = Label.new()
 	standing_label.modulate = Color(1, 1, 1, 0.7)
 	bar.add_child(day_label)
@@ -1647,36 +1717,42 @@ func _build_ship_panel(layer: CanvasLayer) -> void:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 4)
 	sp.add_child(box)
+	var head := Label.new()
+	head.text = "Build ships — by tier"
+	head.modulate = Color(1, 1, 1, 0.7)
+	box.add_child(head)
 	var grid := GridContainer.new()
-	grid.columns = 3
-	grid.add_theme_constant_override("h_separation", 4)
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 6)
 	grid.add_theme_constant_override("v_separation", 3)
 	box.add_child(grid)
-	for s in ["Build", "Fighter", "Bomber"]:
+	for s in ["Fighter", "Bomber"]:
 		var h := Label.new()
 		h.text = s
+		h.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		grid.add_child(h)
+	# One row per tier. The tier reads from the button's icon (a dice-pip badge), so no
+	# "T1..T5" text; the column header gives the role.
 	for t in range(1, 6):
-		var lab := Label.new()
-		lab.text = "Tier %d" % t
-		grid.add_child(lab)
 		var fb := Button.new()
-		fb.text = "F%d" % t
+		fb.icon = _tier_icons[t - 1]
+		fb.text = "  Fighter"
+		fb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		fb.pressed.connect(func() -> void:
 			sim.build_ship(player_empire_id, SimConstants.Role.FIGHTER, t))
 		grid.add_child(fb)
 		ship_f_btns.append(fb)
 		var bb := Button.new()
-		bb.text = "B%d" % t
+		bb.icon = _tier_icons[t - 1]
+		bb.text = "  Bomber"
+		bb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		bb.pressed.connect(func() -> void:
 			sim.build_ship(player_empire_id, SimConstants.Role.BOMBER, t))
 		grid.add_child(bb)
 		ship_b_btns.append(bb)
-	# Clarify what ships are paid with — the tier's military resource ("Mil T1-5"
-	# in the top bar), NOT alloys. Alloys are the civilian material that feeds the
-	# tier-1 military resource.
+	# Clarify what ships are paid with — the tier's ALLOY (shown in the top bar).
 	var note := Label.new()
-	note.text = "Each ship: %d of that tier's Mil (top bar).\nHigh tiers (T%d+) need BOTH water & mineral mines." \
+	note.text = "Each ship costs %d of that tier's alloy (top bar).\nHigh tiers (tier %d+) need BOTH water & mineral mines." \
 		% [int(SimConstants.SHIP_NAT_COST), SimConstants.VARIETY_MIN_TIER + 1]
 	note.add_theme_font_size_override("font_size", 10)
 	note.modulate = Color(1, 1, 1, 0.5)
@@ -1805,9 +1881,12 @@ func _refresh_ui() -> void:
 	var w_need: float = player.water_demand / SimConstants.TICK_DAYS
 	raw_label.text = "Water %+.0f/day    Minerals %s" \
 		% [w_in - w_need, _fmt_num(player.minerals)]
-	goods_label.text = "Alloys  T1 %s · T2 %s · T3 %s · T4 %s · T5 %s" \
-		% [_fmt_num(player.nat[0]), _fmt_num(player.nat[1]), _fmt_num(player.nat[2]),
-			_fmt_num(player.nat[3]), _fmt_num(player.nat[4])]
+	# Alloy tiers with their generated tier-badge icons instead of "T1..T5".
+	goods_label.clear()
+	goods_label.append_text("Alloys  ")
+	for t in 5:
+		goods_label.add_image(_tier_icons[t], 15, 15)
+		goods_label.append_text(" %s   " % _fmt_num(player.nat[t]))
 	day_label.text = "Day %.1f" % sim.day
 	# Player's own standing (no fog concern — it's your empire): systems / pop /
 	# colonies, so you can gauge where you stand without counting the map.
