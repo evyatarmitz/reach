@@ -29,17 +29,17 @@ const BORDER_CELL := 26.0   # coarser (was 18) to cut the border-recompute cost 
                             # 0.5s rebake was a synchronous main-thread spike that
                             # stuttered camera pans. Contour is drawn as a smooth curve
                             # so a coarser grid barely changes how the border looks.
-const FIELD_MAX_CELLS := 100.0  # cap fog/border grid cells per axis (was 150); keeps
-                                # the rebake affordable — cost is ~cells², so 150→100
-                                # is a >2x cut on maps that hit the cap.
+const FIELD_MAX_CELLS := 130.0  # cap fog/border grid cells per axis. Bumped 100→130 for
+                                # a sharper fog/border edge now that the bake runs on a
+                                # worker thread (cost is ~cells² but off the main frame).
 const BORDER_REFRESH := 0.6
 const UI_REFRESH := 0.066   # HUD/panel refresh cadence (~15 Hz), decoupled from FPS
 const LABEL_ZOOM := 0.85     # only draw per-system name/count labels at/above this
                              # zoom — when zoomed out they overlap into unreadable
                              # mush AND draw_string dominates frame cost.
 const BORDER_EPS := 0.01     # tiny rival-claim floor so bubble-vs-empty edges draw
-const FOG_CELL := 30.0       # sample cell for the fog texture (was 22; linearly
-                             # filtered, so coarser stays smooth — cuts rebake cost)
+const FOG_CELL := 22.0       # sample cell for the fog texture (linearly filtered). Finer
+                             # again (30→22) for a crisper lit edge; bake is off-thread.
 # VR fill. The fog must reach PAST the border (the border is your influence edge;
 # the fog is your SIGHT, which sees further). VR_SIGHT_REACH is how far sight
 # extends beyond influence reach — the player's fog claim is sampled with reach
@@ -95,6 +95,9 @@ var mil_label: Label
 var day_label: Label
 var standing_label: Label
 var hint_label: Label
+var _tooltip_panel: PanelContainer   # Paradox-style hover popup (map nodes + HUD terms)
+var _tooltip_label: RichTextLabel
+var _ui_tips: Array = []              # [Control, bbcode] HUD elements with an explainer
 var event_label: Label          # top-left feed of recent autonomous events
 var _events: Array = []         # [day, text] recent events, newest last
 var _prev_pcolonies: Dictionary = {}  # planet_id -> system_id, player's colonies
@@ -286,6 +289,7 @@ func _process(delta: float) -> void:
 		_border_timer = BORDER_REFRESH
 		_start_rebake()
 	_apply_camera()   # every frame → smooth pan/zoom
+	_update_tooltip() # every frame so the hover popup tracks the cursor smoothly
 	# HUD/panel + hover + events refresh at ~15 Hz, not every frame: they run sim
 	# queries that don't need per-frame updates and were choking input/pan.
 	_ui_timer -= delta
@@ -971,8 +975,8 @@ func _draw_galaxy() -> void:
 				if cc > 0:
 					draw_string(font, sys.map_pos + Vector2(14.0, -12.0), str(cc),
 						HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.35, 1.0, 0.5))
-				draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
-					HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.65))
+				_draw_name(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
+					Color(1, 1, 1, 0.85))
 		else:
 			# Explored but out of VR: dim star + the frozen last-seen snapshot
 			# (owner ring + colony count as of last sight — no live data).
@@ -991,8 +995,8 @@ func _draw_galaxy() -> void:
 				if scc > 0:
 					draw_string(font, sys.map_pos + Vector2(14.0, -12.0), str(scc),
 						HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.5, 0.7, 0.55, 0.6))
-				draw_string(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
-					HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(1, 1, 1, 0.35))
+				_draw_name(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
+					Color(1, 1, 1, 0.5))
 
 	# Combat indicators (for systems the player can see): a LIVE battle or bombardment
 	# pulses persistently and distinctly; recently-ended combat leaves a fading
@@ -1094,6 +1098,95 @@ func _draw_galaxy() -> void:
 # bright square overlaid = a mine; plus a square for a system supply depot.
 # One-line hover readout for the hint area — live detail for a system in sight, the
 # frozen last-seen snapshot otherwise (respects fog; no live enemy data in grey).
+func _add_ui_tip(ctrl: Control, bbcode: String) -> void:
+	_ui_tips.append([ctrl, bbcode])
+
+
+# Drive the floating hover tooltip: a HUD explainer if the cursor is over a registered
+# HUD figure, else a rich node card if it's over a known map node, else hidden. Follows
+# the cursor, flipped/clamped so it never runs off-screen.
+func _update_tooltip() -> void:
+	if _tooltip_panel == null:
+		return
+	if (intro_overlay != null and intro_overlay.visible) \
+			or (legend_panel != null and legend_panel.visible):
+		_tooltip_panel.visible = false
+		return
+	var sm := get_viewport().get_mouse_position()
+	var txt := ""
+	for entry in _ui_tips:
+		var c: Control = entry[0]
+		if c.visible and c.get_global_rect().has_point(sm):
+			txt = entry[1]
+			break
+	if txt == "" and not _hover_hold and _hover_system != -1 \
+			and _sys_known(_hover_system):
+		txt = _node_tooltip(_hover_system)
+	if txt == "":
+		_tooltip_panel.visible = false
+		return
+	_tooltip_label.text = txt
+	_tooltip_panel.visible = true
+	_tooltip_panel.reset_size()
+	var vp := get_viewport_rect().size
+	var sz := _tooltip_panel.size
+	var p := sm + Vector2(18.0, 18.0)
+	if p.x + sz.x > vp.x:
+		p.x = sm.x - sz.x - 14.0
+	if p.y + sz.y > vp.y:
+		p.y = sm.y - sz.y - 14.0
+	_tooltip_panel.position = Vector2(maxf(4.0, p.x), maxf(4.0, p.y))
+
+
+# Rich (BBCode) hover card for a known map node — name, owner, population, deposit,
+# mine, structures, live combat, and whether it's live or last-seen intel.
+func _node_tooltip(sid: int) -> String:
+	var sys: StarSystem = sim.systems[sid]
+	var live := _sys_live(sid)
+	var snap: Dictionary = _stale.get(sid, {})
+	var lines: Array = ["[b]%s[/b]" % sys.name]
+	var owner: int = _system_owner.get(sid, -1) if live else int(snap.get("owner", -1))
+	if owner != -1:
+		var e: Empire = sim.empires[owner]
+		lines.append("[color=#%s]●[/color] %s" % [e.color.to_html(false), e.name])
+	else:
+		lines.append("[color=#888888]○[/color] unclaimed")
+	var pl: Planet = sim.planets[sys.planet_ids[0]]
+	if pl.deposit_type == SimConstants.Deposit.WATER:
+		lines.append("Deposit: [color=#88bbff]Water[/color]")
+	elif pl.deposit_type == SimConstants.Deposit.MINERAL:
+		lines.append("Deposit: [color=#d0a060]Minerals[/color]")
+	if live:
+		var c: Colony = pl.colony
+		if c != null:
+			var st := "city" if c.established else "colony · %d%% to activation" \
+				% int(c.activation_progress() * 100.0)
+			lines.append("Population: [b]%.0f[/b]  ([i]%s[/i])" % [c.population, st])
+		if pl.has_mine():
+			lines.append("Mine: %s (L%d)" % [sim.empires[pl.mine_empire_id].name,
+				pl.mine_level + 1])
+		var structs: Array = []
+		if sys.depot_empire_id != -1:
+			structs.append("supply depot")
+		if sys.obs_post_empire_id != -1:
+			structs.append("observation post")
+		if sys.transport_empire_id != -1:
+			structs.append("transport hub")
+		if not structs.is_empty():
+			lines.append("Structures: %s" % ", ".join(structs))
+		var kind: int = sim.combat_kind.get(sid, -1)
+		if kind == 0:
+			lines.append("[color=#ff6644]⚔ battle in progress[/color]")
+		elif kind == 1:
+			lines.append("[color=#ffcc44]☄ under bombardment[/color]")
+		lines.append("[color=#7a8a99][i]in your view[/i][/color]")
+	else:
+		if snap.get("planets", {}).get(sys.planet_ids[0], {}).get("colony", false):
+			lines.append("Colony (as last seen)")
+		lines.append("[color=#7a8a99][i]out of view — last-seen intel[/i][/color]")
+	return "\n".join(lines)
+
+
 func _hover_summary(sid: int) -> String:
 	var sys: StarSystem = sim.systems[sid]
 	# Live combat takes over the readout: who's fighting and how strong.
@@ -1151,16 +1244,32 @@ func _star_color(sid: int) -> Color:
 		_: return Color(1.0, 0.62, 0.42)   # orange-red
 
 
+# A centered map label with a soft dark drop-shadow, so names lift off the fog/stars
+# (depth + readability) instead of blending into the background.
+func _draw_name(font: Font, pos: Vector2, text: String, col: Color) -> void:
+	draw_string(font, pos + Vector2(1.0, 1.5), text, HORIZONTAL_ALIGNMENT_CENTER, 120,
+		12, Color(0.0, 0.0, 0.0, col.a * 0.85))
+	draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_CENTER, 120, 12, col)
+
+
 func _draw_star(pos: Vector2, col: Color, intensity: float, scale := 1.0) -> void:
-	# Soft glow (stacked low-alpha discs) under a bright near-white core. scale grows
-	# the whole star with the system's population, so bigger powers read at a glance.
+	# A luminous body with depth: a wide faint corona, tighter coloured glow layers, a
+	# bright core and a hot near-white pip. scale grows it with the system's population.
+	# Stacked translucent discs read as volume; MSAA keeps every edge crisp.
+	var corona := col
+	corona.a = 0.06 * intensity
+	draw_circle(pos, 20.0 * scale, corona)          # outer haze — the "reach" of the light
+	corona.a = 0.10 * intensity
+	draw_circle(pos, 13.0 * scale, corona)
 	var g := col
-	for i in 3:
-		g.a = (0.05 + i * 0.05) * intensity
-		draw_circle(pos, (12.0 - i * 3.0) * scale, g)
-	var core := col.lerp(Color.WHITE, 0.45)
-	core.a = 0.55 + 0.45 * intensity
-	draw_circle(pos, (4.2 + 0.8 * intensity) * scale, core)
+	for i in 3:                                       # coloured glow falloff
+		g.a = (0.14 + i * 0.10) * intensity
+		draw_circle(pos, (9.0 - i * 2.4) * scale, g)
+	var core := col.lerp(Color.WHITE, 0.55)
+	core.a = 0.7 + 0.3 * intensity
+	draw_circle(pos, (3.6 + 0.8 * intensity) * scale, core)
+	var pip := Color(1, 1, 1, 0.85 * intensity)      # hot white centre for a sharp glint
+	draw_circle(pos, (1.4 + 0.4 * intensity) * scale, pip)
 
 
 func _draw_system_symbols(sys: StarSystem) -> void:
@@ -1241,6 +1350,11 @@ func _build_ui() -> void:
 	raw_label.modulate = Color(0.6, 0.8, 1.0)     # T0 raw — cool blue
 	goods_label.modulate = Color(0.6, 1.0, 0.7)   # T1 goods — green
 	mil_label.modulate = Color(1.0, 0.7, 0.55)    # military — warm
+	# Paradox-style explainers: hovering a HUD figure opens a window telling you what it
+	# is and how the mechanic works. (Map-node hover is handled in _update_tooltip.)
+	_add_ui_tip(raw_label, "[b]Water & Minerals[/b]\n[color=#88bbff]Water[/color] is your population's lifeblood — a [i]flow[/i], not a stockpile. Each day your water mines produce some and your people consume some; the number shown is the net per day. Population grows only while it's positive, and shrinks when negative. You can't bank a surplus, so pop settles at the level your water territory supports.\n\n[color=#d0a060]Minerals[/color] are the one raw you DO stockpile — mined, then refined up the alloy chain.")
+	_add_ui_tip(goods_label, "[b]Water balance[/b]\nWhat your mines bring in per day vs. what your whole population needs per day. Hold more water worlds (or upgrade their mines) to raise the ceiling and let population climb higher.")
+	_add_ui_tip(mil_label, "[b]Alloys, tiers 1–5[/b]\nMinerals refine into tier-1 alloy; each higher tier is refined from the one below, and only bigger cities reach the higher tiers. Higher tiers are far rarer (a pyramid). [color=#aaffaa]Tier 1[/color] also pays for construction; ships of tier N cost tier-N alloy. Tiers 3+ need you to mine BOTH water and minerals.")
 
 	hint_label = Label.new()
 	hint_label.modulate = Color(1, 1, 1, 0.5)
@@ -1252,6 +1366,31 @@ func _build_ui() -> void:
 	event_label.add_theme_font_size_override("font_size", 12)
 	event_label.modulate = Color(1, 0.9, 0.7, 0.85)
 	layer.add_child(event_label)
+
+	# Floating hover tooltip (Paradox-style). Raised above the HUD via z_index; never
+	# eats mouse input so it can't block clicks or its own hover target.
+	_tooltip_panel = PanelContainer.new()
+	_tooltip_panel.visible = false
+	_tooltip_panel.z_index = 200
+	_tooltip_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var tsb := StyleBoxFlat.new()
+	tsb.bg_color = Color(0.07, 0.08, 0.11, 0.97)
+	tsb.border_color = Color(0.45, 0.55, 0.75, 0.7)
+	tsb.set_border_width_all(1)
+	tsb.set_corner_radius_all(5)
+	tsb.set_content_margin_all(9)
+	tsb.shadow_color = Color(0, 0, 0, 0.5)
+	tsb.shadow_size = 6
+	_tooltip_panel.add_theme_stylebox_override("panel", tsb)
+	_tooltip_label = RichTextLabel.new()
+	_tooltip_label.bbcode_enabled = true
+	_tooltip_label.fit_content = true
+	_tooltip_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tooltip_label.custom_minimum_size = Vector2(300, 0)
+	_tooltip_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tooltip_label.add_theme_font_size_override("normal_font_size", 13)
+	_tooltip_panel.add_child(_tooltip_label)
+	layer.add_child(_tooltip_panel)
 
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1658,10 +1797,9 @@ func _refresh_ui() -> void:
 		hint_label.text = "Planet actions · Esc to close"
 		_show_system_panel(view_system_id)
 		return
-	if _hover_system != -1 and _sys_known(_hover_system):
-		hint_label.text = _hover_summary(_hover_system)
-	else:
-		hint_label.text = "Right-drag pan · wheel zoom · click a planet or fleet · L: legend"
+	# Node details now live in the hover tooltip (near the cursor); the hint line just
+	# reminds the controls.
+	hint_label.text = "Hover for details · right-drag pan · wheel zoom · click to open · L: legend"
 	panel.visible = false
 	_panel_system = -1
 

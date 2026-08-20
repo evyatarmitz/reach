@@ -73,6 +73,26 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.79.0 (2026-08-20, Godot 4.7) — GRAPHICS/UI BATCH 3 (from playtest list)
+
+Sharper look with depth + a Paradox-style hover tooltip.
+- **Sharper:** enabled 4x MSAA on the 2D canvas (`anti_aliasing/quality/msaa_2d=2`) so
+  every drawn circle/line/arc edge (stars, rings, borders, ships) is smooth, not jagged.
+  Fog grid finer again (FOG_CELL 30→22, FIELD_MAX_CELLS 100→130 — affordable since the
+  bake runs off-thread) for a crisper lit edge.
+- **Depth:** `_draw_star` reworked into a layered luminous body — wide faint corona,
+  coloured glow falloff, bright core, hot white pip — reads as volume. Map name labels
+  now drawn via `_draw_name` with a soft dark drop-shadow so they lift off the fog.
+- **Hover tooltip (Paradox-style):** a floating `PanelContainer`+`RichTextLabel` (BBCode,
+  dark card w/ border+shadow, mouse-transparent, z=200, cursor-following + screen-clamped).
+  `_update_tooltip()` (every frame): shows a HUD explainer when over a registered figure
+  (`_ui_tips`: water/minerals, water balance, alloy tiers — each explains the mechanic),
+  else a rich node card (`_node_tooltip`: name, coloured owner, deposit, population/city
+  status, mine, structures, live-combat, in-view vs last-seen) when over a known map node.
+  The old hover line moved into the tooltip; the hint line now just lists controls.
+Verified: 140 tests pass; draw_smoke clean; a headless probe confirms the node card and
+HUD tips render. Visual polish itself is for the on-machine playtest (no headless render).
+
 ## Status — 0.78.0 (2026-08-20, Godot 4.7) — ECONOMY BATCH 2 (from playtest list)
 
 Three interlocked economy changes from the user's list.
