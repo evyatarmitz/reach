@@ -73,6 +73,22 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.80.0 (2026-08-20, Godot 4.7) — batch-3 polish (playtest feedback)
+
+Three tweaks after testing 0.79.0.
+- **Deposit icons reshaped.** Water is now a proper teardrop (`_draw_water_drop`: 8-point
+  drop + rim + glint); minerals a faceted upright gem (`_draw_gem`: diamond body + bright
+  top facet + girdle line). Reads by shape, not just colour.
+- **Fleets easier to grab.** The click catch-radius is now SCREEN-space (`FLEET_CLICK_R /
+  zoom`, floored to icon size) instead of a fixed 12 world-units, so fleets stay clickable
+  when zoomed out instead of shrinking to an unhittable dot.
+- **Top resource bar de-cluttered.** Dropped the redundant "(water in · pop needs)" label
+  (that detail is in the hover tooltip) and the duplicate mil row. Now ordered groups with
+  thin separators: [b]Day | Water ±/day  Minerals | Alloys T1·T2·T3·T4·T5 | standing[/b],
+  big numbers compacted (49.6k). Two HUD explainers (water/minerals, alloys); removed the
+  now-defunct mil_label + the redundant water-balance tip.
+Verified: 140 tests pass; a headless probe drew the new deposit shapes with no error.
+
 ## Status — 0.79.0 (2026-08-20, Godot 4.7) — GRAPHICS/UI BATCH 3 (from playtest list)
 
 Sharper look with depth + a Paradox-style hover tooltip.

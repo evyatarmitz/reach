@@ -63,6 +63,7 @@ const VR_BAND := 0.6
 const VR_BORDER_FEATHER := 0.30
 const SAVE_PATH := "user://reach_save.json"
 const FLEET_ICON_OFF := Vector2(0, -17)   # drawn above the system so it stays clickable
+const FLEET_CLICK_R := 24.0   # screen-space click radius for fleets (÷ zoom in _select_at)
 const BORDER_INSET := 3.5    # push each empire's border curve into its own territory
 const COMBAT_FLASH_DAYS := 5.0   # how long a clash starburst lingers on the map
 
@@ -89,9 +90,8 @@ var _fog_seen := {}         # "gx,gy" -> true, cells ever in VR (explored memory
 var _starfield: Array = []  # backdrop: [pos, radius, Color] faint stars (static)
 var _has_anomalies := false # cached each refresh so _claim_at skips anomaly tests
 
-var raw_label: Label
-var goods_label: Label
-var mil_label: Label
+var raw_label: Label       # what you gather: water flow + minerals
+var goods_label: Label     # what you refine: alloy tiers 1-5
 var day_label: Label
 var standing_label: Label
 var hint_label: Label
@@ -846,10 +846,13 @@ func _select_at(pos: Vector2) -> void:
 						_log_event("⚓ Fleet pinned over an enemy world — can only retreat")
 				selected_fleet_id = -1
 				return
-	# 2. Click near one of your fleets (drawn above its system) to select it.
+	# 2. Click near one of your fleets (drawn above its system) to select it. The catch
+	#    radius is SCREEN-space (÷ zoom), floored to the icon size, so fleets stay easy to
+	#    grab when zoomed out instead of shrinking to an unclickable dot.
+	var fleet_r: float = maxf(15.0, FLEET_CLICK_R / _galaxy_cam_zoom)
 	for f in sim.fleets:
 		if f.empire_id == player_empire_id \
-				and pos.distance_to(sim.fleet_position(f) + FLEET_ICON_OFF) <= 12.0:
+				and pos.distance_to(sim.fleet_position(f) + FLEET_ICON_OFF) <= fleet_r:
 			selected_fleet_id = f.id
 			view_system_id = -1
 			return
@@ -1252,6 +1255,37 @@ func _draw_name(font: Font, pos: Vector2, text: String, col: Color) -> void:
 	draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_CENTER, 120, 12, col)
 
 
+# Water deposit — a teardrop (pointed top, round bulb) with a rim and a highlight glint.
+func _draw_water_drop(c: Vector2) -> void:
+	var body := Color(0.35, 0.72, 1.0)
+	var drop := PackedVector2Array([
+		c + Vector2(0.0, -6.0),
+		c + Vector2(2.1, -2.4), c + Vector2(3.7, 1.1), c + Vector2(3.0, 3.6),
+		c + Vector2(0.0, 4.9),
+		c + Vector2(-3.0, 3.6), c + Vector2(-3.7, 1.1), c + Vector2(-2.1, -2.4)])
+	draw_colored_polygon(drop, body)
+	draw_polyline(PackedVector2Array([drop[0], drop[1], drop[2], drop[3], drop[4],
+		drop[5], drop[6], drop[7], drop[0]]), Color(0.85, 0.95, 1.0, 0.7), 1.0)
+	draw_circle(c + Vector2(-1.1, 1.4), 1.1, Color(1, 1, 1, 0.8))   # glint
+
+
+# Mineral deposit — an upright faceted gem (diamond with a lighter top facet + rim).
+func _draw_gem(c: Vector2) -> void:
+	var top := c + Vector2(0.0, -5.2)
+	var rgt := c + Vector2(4.6, -0.6)
+	var bot := c + Vector2(0.0, 5.2)
+	var lft := c + Vector2(-4.6, -0.6)
+	var mrgt := c + Vector2(2.3, -0.6)
+	var mlft := c + Vector2(-2.3, -0.6)
+	draw_colored_polygon(PackedVector2Array([top, rgt, bot, lft]),
+		Color(0.9, 0.58, 0.28))                                    # gem body
+	draw_colored_polygon(PackedVector2Array([top, rgt, mrgt, mlft]),
+		Color(1.0, 0.78, 0.42))                                    # brighter top-right facet
+	draw_polyline(PackedVector2Array([top, rgt, bot, lft, top]),
+		Color(1.0, 0.85, 0.55, 0.7), 1.0)
+	draw_line(lft, rgt, Color(1.0, 0.85, 0.55, 0.5), 1.0)          # girdle line
+
+
 func _draw_star(pos: Vector2, col: Color, intensity: float, scale := 1.0) -> void:
 	# A luminous body with depth: a wide faint corona, tighter coloured glow layers, a
 	# bright core and a hot near-white pip. scale grows it with the system's population.
@@ -1305,15 +1339,12 @@ func _draw_system_symbols(sys: StarSystem) -> void:
 			if not established:
 				draw_arc(c, 5.0, 0.0, TAU, 16, Color(1, 1, 1, 0.7), 1.0)
 		elif p.has_deposit():
-			# Shape-coded so it reads without relying on colour: water = round
-			# droplet (blue), minerals = diamond (amber).
+			# Shape-coded so each reads without relying on colour: water = a teardrop,
+			# minerals = a faceted gem.
 			if p.deposit_type == SimConstants.Deposit.WATER:
-				draw_circle(c, 4.6, Color(0.4, 0.85, 1.0))
-				draw_circle(c + Vector2(-1.3, -1.3), 1.3, Color(1, 1, 1, 0.7))
+				_draw_water_drop(c)
 			else:
-				draw_colored_polygon(PackedVector2Array([
-					c + Vector2(0, -5), c + Vector2(5, 0),
-					c + Vector2(0, 5), c + Vector2(-5, 0)]), Color(0.95, 0.62, 0.3))
+				_draw_gem(c)
 		else:
 			draw_circle(c, 2.5, Color(0.5, 0.5, 0.55))
 		if has_mine and mine_owner != -1:
@@ -1327,6 +1358,13 @@ func _draw_system_symbols(sys: StarSystem) -> void:
 			sim.empires[depot_owner].color)
 
 
+# A thin vertical divider between HUD groups in the top bar.
+func _bar_sep() -> VSeparator:
+	var s := VSeparator.new()
+	s.modulate = Color(1, 1, 1, 0.25)
+	return s
+
+
 func _build_ui() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
@@ -1338,23 +1376,27 @@ func _build_ui() -> void:
 	bar.add_theme_constant_override("separation", 24)
 	top.add_child(bar)
 
-	raw_label = Label.new()
-	goods_label = Label.new()
-	mil_label = Label.new()
+	# Ordered groups, thin separators between: Day | gather (water/minerals) | alloys |
+	# your standing. Colour-coded; the per-figure detail lives in the hover tooltip.
 	day_label = Label.new()
+	day_label.modulate = Color(1, 1, 1, 0.9)
+	raw_label = Label.new()                        # what you GATHER
+	raw_label.modulate = Color(0.7, 0.86, 1.0)     # cool blue
+	goods_label = Label.new()                      # what you REFINE (alloy tiers)
+	goods_label.modulate = Color(1.0, 0.82, 0.55)  # warm amber
 	standing_label = Label.new()
-	standing_label.modulate = Color(1, 1, 1, 0.75)
-	for l in [raw_label, goods_label, mil_label, day_label, standing_label]:
-		bar.add_child(l)
-	# Colour-code the groups so the eye separates raw / goods / military at a glance.
-	raw_label.modulate = Color(0.6, 0.8, 1.0)     # T0 raw — cool blue
-	goods_label.modulate = Color(0.6, 1.0, 0.7)   # T1 goods — green
-	mil_label.modulate = Color(1.0, 0.7, 0.55)    # military — warm
-	# Paradox-style explainers: hovering a HUD figure opens a window telling you what it
-	# is and how the mechanic works. (Map-node hover is handled in _update_tooltip.)
-	_add_ui_tip(raw_label, "[b]Water & Minerals[/b]\n[color=#88bbff]Water[/color] is your population's lifeblood — a [i]flow[/i], not a stockpile. Each day your water mines produce some and your people consume some; the number shown is the net per day. Population grows only while it's positive, and shrinks when negative. You can't bank a surplus, so pop settles at the level your water territory supports.\n\n[color=#d0a060]Minerals[/color] are the one raw you DO stockpile — mined, then refined up the alloy chain.")
-	_add_ui_tip(goods_label, "[b]Water balance[/b]\nWhat your mines bring in per day vs. what your whole population needs per day. Hold more water worlds (or upgrade their mines) to raise the ceiling and let population climb higher.")
-	_add_ui_tip(mil_label, "[b]Alloys, tiers 1–5[/b]\nMinerals refine into tier-1 alloy; each higher tier is refined from the one below, and only bigger cities reach the higher tiers. Higher tiers are far rarer (a pyramid). [color=#aaffaa]Tier 1[/color] also pays for construction; ships of tier N cost tier-N alloy. Tiers 3+ need you to mine BOTH water and minerals.")
+	standing_label.modulate = Color(1, 1, 1, 0.7)
+	bar.add_child(day_label)
+	bar.add_child(_bar_sep())
+	bar.add_child(raw_label)
+	bar.add_child(_bar_sep())
+	bar.add_child(goods_label)
+	bar.add_child(_bar_sep())
+	bar.add_child(standing_label)
+	# Paradox-style explainers: hovering a figure opens a window on what it is and how the
+	# mechanic works. (Map-node hover is handled in _update_tooltip.)
+	_add_ui_tip(raw_label, "[b]Water & Minerals[/b]\n[color=#88bbff]Water[/color] is your population's lifeblood — a [i]flow[/i], not a stockpile. The number is your net per day: water your mines produce minus what your people need. Population grows while it's positive, shrinks while negative; you can't bank a surplus, so pop settles at the level your water territory supports. Hold more water worlds to raise that ceiling.\n\n[color=#d0a060]Minerals[/color] are the one raw you DO stockpile — mined, then refined up the alloy chain.")
+	_add_ui_tip(goods_label, "[b]Alloys — tiers 1 to 5[/b]\nMinerals refine into tier-1 alloy; each higher tier is refined from the one below, and only bigger cities reach the higher tiers, so it's a pyramid (lots of T1, very few T5). [color=#aaffaa]Tier 1[/color] also pays for construction; a ship of tier N costs tier-N alloy. Tiers 3+ need you to mine BOTH water and minerals.")
 
 	hint_label = Label.new()
 	hint_label.modulate = Color(1, 1, 1, 0.5)
@@ -1761,10 +1803,11 @@ func _refresh_ui() -> void:
 	# the one banked raw; the five alloy tiers are the refined goods (T1 also builds).
 	var w_in: float = player.water_income / SimConstants.TICK_DAYS
 	var w_need: float = player.water_demand / SimConstants.TICK_DAYS
-	raw_label.text = "Water %+.0f/day · Minerals %.0f" % [w_in - w_need, player.minerals]
-	goods_label.text = "(water in %.0f · pop needs %.0f)" % [w_in, w_need]
-	mil_label.text = "Alloys T1-5: %.0f·%.0f·%.0f·%.0f·%.0f" % \
-		[player.nat[0], player.nat[1], player.nat[2], player.nat[3], player.nat[4]]
+	raw_label.text = "Water %+.0f/day    Minerals %s" \
+		% [w_in - w_need, _fmt_num(player.minerals)]
+	goods_label.text = "Alloys  T1 %s · T2 %s · T3 %s · T4 %s · T5 %s" \
+		% [_fmt_num(player.nat[0]), _fmt_num(player.nat[1]), _fmt_num(player.nat[2]),
+			_fmt_num(player.nat[3]), _fmt_num(player.nat[4])]
 	day_label.text = "Day %.1f" % sim.day
 	# Player's own standing (no fog concern — it's your empire): systems / pop /
 	# colonies, so you can gauge where you stand without counting the map.
