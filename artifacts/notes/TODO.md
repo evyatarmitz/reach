@@ -73,6 +73,27 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.82.0 (2026-08-21, Godot 4.7) — in-game self-update
+
+Integrated the spell-book `windows-self-update` pattern (Rust) into Reach as
+`game/updater.gd`. Windows can't overwrite a running exe, so: fetch the latest GitHub
+release (api.github.com/…/releases/latest), compare tag vs `Updater.CURRENT`, download the
+win64 zip (streamed to disk), extract Reach.exe with ZIPReader into `<exe>.new`, write a
+`.bat` that waits for THIS PID to exit → `move /y .new exe` → relaunch → self-delete, then
+`get_tree().quit()`. Gated to real Windows builds (`OS.get_name()=="Windows" and not
+has_feature("editor")`) so it can't touch the editor or run elsewhere. Wired into the
+pause-menu overlay: version label + "Check for updates" → "Update & restart" + a status
+line (signals check_done/apply_started/apply_failed).
+- `Updater.CURRENT` MUST equal the latest live release tag (without "v"), else a check
+  offers a downgrade. Currently "0.2.0-alpha". BUMP IT in the same change that cuts the
+  next release (the shipped build then knows its own version). The updater only becomes
+  live from the FIRST release that contains it (v0.2.0 doesn't).
+- main.gd PRELOADS updater.gd (no class_name) — a headless-added script isn't in the
+  global class cache, so `class_name Updater` fails to resolve there; preload sidesteps it.
+- AI_README.md (spell-book usage guide) gitignored — dev aid, not game content.
+Verified: 140 tests pass, draw_smoke clean, GitHub API field shape confirmed by probe.
+Batch-swap itself only runs in an installed build (can't exercise headless).
+
 ## Status — 0.81.0 (2026-08-21, Godot 4.7) — tier icons + anomaly spread (playtest)
 
 - **Anomalies now spread across the map.** `_place_anomalies` checked clearance from

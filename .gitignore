@@ -3,3 +3,6 @@ desktop/.godot/
 
 # Exported build artifacts (shipped as GitHub Release assets, not committed)
 /dist/
+
+# Local spell-book (personal code library) usage guide — dev aid, not game content
+/AI_README.md

@@ -126,6 +126,11 @@ var legend_panel: PanelContainer
 var overlay_title: Label
 var overlay_resume: Button
 var overlay_save: Button
+var overlay_update_btn: Button
+var overlay_update_apply: Button
+var overlay_update_status: Label
+const UpdaterScript := preload("res://game/updater.gd")
+var _updater: Node
 var _game_over := false
 var _speed_before_menu := 1     # speed to restore when the pause menu closes
 var planet_list: VBoxContainer
@@ -1670,10 +1675,10 @@ func _build_menu_overlay(layer: CanvasLayer) -> void:
 	menu_overlay.anchor_right = 0.5
 	menu_overlay.anchor_top = 0.5
 	menu_overlay.anchor_bottom = 0.5
-	menu_overlay.offset_left = -130
-	menu_overlay.offset_right = 130
-	menu_overlay.offset_top = -110
-	menu_overlay.offset_bottom = 110
+	menu_overlay.offset_left = -150
+	menu_overlay.offset_right = 150
+	menu_overlay.offset_top = -160
+	menu_overlay.offset_bottom = 160
 	menu_overlay.visible = false
 	layer.add_child(menu_overlay)
 	var v := VBoxContainer.new()
@@ -1701,6 +1706,54 @@ func _build_menu_overlay(layer: CanvasLayer) -> void:
 	quit.pressed.connect(func() -> void:
 		get_tree().change_scene_to_file("res://menu/menu.tscn"))
 	v.add_child(quit)
+
+	# --- self-update (installed Windows build only) ---
+	var sep := HSeparator.new()
+	v.add_child(sep)
+	var ver := Label.new()
+	ver.text = "Reach v%s" % UpdaterScript.CURRENT
+	ver.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ver.modulate = Color(1, 1, 1, 0.5)
+	ver.add_theme_font_size_override("font_size", 11)
+	v.add_child(ver)
+	_updater = UpdaterScript.new()
+	add_child(_updater)
+	_updater.check_done.connect(_on_update_check_done)
+	_updater.apply_started.connect(func() -> void:
+		overlay_update_status.text = "Downloading update…"
+		overlay_update_apply.disabled = true
+		overlay_update_btn.disabled = true)
+	_updater.apply_failed.connect(func(msg: String) -> void:
+		overlay_update_status.text = "Update failed: %s" % msg
+		overlay_update_btn.disabled = false)
+	overlay_update_btn = Button.new()
+	overlay_update_btn.text = "Check for updates"
+	overlay_update_btn.pressed.connect(func() -> void:
+		overlay_update_status.text = "Checking…"
+		overlay_update_btn.disabled = true
+		_updater.check_for_update())
+	v.add_child(overlay_update_btn)
+	overlay_update_apply = Button.new()
+	overlay_update_apply.text = "Update & restart"
+	overlay_update_apply.visible = false
+	overlay_update_apply.pressed.connect(func() -> void: _updater.apply_update())
+	v.add_child(overlay_update_apply)
+	overlay_update_status = Label.new()
+	overlay_update_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	overlay_update_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	overlay_update_status.custom_minimum_size = Vector2(280, 0)
+	overlay_update_status.modulate = Color(1, 1, 1, 0.7)
+	overlay_update_status.add_theme_font_size_override("font_size", 11)
+	v.add_child(overlay_update_status)
+
+
+func _on_update_check_done(available: bool, latest: String, note: String) -> void:
+	overlay_update_btn.disabled = false
+	overlay_update_apply.visible = available
+	if available:
+		overlay_update_status.text = "Update available: v%s" % latest
+	else:
+		overlay_update_status.text = note
 
 
 # Top-right shipyard: a Fighter and Bomber build button per tier 1-5. Each click
