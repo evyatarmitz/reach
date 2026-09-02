@@ -141,6 +141,7 @@ var controls_page: Control   # rebindable key-binding page (K, or the pause menu
 # class_name) so they resolve even with a stale global class cache in a headless build.
 const ControlsPageScript := preload("res://menu/controls_page.gd")
 const Keybinds := preload("res://menu/keybinds.gd")
+const UiStyle := preload("res://menu/ui_style.gd")
 var overlay_title: Label
 var overlay_resume: Button
 var overlay_save: Button
@@ -1774,6 +1775,7 @@ func _build_ui() -> void:
 # Shown paused; dismissed with Begin. Not shown on a loaded save or the autoshot.
 func _build_intro(layer: CanvasLayer) -> void:
 	intro_overlay = PanelContainer.new()
+	UiStyle.make_opaque(intro_overlay)
 	intro_overlay.set_anchors_preset(Control.PRESET_CENTER)
 	intro_overlay.anchor_left = 0.5
 	intro_overlay.anchor_right = 0.5
@@ -1811,6 +1813,7 @@ func _build_intro(layer: CanvasLayer) -> void:
 # with L (the hint line advertises it). Plain text — clear without needing icons.
 func _build_legend(layer: CanvasLayer) -> void:
 	legend_panel = PanelContainer.new()
+	UiStyle.make_opaque(legend_panel)
 	legend_panel.anchor_top = 1.0
 	legend_panel.anchor_bottom = 1.0
 	legend_panel.offset_left = 12.0
@@ -1854,6 +1857,7 @@ func _build_controls_panel(layer: CanvasLayer) -> void:
 
 func _build_menu_overlay(layer: CanvasLayer) -> void:
 	menu_overlay = PanelContainer.new()
+	UiStyle.make_opaque(menu_overlay)
 	menu_overlay.set_anchors_preset(Control.PRESET_CENTER)
 	menu_overlay.anchor_left = 0.5
 	menu_overlay.anchor_right = 0.5

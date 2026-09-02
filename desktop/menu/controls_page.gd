@@ -11,6 +11,7 @@ extends PanelContainer
 signal closed
 
 const Keybinds := preload("res://menu/keybinds.gd")
+const UiStyle := preload("res://menu/ui_style.gd")
 
 var _listening := ""     # action currently capturing a key ("" = none)
 var _rows := {}          # action_id -> its key Button
@@ -18,6 +19,7 @@ var _rows := {}          # action_id -> its key Button
 
 func _ready() -> void:
 	Keybinds.ensure_loaded()
+	UiStyle.make_opaque(self)
 	set_anchors_preset(Control.PRESET_CENTER)
 	anchor_left = 0.5
 	anchor_right = 0.5
