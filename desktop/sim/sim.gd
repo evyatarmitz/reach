@@ -757,6 +757,15 @@ func _mine_target_ok(empire_id: int, planet_id: int) -> bool:
 		and is_under_influence(p.system_id, empire_id)
 
 
+# Single chokepoint for spending alloy on ships/structures. Debits the tier stockpile
+# AND records the outlay in spent_nat so income-rate readouts show production only, not
+# the dip from a purchase. Pass a negative amount to refund (e.g. a spoiled build).
+func _pay(empire_id: int, tier: int, amount: float) -> void:
+	var e: Empire = empires[empire_id]
+	e.nat[tier] -= amount
+	e.spent_nat[tier] += amount
+
+
 func can_found_colony(empire_id: int, planet_id: int) -> bool:
 	var e: Empire = empires.get(empire_id)
 	return e != null and e.nat[0] >= SimConstants.FOUND_COST_ALLOYS \
@@ -766,7 +775,7 @@ func can_found_colony(empire_id: int, planet_id: int) -> bool:
 func found_colony(empire_id: int, planet_id: int) -> bool:
 	if not can_found_colony(empire_id, planet_id):
 		return false
-	empires[empire_id].nat[0] -= SimConstants.FOUND_COST_ALLOYS
+	_pay(empire_id, 0, SimConstants.FOUND_COST_ALLOYS)
 	var c := inject_colony(empire_id, planet_id, SimConstants.START_POP, false)
 	return c != null
 
@@ -782,7 +791,7 @@ func can_build_mine(empire_id: int, planet_id: int) -> bool:
 func build_mine(empire_id: int, planet_id: int) -> bool:
 	if not can_build_mine(empire_id, planet_id):
 		return false
-	empires[empire_id].nat[0] -= SimConstants.MINE_COST_ALLOYS
+	_pay(empire_id, 0, SimConstants.MINE_COST_ALLOYS)
 	planets[planet_id].mine_empire_id = empire_id
 	return true
 
@@ -858,7 +867,7 @@ func order_construction(empire_id: int, build_type: int, target_id: int) -> bool
 		return false
 	var cap := most_populated_system(empire_id)
 	var tsys := _target_system_of(build_type, target_id)
-	empires[empire_id].nat[0] -= _construction_cost(build_type)
+	_pay(empire_id, 0, _construction_cost(build_type))
 	builders.append({"id": _next_id, "eid": empire_id, "sys": cap,
 		"path": lane_path_friendly(cap, tsys, empire_id), "prog": 0.0,
 		"type": build_type, "target": target_id})
@@ -894,7 +903,7 @@ func _advance_builders(dt_days: float) -> void:
 			else:
 				planets[b.target].mine_empire_id = eid
 		else:   # target spoiled in transit — refund what was paid at dispatch
-			empires[eid].nat[0] += _construction_cost(b.type)
+			_pay(eid, 0, -_construction_cost(b.type))
 
 
 func toggle_emigration(empire_id: int, planet_id: int) -> void:
@@ -931,7 +940,7 @@ func can_upgrade_mine(empire_id: int, planet_id: int) -> bool:
 func upgrade_mine(empire_id: int, planet_id: int) -> bool:
 	if not can_upgrade_mine(empire_id, planet_id):
 		return false
-	empires[empire_id].nat[0] -= SimConstants.MINE_UPGRADE_COST_ALLOYS
+	_pay(empire_id, 0, SimConstants.MINE_UPGRADE_COST_ALLOYS)
 	planets[planet_id].mine_level += 1
 	return true
 
@@ -948,7 +957,7 @@ func can_build_depot(empire_id: int, system_id: int) -> bool:
 func build_depot(empire_id: int, system_id: int) -> bool:
 	if not can_build_depot(empire_id, system_id):
 		return false
-	empires[empire_id].nat[0] -= SimConstants.DEPOT_COST_ALLOYS
+	_pay(empire_id, 0, SimConstants.DEPOT_COST_ALLOYS)
 	systems[system_id].depot_empire_id = empire_id
 	return true
 
@@ -966,7 +975,7 @@ func can_build_obs_post(empire_id: int, system_id: int) -> bool:
 func build_obs_post(empire_id: int, system_id: int) -> bool:
 	if not can_build_obs_post(empire_id, system_id):
 		return false
-	empires[empire_id].nat[0] -= SimConstants.OBS_POST_COST_ALLOYS
+	_pay(empire_id, 0, SimConstants.OBS_POST_COST_ALLOYS)
 	systems[system_id].obs_post_empire_id = empire_id
 	return true
 
@@ -984,7 +993,7 @@ func can_build_transport(empire_id: int, system_id: int) -> bool:
 func build_transport(empire_id: int, system_id: int) -> bool:
 	if not can_build_transport(empire_id, system_id):
 		return false
-	empires[empire_id].nat[0] -= SimConstants.TRANSPORT_COST_ALLOYS
+	_pay(empire_id, 0, SimConstants.TRANSPORT_COST_ALLOYS)
 	systems[system_id].transport_empire_id = empire_id
 	return true
 
@@ -1088,7 +1097,7 @@ func build_ship(empire_id: int, role: int, tier: int) -> bool:
 	if not can_build_ship(empire_id, tier):
 		return false
 	var sys := most_populated_system(empire_id)
-	empires[empire_id].nat[tier - 1] -= SimConstants.SHIP_NAT_COST
+	_pay(empire_id, tier - 1, SimConstants.SHIP_NAT_COST)
 	var f := _fleet_at(empire_id, sys)
 	if role == SimConstants.Role.FIGHTER:
 		f.fighters[tier - 1] += 1

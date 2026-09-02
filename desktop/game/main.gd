@@ -9,6 +9,9 @@ const DAYS_PER_REAL_SECOND := 0.4
 # Ceiling on sim ticks executed in one frame (see _process). Steady-state 10× needs
 # <1/frame; this only bites when a frame hitches, keeping input responsive.
 const MAX_TICKS_PER_FRAME := 8
+# WASD / arrow-key map pan, in screen pixels per second (÷ zoom so it feels the same at
+# every zoom level). Held-key panning runs in _process for smoothness.
+const PAN_SPEED := 780.0
 
 var sim: Sim
 var player_empire_id := -1
@@ -90,10 +93,19 @@ var _fog_seen := {}         # "gx,gy" -> true, cells ever in VR (explored memory
 var _starfield: Array = []  # backdrop: [pos, radius, Color] faint stars (static)
 var _has_anomalies := false # cached each refresh so _claim_at skips anomaly tests
 
-var raw_label: Label       # what you gather: water flow + minerals
-var goods_label: RichTextLabel   # alloy tiers 1-5, shown with generated tier icons
+var raw_label: Label       # what you gather: water flow (net/day)
+var goods_label: RichTextLabel   # minerals + alloy tiers 1-5: amount over income rate
 var _tier_icons: Array = []      # [ImageTexture] tier 1-5 badge icons (index 0-4)
 var day_label: Label
+# Income-rate readout: one stockpile sample per in-game day; the displayed "+N/day" is
+# the slope across the last RATE_WINDOW_DAYS. Alloy samples add spent_nat so buying a
+# ship doesn't read as negative income (production only). Minerals aren't spent on
+# purchases, so its stockpile slope is already clean.
+const RATE_WINDOW_DAYS := 8.0
+var _rate_hist: Array = []   # [{d:float, min:float, nat:PackedFloat32Array(5)}], oldest first
+var _last_sample_day := -1
+# Perpetual calendar (no leap years) for the D/M/Y date readout.
+const _MONTH_DAYS := [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 var standing_label: Label
 var hint_label: Label
 var _tooltip_panel: PanelContainer   # Paradox-style hover popup (map nodes + HUD terms)
@@ -123,6 +135,39 @@ var ship_b_btns: Array = []   # bomber build buttons, tier 1-5
 var menu_overlay: PanelContainer
 var intro_overlay: PanelContainer
 var legend_panel: PanelContainer
+var controls_panel: PanelContainer   # rebindable key-binding page (K, or the pause menu)
+
+# Rebindable controls. BIND_DEFS is the ordered [action_id, label, default_keycode]
+# source of truth; _binds holds the live keycode per action (0 = unbound). Ship actions
+# "ship_1".."ship_10" map to hotkey slots (1-5 Fighter T1-5, 6-10 Bomber T1-5). Esc is
+# deliberately NOT rebindable — it's the universal cancel / pause-menu key.
+const BINDS_PATH := "user://controls.cfg"
+const BIND_DEFS := [
+	["pan_up", "Pan up", KEY_W],
+	["pan_left", "Pan left", KEY_A],
+	["pan_down", "Pan down", KEY_S],
+	["pan_right", "Pan right", KEY_D],
+	["pause", "Pause / resume", KEY_SPACE],
+	["speed_up", "Speed up", KEY_EQUAL],
+	["speed_down", "Speed down", KEY_MINUS],
+	["ship_1", "Build Fighter T1", KEY_1],
+	["ship_2", "Build Fighter T2", KEY_2],
+	["ship_3", "Build Fighter T3", KEY_3],
+	["ship_4", "Build Fighter T4", KEY_4],
+	["ship_5", "Build Fighter T5", KEY_5],
+	["ship_6", "Build Bomber T1", KEY_6],
+	["ship_7", "Build Bomber T2", KEY_7],
+	["ship_8", "Build Bomber T3", KEY_8],
+	["ship_9", "Build Bomber T4", KEY_9],
+	["ship_10", "Build Bomber T5", KEY_0],
+	["legend", "Toggle legend", KEY_L],
+	["controls", "Toggle controls", KEY_K],
+	["save", "Save game", KEY_F5],
+	["load", "Load game", KEY_F9],
+]
+var _binds := {}                 # action_id -> keycode (0 = unbound)
+var _listening_action := ""      # action currently capturing a new key ("" = none)
+var _bind_rows := {}             # action_id -> its key Button (for live text refresh)
 var overlay_title: Label
 var overlay_resume: Button
 var overlay_save: Button
@@ -152,6 +197,7 @@ func _ready() -> void:
 	else:
 		sim = Sim.new_demo()
 	player_empire_id = sim.empires.keys()[0]  # first empire = human player
+	_load_binds()   # defaults + any saved rebindings, before the UI reads them
 	_build_tier_icons()
 	_build_ui()
 	_init_camera()
@@ -218,6 +264,8 @@ func load_game(path: String = SAVE_PATH) -> bool:
 	selected_planet_id = -1
 	selected_fleet_id = -1
 	_panel_system = -1
+	_rate_hist.clear()          # time jumped — rebuild the income-rate window from here
+	_last_sample_day = -1
 	_recompute_borders()
 	return true
 
@@ -295,6 +343,7 @@ func _process(delta: float) -> void:
 	if _border_timer <= 0.0 and _rebake_thread == null:
 		_border_timer = BORDER_REFRESH
 		_start_rebake()
+	_handle_key_pan(delta)   # WASD / arrows nudge the camera every frame
 	_apply_camera()   # every frame → smooth pan/zoom
 	_update_tooltip() # every frame so the hover popup tracks the cursor smoothly
 	# HUD/panel + hover + events refresh at ~15 Hz, not every frame: they run sim
@@ -790,6 +839,195 @@ func _apply_camera() -> void:
 	cam.zoom = Vector2(_galaxy_cam_zoom, _galaxy_cam_zoom)
 
 
+# Held-key camera pan (WASD, physical-position so it works on any layout, + arrows).
+# World-space step is divided by zoom so the on-screen speed is constant. Suppressed
+# while a modal overlay is up so the keys don't slide the map behind it.
+func _handle_key_pan(delta: float) -> void:
+	if (intro_overlay != null and intro_overlay.visible) \
+			or (menu_overlay != null and menu_overlay.visible) \
+			or (controls_panel != null and controls_panel.visible):
+		return
+	var dir := Vector2.ZERO
+	if _pan_held("pan_up") or Input.is_key_pressed(KEY_UP):
+		dir.y -= 1.0
+	if _pan_held("pan_down") or Input.is_key_pressed(KEY_DOWN):
+		dir.y += 1.0
+	if _pan_held("pan_left") or Input.is_key_pressed(KEY_LEFT):
+		dir.x -= 1.0
+	if _pan_held("pan_right") or Input.is_key_pressed(KEY_RIGHT):
+		dir.x += 1.0
+	if dir != Vector2.ZERO:
+		_galaxy_cam_pos += dir.normalized() * (PAN_SPEED * delta / _galaxy_cam_zoom)
+
+
+func _pan_held(action: String) -> bool:
+	var kc: int = _binds.get(action, 0)
+	return kc != 0 and Input.is_key_pressed(kc)
+
+
+# Ship hotkey slot -> role/tier (1-5 Fighter T1-5, 6-10 Bomber T1-5), built ×1/×10/×100
+# per the held modifier.
+func _build_from_hotkey(slot: int) -> void:
+	var role: int = SimConstants.Role.FIGHTER if slot <= 5 else SimConstants.Role.BOMBER
+	var tier: int = slot if slot <= 5 else slot - 5
+	_build_ships(role, tier, _build_count_from_mods())
+
+
+# Ctrl = ×100, Shift = ×10, otherwise ×1. Shared by the number-row hotkeys and the
+# shipyard buttons so both honour the same batch modifiers.
+func _build_count_from_mods() -> int:
+	if Input.is_key_pressed(KEY_CTRL):
+		return 100
+	if Input.is_key_pressed(KEY_SHIFT):
+		return 10
+	return 1
+
+
+# Build up to `count` of a ship, stopping early if the tier's alloy runs out; report
+# what actually happened in the event log.
+func _build_ships(role: int, tier: int, count: int) -> void:
+	var made := 0
+	for _i in count:
+		if not sim.build_ship(player_empire_id, role, tier):
+			break
+		made += 1
+	var rname: String = "Fighter" if role == SimConstants.Role.FIGHTER else "Bomber"
+	if made == 0:
+		_log_event("✖ Can't build %s T%d — need %d tier-%d alloy"
+			% [rname, tier, int(SimConstants.SHIP_NAT_COST), tier])
+	elif made < count:
+		_log_event("⚙ Built %d× %s T%d (out of alloy — wanted %d)" % [made, rname, tier, count])
+	else:
+		_log_event("⚙ Built %d× %s T%d" % [made, rname, tier])
+
+
+# --- Rebindable action dispatch -------------------------------------------------
+
+# Reverse-lookup: which action (if any) is currently bound to this keycode.
+func _action_for(keycode: int) -> String:
+	for id in _binds:
+		if _binds[id] == keycode:
+			return id
+	return ""
+
+
+# Run the game action bound to a key (empty string = unbound, does nothing).
+func _dispatch_action(action: String) -> void:
+	match action:
+		"pause":
+			speed_idx = 0 if speed_idx != 0 else 1
+		"speed_up":
+			speed_idx = mini(SPEEDS.size() - 1, speed_idx + 1)
+		"speed_down":
+			speed_idx = maxi(0, speed_idx - 1)
+		"legend":
+			if legend_panel != null:
+				legend_panel.visible = not legend_panel.visible
+		"controls":
+			if controls_panel != null:
+				controls_panel.visible = not controls_panel.visible
+		"save":
+			save_game()
+		"load":
+			load_game()
+		_:
+			if action.begins_with("ship_"):
+				_build_from_hotkey(int(action.trim_prefix("ship_")))
+
+
+# Esc: close the top-most overlay if one is open, otherwise pause + open the menu.
+func _on_escape() -> void:
+	if intro_overlay != null and intro_overlay.visible:
+		intro_overlay.visible = false
+		speed_idx = 1
+	elif controls_panel != null and controls_panel.visible:
+		_cancel_listen()
+		controls_panel.visible = false
+	elif legend_panel != null and legend_panel.visible:
+		legend_panel.visible = false
+	elif menu_overlay != null and menu_overlay.visible:
+		_toggle_menu()
+	elif view_system_id != -1 or selected_planet_id != -1 or selected_fleet_id != -1:
+		view_system_id = -1
+		selected_planet_id = -1
+		selected_fleet_id = -1
+	else:
+		_toggle_menu()
+
+
+# --- Rebinding a key ------------------------------------------------------------
+
+# Click a key button: clear the binding and start listening for the replacement.
+func _begin_listen(action: String) -> void:
+	_binds[action] = 0
+	_listening_action = action
+	get_viewport().gui_release_focus()
+	_refresh_bind_rows()
+
+
+# Assign a captured key to an action, stealing it from whatever held it before.
+func _rebind(action: String, keycode: int) -> void:
+	for id in _binds:
+		if id != action and _binds[id] == keycode:
+			_binds[id] = 0
+	_binds[action] = keycode
+	_listening_action = ""
+	_save_binds()
+	_refresh_bind_rows()
+
+
+func _cancel_listen() -> void:
+	_listening_action = ""
+	_refresh_bind_rows()
+
+
+func _reset_binds() -> void:
+	_binds.clear()
+	for d in BIND_DEFS:
+		_binds[d[0]] = d[2]
+	_listening_action = ""
+	_save_binds()
+	_refresh_bind_rows()
+
+
+# Repaint every key button's caption from the live _binds state.
+func _refresh_bind_rows() -> void:
+	for id in _bind_rows:
+		var btn: Button = _bind_rows[id]
+		if id == _listening_action:
+			btn.text = "press a key…"
+		else:
+			btn.text = _key_name(_binds.get(id, 0))
+
+
+# Human-readable key caption (0 = unbound).
+func _key_name(keycode: int) -> String:
+	if keycode == 0:
+		return "—"
+	var s := OS.get_keycode_string(keycode)
+	return s if s != "" else "Key %d" % keycode
+
+
+func _load_binds() -> void:
+	# Seed from defaults, then overlay any saved overrides.
+	_binds.clear()
+	for d in BIND_DEFS:
+		_binds[d[0]] = d[2]
+	var cfg := ConfigFile.new()
+	if cfg.load(BINDS_PATH) == OK:
+		for d in BIND_DEFS:
+			var id: String = d[0]
+			if cfg.has_section_key("binds", id):
+				_binds[id] = int(cfg.get_value("binds", id))
+
+
+func _save_binds() -> void:
+	var cfg := ConfigFile.new()
+	for id in _binds:
+		cfg.set_value("binds", id, _binds[id])
+	cfg.save(BINDS_PATH)
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	# Right-drag to pan, wheel to zoom (always active now).
 	if event is InputEventMouseButton:
@@ -810,33 +1048,27 @@ func _unhandled_input(event: InputEvent) -> void:
 			and event.button_index == MOUSE_BUTTON_LEFT:
 		_select_at(get_global_mouse_position())
 	elif event is InputEventKey and event.pressed and not event.echo:
-		match event.keycode:
-			KEY_SPACE:
-				speed_idx = 0 if speed_idx != 0 else 1
-			KEY_1:
-				speed_idx = 1
-			KEY_2:
-				speed_idx = 2
-			KEY_3:
-				speed_idx = 3
-			KEY_ESCAPE:
-				# Close an open overlay first; otherwise deselect.
-				if intro_overlay != null and intro_overlay.visible:
-					intro_overlay.visible = false
-					speed_idx = 1
-				elif legend_panel != null and legend_panel.visible:
-					legend_panel.visible = false
-				else:
-					view_system_id = -1
-					selected_planet_id = -1
-					selected_fleet_id = -1
-			KEY_F5:
-				save_game()
-			KEY_F9:
-				load_game()
-			KEY_L:
-				if legend_panel != null:
-					legend_panel.visible = not legend_panel.visible
+		# 1. Capturing a new key for a rebind? (Esc cancels; bare modifiers ignored.)
+		if _listening_action != "":
+			if event.keycode == KEY_ESCAPE:
+				_cancel_listen()
+			elif event.keycode not in [KEY_SHIFT, KEY_CTRL, KEY_ALT, KEY_META]:
+				_rebind(_listening_action, event.keycode)
+			return
+		# 2. Esc: close the top overlay, else pause + open the menu.
+		if event.keycode == KEY_ESCAPE:
+			_on_escape()
+			return
+		# 3. While the controls page is open, swallow game hotkeys (rebind is by click).
+		if controls_panel != null and controls_panel.visible:
+			return
+		# 4. Numpad +/- are fixed speed shortcuts on top of the rebindable = / -.
+		if event.keycode == KEY_KP_ADD:
+			speed_idx = mini(SPEEDS.size() - 1, speed_idx + 1)
+		elif event.keycode == KEY_KP_SUBTRACT:
+			speed_idx = maxi(0, speed_idx - 1)
+		else:
+			_dispatch_action(_action_for(event.keycode))
 
 
 func _select_at(pos: Vector2) -> void:
@@ -1119,7 +1351,8 @@ func _update_tooltip() -> void:
 	if _tooltip_panel == null:
 		return
 	if (intro_overlay != null and intro_overlay.visible) \
-			or (legend_panel != null and legend_panel.visible):
+			or (legend_panel != null and legend_panel.visible) \
+			or (controls_panel != null and controls_panel.visible):
 		_tooltip_panel.visible = false
 		return
 	var sm := get_viewport().get_mouse_position()
@@ -1242,6 +1475,63 @@ func _fmt_num(v: float) -> String:
 	if v >= 1000.0:
 		return "%.1fk" % (v / 1000.0)
 	return "%.0f" % v
+
+
+# Sim day 0 = 1 Jan of START_YEAR; full-day granularity (tenths don't show on the date).
+func _fmt_date(total_days: int) -> String:
+	if total_days < 0:
+		total_days = 0
+	var y: int = SimConstants.START_YEAR + total_days / 365
+	var doy: int = total_days % 365
+	var m := 0
+	while m < 11 and doy >= _MONTH_DAYS[m]:
+		doy -= _MONTH_DAYS[m]
+		m += 1
+	return "%02d/%02d/%d" % [doy + 1, m + 1, y]
+
+
+# Slope of a tracked resource across the rate window (units per day). key: "min" for
+# minerals, else the alloy tier index 0-4.
+func _rate_of(key: String, tier: int) -> float:
+	if _rate_hist.size() < 2:
+		return 0.0
+	var latest: Dictionary = _rate_hist[-1]
+	var oldest: Dictionary = _rate_hist[0]
+	var span: float = latest.d - oldest.d
+	if span <= 0.0:
+		return 0.0
+	var newv: float = latest.min if key == "min" else latest.nat[tier]
+	var oldv: float = oldest.min if key == "min" else oldest.nat[tier]
+	return (newv - oldv) / span
+
+
+# Colour + sign a per-day rate for the HUD ("+1.4/d" green, "-0.3/d" red, "0.0/d" grey).
+# Alloy production is small and fractional, so always show one decimal (k-suffix stays
+# one decimal too, e.g. "+1.2k/d").
+func _fmt_rate(r: float) -> String:
+	var col := "#8a8f99"
+	var sign := ""
+	if r > 0.05:
+		col = "#7fd08a"; sign = "+"
+	elif r < -0.05:
+		col = "#e0736b"; sign = "-"
+	var a := absf(r)
+	var mag: String = ("%.1fk" % (a / 1000.0)) if a >= 1000.0 else ("%.1f" % a)
+	return "[color=%s]%s%s/d[/color]" % [col, sign, mag]
+
+
+# One stockpile snapshot per in-game day, feeding the income-rate readout.
+func _sample_rates(player: Empire) -> void:
+	var di := int(floor(sim.day))
+	if di == _last_sample_day:
+		return
+	_last_sample_day = di
+	var adj := PackedFloat32Array()
+	for t in 5:
+		adj.append(player.nat[t] + player.spent_nat[t])
+	_rate_hist.append({"d": float(di), "min": player.minerals, "nat": adj})
+	while _rate_hist.size() > 2 and _rate_hist[0].d < float(di) - RATE_WINDOW_DAYS:
+		_rate_hist.pop_front()
 
 
 func _star_color(sid: int) -> Color:
@@ -1457,7 +1747,7 @@ func _build_ui() -> void:
 	goods_label.fit_content = true
 	goods_label.scroll_active = false
 	goods_label.autowrap_mode = TextServer.AUTOWRAP_OFF
-	goods_label.custom_minimum_size = Vector2(360, 0)
+	goods_label.custom_minimum_size = Vector2(430, 0)
 	goods_label.add_theme_font_size_override("normal_font_size", 14)
 	standing_label = Label.new()
 	standing_label.modulate = Color(1, 1, 1, 0.7)
@@ -1470,8 +1760,8 @@ func _build_ui() -> void:
 	bar.add_child(standing_label)
 	# Paradox-style explainers: hovering a figure opens a window on what it is and how the
 	# mechanic works. (Map-node hover is handled in _update_tooltip.)
-	_add_ui_tip(raw_label, "[b]Water & Minerals[/b]\n[color=#88bbff]Water[/color] is your population's lifeblood — a [i]flow[/i], not a stockpile. The number is your net per day: water your mines produce minus what your people need. Population grows while it's positive, shrinks while negative; you can't bank a surplus, so pop settles at the level your water territory supports. Hold more water worlds to raise that ceiling.\n\n[color=#d0a060]Minerals[/color] are the one raw you DO stockpile — mined, then refined up the alloy chain.")
-	_add_ui_tip(goods_label, "[b]Alloys — tiers 1 to 5[/b]\nMinerals refine into tier-1 alloy; each higher tier is refined from the one below, and only bigger cities reach the higher tiers, so it's a pyramid (lots of T1, very few T5). [color=#aaffaa]Tier 1[/color] also pays for construction; a ship of tier N costs tier-N alloy. Tiers 3+ need you to mine BOTH water and minerals.")
+	_add_ui_tip(raw_label, "[b]Water[/b]\n[color=#88bbff]Water[/color] is your population's lifeblood — a [i]flow[/i], not a stockpile. The number is your net per day: water your mines produce minus what your people need. Population grows while it's positive, shrinks while negative; you can't bank a surplus, so pop settles at the level your water territory supports. Hold more water worlds to raise that ceiling.")
+	_add_ui_tip(goods_label, "[b]Minerals & alloys — amount over income[/b]\nEach column shows the [i]stockpile[/i] with its per-day income below (averaged over the last %d days; [color=#7fd08a]green[/color] rising, [color=#e0736b]red[/color] falling). Building ships or structures does [i]not[/i] count against income — the rate is production only.\n\n[color=#d0a060]Minerals[/color] are the mined raw. They refine into [color=#aaffaa]tier-1 alloy[/color], each higher tier from the one below, and only bigger cities reach the higher tiers — a pyramid (lots of T1, very few T5). Tier 1 also pays for construction; a ship of tier N costs tier-N alloy. Tiers 3+ need you to mine BOTH water and minerals." % int(RATE_WINDOW_DAYS))
 
 	hint_label = Label.new()
 	hint_label.modulate = Color(1, 1, 1, 0.5)
@@ -1592,6 +1882,7 @@ func _build_ui() -> void:
 	_build_ship_panel(layer)
 	_build_menu_overlay(layer)
 	_build_legend(layer)
+	_build_controls_panel(layer)
 	_build_intro(layer)
 
 
@@ -1668,6 +1959,135 @@ func _build_legend(layer: CanvasLayer) -> void:
 		v.add_child(l)
 
 
+# Centered, rebindable key-binding page. Toggled with K or from the pause menu; Esc
+# closes it. Each keyboard action shows its label on the LEFT and a clickable key button
+# on the RIGHT — click the button to clear it and press a new key. Mouse actions and Esc
+# are fixed and listed for reference only.
+func _build_controls_panel(layer: CanvasLayer) -> void:
+	controls_panel = PanelContainer.new()
+	controls_panel.set_anchors_preset(Control.PRESET_CENTER)
+	controls_panel.anchor_left = 0.5
+	controls_panel.anchor_right = 0.5
+	controls_panel.anchor_top = 0.5
+	controls_panel.anchor_bottom = 0.5
+	controls_panel.offset_left = -240
+	controls_panel.offset_right = 240
+	controls_panel.offset_top = -250
+	controls_panel.offset_bottom = 250
+	controls_panel.visible = false
+	controls_panel.z_index = 150
+	layer.add_child(controls_panel)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 4)
+	controls_panel.add_child(v)
+	var title := Label.new()
+	title.text = "Controls"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 22)
+	v.add_child(title)
+
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(0, 400)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_child(scroll)
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 16)
+	grid.add_theme_constant_override("v_separation", 3)
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(grid)
+
+	_bind_rows.clear()
+	# Ordered layout: which BIND_DEFS action ids sit under each heading, with a few
+	# fixed (non-rebindable) reference rows mixed in as [label, key] string pairs.
+	var sections := [
+		["— Map —", ["pan_up", "pan_left", "pan_down", "pan_right"],
+			[["Pan the map", "Right-drag"], ["Zoom in / out", "Mouse wheel"],
+			 ["Select / give orders", "Left-click"]]],
+		["— Speed —", ["pause", "speed_up", "speed_down"], []],
+		["— Build ships —", ["ship_1", "ship_2", "ship_3", "ship_4", "ship_5",
+			"ship_6", "ship_7", "ship_8", "ship_9", "ship_10"],
+			[["Build ×10", "Shift + key/click"], ["Build ×100", "Ctrl + key/click"]]],
+		["— Other —", ["legend", "controls", "save", "load"],
+			[["Close panel / deselect", "Esc"]]],
+	]
+	for sec in sections:
+		_add_controls_heading(grid, sec[0])
+		for id in sec[1]:
+			_add_bind_row(grid, id)
+		for fixed in sec[2]:
+			_add_fixed_row(grid, fixed[0], fixed[1])
+
+	var buttons := HBoxContainer.new()
+	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	buttons.add_theme_constant_override("separation", 12)
+	v.add_child(buttons)
+	var reset_btn := Button.new()
+	reset_btn.text = "Reset to defaults"
+	reset_btn.pressed.connect(_reset_binds)
+	buttons.add_child(reset_btn)
+	var close_btn := Button.new()
+	close_btn.text = "Close"
+	close_btn.pressed.connect(func() -> void:
+		_cancel_listen()
+		controls_panel.visible = false)
+	buttons.add_child(close_btn)
+
+	var hint := Label.new()
+	hint.text = "Click a key to rebind it • K or Esc to close"
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", 10)
+	hint.modulate = Color(1, 1, 1, 0.4)
+	v.add_child(hint)
+	_refresh_bind_rows()
+
+
+# A full-width section heading inside the 2-column grid.
+func _add_controls_heading(grid: GridContainer, text: String) -> void:
+	var spacer := Control.new()
+	grid.add_child(spacer)
+	var h := Label.new()
+	h.text = text
+	h.add_theme_font_size_override("font_size", 12)
+	h.modulate = Color(0.7, 0.85, 1.0, 0.9)
+	grid.add_child(h)
+
+
+# A rebindable row: action label on the LEFT, clickable key button on the RIGHT.
+func _add_bind_row(grid: GridContainer, action_id: String) -> void:
+	var label_text := action_id
+	for d in BIND_DEFS:
+		if d[0] == action_id:
+			label_text = d[1]
+			break
+	var lbl := Label.new()
+	lbl.text = label_text
+	lbl.add_theme_font_size_override("font_size", 12)
+	lbl.modulate = Color(1, 1, 1, 0.85)
+	grid.add_child(lbl)
+	var btn := Button.new()
+	btn.add_theme_font_size_override("font_size", 12)
+	btn.custom_minimum_size = Vector2(140, 0)
+	btn.pressed.connect(_begin_listen.bind(action_id))
+	grid.add_child(btn)
+	_bind_rows[action_id] = btn
+
+
+# A fixed reference row (label left, key text right) — not rebindable.
+func _add_fixed_row(grid: GridContainer, label_text: String, key_text: String) -> void:
+	var lbl := Label.new()
+	lbl.text = label_text
+	lbl.add_theme_font_size_override("font_size", 12)
+	lbl.modulate = Color(1, 1, 1, 0.55)
+	grid.add_child(lbl)
+	var k := Label.new()
+	k.text = key_text
+	k.add_theme_font_size_override("font_size", 12)
+	k.modulate = Color(1, 1, 1, 0.4)
+	grid.add_child(k)
+
+
 func _build_menu_overlay(layer: CanvasLayer) -> void:
 	menu_overlay = PanelContainer.new()
 	menu_overlay.set_anchors_preset(Control.PRESET_CENTER)
@@ -1701,6 +2121,14 @@ func _build_menu_overlay(layer: CanvasLayer) -> void:
 		save_game()
 		overlay_save.text = "Saved!")
 	v.add_child(overlay_save)
+	var controls_btn := Button.new()
+	controls_btn.text = "Controls"
+	controls_btn.pressed.connect(func() -> void:
+		menu_overlay.visible = false
+		speed_idx = _speed_before_menu
+		if controls_panel != null:
+			controls_panel.visible = true)
+	v.add_child(controls_btn)
 	var quit := Button.new()
 	quit.text = "Quit to menu"
 	quit.pressed.connect(func() -> void:
@@ -1792,7 +2220,7 @@ func _build_ship_panel(layer: CanvasLayer) -> void:
 		fb.text = "  Fighter"
 		fb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		fb.pressed.connect(func() -> void:
-			sim.build_ship(player_empire_id, SimConstants.Role.FIGHTER, t))
+			_build_ships(SimConstants.Role.FIGHTER, t, _build_count_from_mods()))
 		grid.add_child(fb)
 		ship_f_btns.append(fb)
 		var bb := Button.new()
@@ -1800,12 +2228,12 @@ func _build_ship_panel(layer: CanvasLayer) -> void:
 		bb.text = "  Bomber"
 		bb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		bb.pressed.connect(func() -> void:
-			sim.build_ship(player_empire_id, SimConstants.Role.BOMBER, t))
+			_build_ships(SimConstants.Role.BOMBER, t, _build_count_from_mods()))
 		grid.add_child(bb)
 		ship_b_btns.append(bb)
 	# Clarify what ships are paid with — the tier's ALLOY (shown in the top bar).
 	var note := Label.new()
-	note.text = "Each ship costs %d of that tier's alloy (top bar).\nHigh tiers (tier %d+) need BOTH water & mineral mines." \
+	note.text = "Each ship costs %d of that tier's alloy (top bar).\nShift = build ×10, Ctrl = ×100.  Hotkeys 1-5 Fighter, 6-0 Bomber.\nHigh tiers (tier %d+) need BOTH water & mineral mines." \
 		% [int(SimConstants.SHIP_NAT_COST), SimConstants.VARIETY_MIN_TIER + 1]
 	note.add_theme_font_size_override("font_size", 10)
 	note.modulate = Color(1, 1, 1, 0.5)
@@ -1930,17 +2358,27 @@ func _refresh_ui() -> void:
 	var player: Empire = sim.empires[player_empire_id]
 	# Water is a flow (income vs population demand, per day — never banked); minerals are
 	# the one banked raw; the five alloy tiers are the refined goods (T1 also builds).
+	_sample_rates(player)
 	var w_in: float = player.water_income / SimConstants.TICK_DAYS
 	var w_need: float = player.water_demand / SimConstants.TICK_DAYS
-	raw_label.text = "Water %+.0f/day    Minerals %s" \
-		% [w_in - w_need, _fmt_num(player.minerals)]
-	# Alloy tiers with their generated tier-badge icons instead of "T1..T5".
+	raw_label.text = "Water %+.0f/day" % [w_in - w_need]   # a flow — no stockpile
+	# Minerals + the five alloy tiers as a 2-row grid: amount over its income rate
+	# (per-day slope, production only). A table keeps the rate aligned under each amount.
 	goods_label.clear()
-	goods_label.append_text("Alloys  ")
+	goods_label.push_table(6)
+	# Row 1 — amounts (minerals as text, tiers with their badge icons).
+	goods_label.push_cell(); goods_label.append_text("Min %s" % _fmt_num(player.minerals)); goods_label.pop()
 	for t in 5:
-		goods_label.add_image(_tier_icons[t], 15, 15)
-		goods_label.append_text(" %s   " % _fmt_num(player.nat[t]))
-	day_label.text = "Day %.1f" % sim.day
+		goods_label.push_cell()
+		goods_label.add_image(_tier_icons[t], 14, 14)
+		goods_label.append_text(" %s" % _fmt_num(player.nat[t]))
+		goods_label.pop()
+	# Row 2 — the matching income rates.
+	goods_label.push_cell(); goods_label.append_text(_fmt_rate(_rate_of("min", 0))); goods_label.pop()
+	for t in 5:
+		goods_label.push_cell(); goods_label.append_text(_fmt_rate(_rate_of("nat", t))); goods_label.pop()
+	goods_label.pop()   # table
+	day_label.text = _fmt_date(int(floor(sim.day)))
 	# Player's own standing (no fog concern — it's your empire): systems / pop /
 	# colonies, so you can gauge where you stand without counting the map.
 	var psys := 0

@@ -16,6 +16,11 @@ var color: Color = Color.WHITE
 var minerals: float = SimConstants.START_MINERALS
 # Alloy tiers 1-5 (index 0-4), refined in cities. nat[0] (T1) also pays for building.
 var nat: Array[float] = [SimConstants.START_NAT0, 0.0, 0.0, 0.0, 0.0]
+# Lifetime alloy paid out on purchases (ships/structures), per tier. Monotonic, never
+# banked back — the HUD adds it to the stockpile so displayed income rates reflect
+# PRODUCTION only (buying a ship must not read as negative income). Not serialized:
+# only differences over a few days matter, and the rate window rebuilds after load.
+var spent_nat: Array[float] = [0.0, 0.0, 0.0, 0.0, 0.0]
 # Water flow this tick (recomputed every tick — display/growth only, never banked).
 var water_income: float = 0.0    # water produced by this empire's mines this tick
 var water_demand: float = 0.0    # water its whole population needs this tick

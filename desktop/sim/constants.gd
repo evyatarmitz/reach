@@ -28,6 +28,11 @@ const MINE_MAX_LEVEL := 4
 # deterministic; the speed dial changes how many ticks run per real second.
 const TICK_DAYS := 0.1
 
+# Calendar epoch: sim day 0 is 1 Jan of this year. 2291 is a shout-out — the year
+# humanity first tested the Shaw-Fujikawa Translight Engine (slipspace) in Halo lore,
+# i.e. the year we cracked FTL. Purely cosmetic; change freely.
+const START_YEAR := 2291
+
 # Starting empire stockpiles. Water is a FLOW now (not banked — see the tick), so
 # there's no starting water; a little starting T1 alloy + minerals so the opening
 # isn't dead while the home mines spin up.
