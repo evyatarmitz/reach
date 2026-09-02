@@ -9,6 +9,12 @@ const SIZES := [["Small", 60], ["Medium", 120], ["Large", 250], ["Custom", -1]]
 const EMPIRES := [2, 3, 4, 5, 6]
 const DIFFS := [["Easy", 0.6], ["Normal", 1.0], ["Hard", 1.5]]
 
+# The rebindable controls page and self-updater are shared with the in-game HUD; the
+# menu hosts the same Options page and a bottom-left version/update widget. Preloaded
+# (no class_name) for the same headless class-cache reason as in updater.gd.
+const ControlsPageScript := preload("res://menu/controls_page.gd")
+const UpdaterScript := preload("res://game/updater.gd")
+
 var _main_box: VBoxContainer
 var _settings_box: VBoxContainer
 var _size_opt: OptionButton
@@ -18,6 +24,11 @@ var _size_val_label: Label
 var _empire_opt: OptionButton
 var _diff_opt: OptionButton
 var _stars: Array = []   # backdrop starfield [pos, radius, Color]
+var _controls_page: Control
+var _updater: Node
+var _update_btn: Button
+var _update_apply: Button
+var _update_status: Label
 
 
 # Deep-space backdrop behind the menu UI: a dark fill plus a seeded starfield, so
@@ -85,6 +96,9 @@ func _ready() -> void:
 	cont.disabled = not FileAccess.file_exists(SAVE_PATH)
 	cont.pressed.connect(_on_continue)
 	_main_box.add_child(cont)
+	var options := _big_button("Options")
+	options.pressed.connect(func() -> void: _controls_page.open())
+	_main_box.add_child(options)
 	var quit := _big_button("Quit")
 	quit.pressed.connect(func() -> void: get_tree().quit())
 	_main_box.add_child(quit)
@@ -128,8 +142,81 @@ func _ready() -> void:
 		_main_box.visible = true)
 	_settings_box.add_child(back)
 
+	# Shared rebindable controls page (same component as the in-game one), hidden until
+	# Options is pressed. Added last so it draws over the menu; it closes itself on Esc.
+	_controls_page = ControlsPageScript.new()
+	_controls_page.visible = false
+	add_child(_controls_page)
+
+	_build_footer()
+
 	if "--menushot" in OS.get_cmdline_user_args():
 		_menushot()
+
+
+# Bottom-left version label + self-update controls, mirroring the pause menu's updater
+# widget. Outside a real Windows build (e.g. the editor) the updater reports that updates
+# only apply to the installed build, same as in-game.
+func _build_footer() -> void:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	box.alignment = BoxContainer.ALIGNMENT_END   # hug the bottom edge
+	box.anchor_top = 1.0
+	box.anchor_bottom = 1.0
+	box.offset_left = 12.0
+	box.offset_top = -180.0
+	box.offset_bottom = -12.0
+	box.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	add_child(box)
+
+	var ver := Label.new()
+	ver.text = "Reach v%s" % UpdaterScript.CURRENT
+	ver.modulate = Color(1, 1, 1, 0.5)
+	ver.add_theme_font_size_override("font_size", 11)
+	box.add_child(ver)
+
+	_updater = UpdaterScript.new()
+	add_child(_updater)
+	_updater.check_done.connect(_on_update_check_done)
+	_updater.apply_started.connect(func() -> void:
+		_update_status.text = "Downloading update…"
+		_update_apply.disabled = true
+		_update_btn.disabled = true)
+	_updater.apply_failed.connect(func(msg: String) -> void:
+		_update_status.text = "Update failed: %s" % msg
+		_update_btn.disabled = false)
+
+	_update_btn = Button.new()
+	_update_btn.text = "Check for updates"
+	_update_btn.add_theme_font_size_override("font_size", 11)
+	_update_btn.pressed.connect(func() -> void:
+		_update_status.text = "Checking…"
+		_update_btn.disabled = true
+		_updater.check_for_update())
+	box.add_child(_update_btn)
+
+	_update_apply = Button.new()
+	_update_apply.text = "Update & restart"
+	_update_apply.add_theme_font_size_override("font_size", 11)
+	_update_apply.visible = false
+	_update_apply.pressed.connect(func() -> void: _updater.apply_update())
+	box.add_child(_update_apply)
+
+	_update_status = Label.new()
+	_update_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_update_status.custom_minimum_size = Vector2(240, 0)
+	_update_status.modulate = Color(1, 1, 1, 0.7)
+	_update_status.add_theme_font_size_override("font_size", 11)
+	box.add_child(_update_status)
+
+
+func _on_update_check_done(available: bool, latest: String, note: String) -> void:
+	_update_btn.disabled = false
+	_update_apply.visible = available
+	if available:
+		_update_status.text = "Update available: v%s" % latest
+	else:
+		_update_status.text = note
 
 
 func _menushot() -> void:
