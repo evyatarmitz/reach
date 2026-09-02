@@ -18,7 +18,7 @@ signal apply_failed(msg: String)
 
 const REPO := "evyatarmitz/reach"
 # The installed build's version — keep in sync with the release tag (without the "v").
-const CURRENT := "0.3.0-alpha"
+const CURRENT := "0.3.2-alpha"
 const API_LATEST := "https://api.github.com/repos/%s/releases/latest" % REPO
 const UA := "reach-updater"
 
@@ -135,25 +135,42 @@ func _handle_download(code: int) -> void:
 	_swap_and_relaunch(exe, new_exe)
 
 
-# Write the wait-swap-relaunch batch, launch it detached, and quit so it can proceed.
+# Write the swap-and-relaunch batch, launch it detached, and quit so it can proceed.
+# The swap doesn't try to detect when the game exits (tasklist/PID matching and `timeout`
+# both proved flaky, especially with spaces in the install path). Instead it just retries
+# `move` in a loop: Windows keeps a running .exe file-locked, so the move fails until this
+# process has fully quit, then succeeds — a self-timing wait that needs no console tricks.
 func _swap_and_relaunch(exe: String, new_exe: String) -> void:
-	var pid := OS.get_process_id()
 	var bat := exe.get_base_dir().path_join("_reach_update.bat")
 	var w_exe := exe.replace("/", "\\")
 	var w_new := new_exe.replace("/", "\\")
-	var script := "@echo off\r\n"
-	script += ":wait\r\n"
-	script += "tasklist /fi \"PID eq %d\" 2>nul | find \"%d\" >nul\r\n" % [pid, pid]
-	script += "if not errorlevel 1 ( timeout /t 1 /nobreak >nul & goto wait )\r\n"
-	script += "move /y \"%s\" \"%s\" >nul\r\n" % [w_new, w_exe]
-	script += "start \"\" \"%s\"\r\n" % w_exe
-	script += "del /f \"%%~f0\"\r\n"
+	var lines := PackedStringArray([
+		"@echo off",
+		"echo Updating Reach, please wait...",
+		"setlocal enabledelayedexpansion",
+		"set \"EXE=" + w_exe + "\"",
+		"set \"NEW=" + w_new + "\"",
+		"set /a n=0",
+		":swap",
+		# Fails while the old game still holds the .exe lock; keep trying (~1s apart).
+		"move /y \"%NEW%\" \"%EXE%\" >nul 2>&1",
+		"if not errorlevel 1 goto done",
+		"set /a n+=1",
+		"if !n! geq 180 goto done",          # ~3 min safety cap, then relaunch anyway
+		"ping -n 2 127.0.0.1 >nul",
+		"goto swap",
+		":done",
+		"start \"\" \"%EXE%\"",
+		"del /f /q \"%~f0\"",
+	])
+	var script := "\r\n".join(lines) + "\r\n"
 	var bf := FileAccess.open(bat, FileAccess.WRITE)
 	if bf == null:
 		apply_failed.emit("couldn't write the updater script")
 		return
 	bf.store_string(script)
 	bf.close()
-	# Launch minimized and detached; then exit so the running exe unlocks for the swap.
-	OS.create_process("cmd", ["/c", "start", "", "/min", bat.replace("/", "\\")])
+	# Run the batch directly (not via `start`) so the spaced install path is handled
+	# correctly; OS.create_process is detached, so it survives our quit below.
+	OS.create_process("cmd.exe", ["/c", bat.replace("/", "\\")])
 	get_tree().quit()
