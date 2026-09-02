@@ -18,7 +18,7 @@ signal apply_failed(msg: String)
 
 const REPO := "evyatarmitz/reach"
 # The installed build's version — keep in sync with the release tag (without the "v").
-const CURRENT := "0.3.3-alpha"
+const CURRENT := "0.3.4-alpha"
 const API_LATEST := "https://api.github.com/repos/%s/releases/latest" % REPO
 const UA := "reach-updater"
 
