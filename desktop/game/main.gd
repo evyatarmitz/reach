@@ -357,12 +357,18 @@ func _scan_events() -> void:
 				var nm: String = sim.systems[sid].name if sim.systems.has(sid) else "?"
 				_log_event("✖ Colony lost at %s" % nm)
 	_prev_pcolonies = now
-	# Battles at systems the player can currently see.
+	# Combat at systems the player can currently see. Battle (enemy fleets clashing) and
+	# bombardment (a lone fleet grinding a colony) are distinct mechanics everywhere else in
+	# the UI, so the feed distinguishes them too — combat_kind is fresh from this tick's
+	# _resolve_combat when combat_at was just set.
 	for sid in sim.combat_at:
 		var d: float = sim.combat_at[sid]
 		if d > _seen_combat.get(sid, -1.0) and _sys_live(sid):
 			_seen_combat[sid] = d
-			_log_event("⚔ Battle at %s" % sim.systems[sid].name)
+			if sim.combat_kind.get(sid, 0) == 1:
+				_log_event("☄ Bombardment at %s" % sim.systems[sid].name)
+			else:
+				_log_event("⚔ Battle at %s" % sim.systems[sid].name)
 	_refresh_events()
 
 
@@ -1847,6 +1853,11 @@ func _build_legend(layer: CanvasLayer) -> void:
 	legend_panel.offset_left = 12.0
 	legend_panel.offset_top = -232.0
 	legend_panel.offset_bottom = -60.0
+	# Grow upward from the fixed bottom margin: the content is taller than the 172px the
+	# offsets imply, and the default (grow both ways) let the extra height spill off the
+	# bottom of the screen, clipping the last line (the anomaly glyph). Pinning the bottom
+	# and growing up keeps every line on-screen at any line count.
+	legend_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	legend_panel.visible = false
 	layer.add_child(legend_panel)
 	var v := VBoxContainer.new()
@@ -2633,7 +2644,59 @@ func _autoshot() -> void:
 		await RenderingServer.frame_post_draw
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png("user://autoshot_battle.png")
-	# Sixth shot: the one-time intro overlay (shown on every new game). Pure UI over the
+	# Sixth shot: BOMBARDMENT — the OTHER combat state (a lone fleet over an enemy colony,
+	# no enemy fleet to fight). It's a distinct design pillar ("killing population is slow"),
+	# with its own ☄ marker and readout, so it's worth its own coverage separate from the
+	# fleet battle. Find an enemy colony whose system has no enemy fleet, drop a bomber-heavy
+	# player fleet on it, tick once so _bombard runs and combat_kind flags 1.
+	var bomb_sys := -1
+	for c in sim.colonies:
+		if c.empire_id == player_empire_id:
+			continue
+		var sid: int = sim.planets[c.planet_id].system_id
+		if not sim._has_enemy_fleet(player_empire_id, sid):   # no defender → bombardment
+			bomb_sys = sid
+			break
+	if bomb_sys != -1:
+		var bf := sim._fleet_at(player_empire_id, bomb_sys)
+		bf.bombers[2] += 12   # bomb power to grind the colony
+		bf.fighters[1] += 4
+		sim.tick(SimConstants.TICK_DAYS)   # _bombard runs → combat_kind[bomb_sys] = 1
+		_recompute_borders()
+		selected_fleet_id = -1
+		for f in sim.fleets:
+			if f.empire_id == player_empire_id and f.system_id == bomb_sys \
+					and not f.is_moving():
+				selected_fleet_id = f.id
+				break
+		view_system_id = -1
+		selected_planet_id = -1
+		_galaxy_cam_pos = sim.systems[bomb_sys].map_pos
+		_galaxy_cam_zoom = 1.8
+		_apply_camera()
+		_refresh_ui()
+		queue_redraw()
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png("user://autoshot_bombard.png")
+	# Seventh shot: the map LEGEND (L). O6 leaned on "it's fine, the legend explains the
+	# glyphs" — capture it to verify that claim holds (every map symbol covered, legible).
+	selected_fleet_id = -1
+	view_system_id = -1
+	selected_planet_id = -1
+	_galaxy_cam_pos = home.map_pos
+	_galaxy_cam_zoom = 1.4
+	_apply_camera()
+	_refresh_ui()
+	if legend_panel != null:
+		legend_panel.visible = true
+	queue_redraw()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://autoshot_legend.png")
+	if legend_panel != null:
+		legend_panel.visible = false
+	# Eighth shot: the one-time intro overlay (shown on every new game). Pure UI over the
 	# galaxy — verifies the welcome copy fits its opaque panel and reads cleanly.
 	selected_fleet_id = -1
 	view_system_id = -1

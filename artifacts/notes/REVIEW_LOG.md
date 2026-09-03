@@ -208,3 +208,45 @@ collapses the shipyard on the Orron city view to verify.
 - Star ownership rings + star-type colours are clear.
 - Selected fleet's travel path (dashed line to destination) is easy to follow.
 - Anomalies (magenta nebulae) look good and clearly break up the lane network.
+
+---
+
+## Cycle 8 — 2026-09-03 — WIDER COVERAGE: bombardment + on-screen legend (2 new poses)
+
+Added two more `--autoshot` poses to close the last coverage gaps the harness couldn't
+reach: a **lone-fleet bombardment** (`autoshot_bombard.png` — a player bomber fleet parked
+over an enemy colony with no enemy fleet present, so `_resolve_combat` runs `_bombard`
+instead of `_fight`, flagging `combat_kind=1`) and an explicit **legend** pose
+(`autoshot_legend.png` — the map legend toggled visible over the galaxy). Staging is at the
+end of `_autoshot()`.
+
+### 🔴 Red (fixed this cycle)
+- **R6 — Event feed labeled a bombardment as "⚔ Battle".** ✅ FIXED. The fleet panel
+  correctly read "☄ bombarding the enemy world here", but the top-left event feed logged
+  every `combat_at` entry as "⚔ Battle at %s" regardless of kind — so a bombardment showed
+  "⚔ Battle at Lonyx", contradicting the panel and mis-teaching what the two combat modes
+  are. Fix (`_refresh_events`): branch on `sim.combat_kind.get(sid, 0) == 1` →
+  "☄ Bombardment at %s", else "⚔ Battle at %s". Verified in the re-captured bombard shot:
+  the feed now shows "☄ Bombardment at Lonyx" below the two "⚔ Battle at Karon" lines.
+- **R7 — Map legend's last line clipped off the bottom of the screen.** ✅ FIXED. The legend
+  panel is anchored to the bottom-left with offsets implying ~172px, but its 12 glyph lines
+  are taller than that; with the default grow-both-ways the surplus height spilled off the
+  bottom of the viewport, cutting the last line (the anomaly glyph — "purple nebula —
+  anomaly…"). Fix (`_build_legend`): `grow_vertical = GROW_DIRECTION_BEGIN` pins the bottom
+  margin and grows the panel upward, so every line stays on-screen at any line count.
+  Verified in the re-captured legend shot: all 12 lines fully visible, nothing clipped.
+
+### 🟢 Green (working well — leave alone)
+- **Bombardment reads correctly.** `autoshot_bombard.png`: the lone bomber fleet over Lonyx
+  shows Bomb 270 in the fleet panel with the "☄ bombarding the enemy world here" readout and
+  the retreat-only pin (Merge/Split still offered, no "held" lock) — the distinct
+  bombardment mode surfaces clearly and differently from a two-empire battle.
+- **Legend is complete and legible.** All 12 lines decode the glyphs (star glow, ownership
+  ring, colony count, fleet arrow/stripe, sight states, contested border, hover hint, the
+  planet/structure glyph key, anomaly) on an opaque panel — closes the "structure glyphs need
+  the legend" note (O6): the legend does the job, it just had to fully fit on screen.
+
+### Coverage status
+Every scenario flagged as "what the harness can't show us" (cycle 4) is now covered: live
+battle (cycle 6), colony panel (6), intro overlay (6), zoom (5), bombardment (8), legend (8).
+Nine harness poses total. No open reds across any pose.
