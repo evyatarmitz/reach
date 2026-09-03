@@ -175,12 +175,32 @@ the empire and selects the best-stocked established city; the intro just shows t
 
 ### 🟠 Orange (logged, not urgent)
 - **O7 — The always-open "Build ships" shipyard panel permanently squeezes the selection
-  panel into a short lane.** In the battle shot the fleet readout's tail ("🔒 held in the
-  fight…") and in the colony shot the system-structure buttons (depot / obs post / transport)
-  sit below the fold and need a scroll to reach. Nothing is lost (the ScrollContainer works),
-  but time-relevant info/actions being below the fold by default is a mild cost. Root cause
-  is layout, not the panel — see IDEAS.md #1 (make the shipyard collapsible / free the right
-  column). Low priority.
+  panel into a short lane.** ✅ FIXED (cycle 7). In the battle shot the fleet readout's tail
+  ("🔒 held in the fight…") and in the colony shot the system-structure buttons (depot / obs
+  post / transport) sat below the fold and needed a scroll to reach. Nothing was lost (the
+  ScrollContainer worked), but time-relevant info/actions being below the fold by default was
+  a real cost. Root cause was layout — see cycle 7.
+
+---
+
+## Cycle 7 — 2026-09-03 — collapsible shipyard (fixes O7)
+
+Made the top-right "Build ships" shipyard panel collapsible: its header is now a button
+(▾ expanded / ▸ collapsed) that hides the tier grid + cost note (`ship_body`). The shipyard
+is a *global* action unrelated to the current selection, so it shouldn't permanently squeeze
+the selection panel. Collapsing it shrinks the panel, whose `resized` signal re-docks the
+selection panel up under the collapsed header — reusing the runtime-dock already in place, so
+no hard-coded heights. Added an 8th harness pose (`autoshot_colony_collapsed.png`) that
+collapses the shipyard on the Orron city view to verify.
+
+### 🟢 Green (verified this cycle)
+- **`autoshot_colony_collapsed.png`:** with the shipyard collapsed to a single "▸ Build ships"
+  header, the Orron selection panel reclaims the whole right column and shows EVERY action
+  without scrolling — Immigration, Specialize refining, and all three structure buttons
+  (Build supply depot / observation post / transport hub) that were below the fold when
+  expanded (`autoshot_colony.png`). Confirms both the O7 squeeze and its fix.
+- Expanded state unchanged bar the new caret header ("▾ Build ships — by tier"); tier grid,
+  costs, and hotkeys note all read as before.
 
 ### 🟢 Green (working well — leave alone)
 - Border contest reads clearly (blue vs. gold influence field, deformed border).

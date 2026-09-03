@@ -11,13 +11,13 @@ Priority tags: 💡 nice-to-have · ⭐ strong fit, worth scheduling · 🧭 nee
 
 ## Layout / HUD
 
-1. ⭐ **Make the "Build ships" shipyard panel collapsible (or context-opened).** *(battle +
-   colony captures)* It's docked open on the whole right side at all times — even when you're
-   managing a colony nowhere near a shipyard — and it permanently squeezes the selection
-   panel into a short lane, pushing battle-readout tails and colony structure-buttons below
-   the fold (see REVIEW_LOG O7). A collapse toggle, or only auto-opening it when a
-   ship-building context is relevant, would free the right column and remove the squeeze at
-   its root. Directly fixes the O7 orange rather than papering over it with scroll.
+1. ✅ **DONE (cycle 7) — Made the "Build ships" shipyard panel collapsible.** *(battle +
+   colony captures)* It was docked open on the whole right side at all times and permanently
+   squeezed the selection panel, pushing battle-readout tails and colony structure-buttons
+   below the fold (O7). Now a caret header collapses it, freeing the right column. *Still
+   open as a future refinement:* auto-open/close it by context (open when a fleet is selected
+   or you're near a shipyard, collapsed when managing a distant colony) so the player rarely
+   toggles it by hand — a 🧭 design call, not scheduled.
 
 2. 💡 **Dim/hide zero rates in the top resource bar.** *(all galaxy captures)* The per-day
    rate row is mostly `0.0/d 0.0/d …` when steady/paused, which is visual noise competing

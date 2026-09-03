@@ -119,6 +119,9 @@ var _seen_combat: Dictionary = {}     # system_id -> last combat day already log
 var speed_buttons: Array[Button] = []
 var panel: PanelContainer
 var ship_panel: PanelContainer   # top-right shipyard; the selection panel docks below it
+var ship_body: VBoxContainer     # the collapsible part (tier grid + cost note)
+var ship_head_btn: Button        # header toggles the shipyard collapsed/expanded
+var ship_collapsed := false      # collapsed → selection panel reclaims the right column
 var panel_title: Label
 var panel_body: Label
 var colonize_btn: Button
@@ -1996,15 +1999,26 @@ func _build_ship_panel(layer: CanvasLayer) -> void:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 4)
 	sp.add_child(box)
-	var head := Label.new()
-	head.text = "Build ships — by tier"
-	head.modulate = Color(1, 1, 1, 0.7)
-	box.add_child(head)
+	# Clickable header: collapses the shipyard so a content-heavy selection panel gets the
+	# whole right column (the shipyard is a global action, unrelated to the current
+	# selection, so it shouldn't permanently squeeze it). The caret shows the state.
+	ship_head_btn = Button.new()
+	ship_head_btn.flat = true
+	ship_head_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	ship_head_btn.modulate = Color(1, 1, 1, 0.7)
+	ship_head_btn.pressed.connect(_toggle_shipyard)
+	box.add_child(ship_head_btn)
+	# Everything below the header lives in ship_body, hidden when collapsed. Hiding it
+	# shrinks the panel, whose resized signal re-docks the selection panel up (no hard-coded
+	# heights) — the same runtime-dock that already keeps the two from overlapping.
+	ship_body = VBoxContainer.new()
+	ship_body.add_theme_constant_override("separation", 4)
+	box.add_child(ship_body)
 	var grid := GridContainer.new()
 	grid.columns = 2
 	grid.add_theme_constant_override("h_separation", 6)
 	grid.add_theme_constant_override("v_separation", 3)
-	box.add_child(grid)
+	ship_body.add_child(grid)
 	for s in ["Fighter", "Bomber"]:
 		var h := Label.new()
 		h.text = s
@@ -2036,7 +2050,21 @@ func _build_ship_panel(layer: CanvasLayer) -> void:
 	note.add_theme_font_size_override("font_size", 10)
 	note.modulate = Color(1, 1, 1, 0.5)
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	box.add_child(note)
+	ship_body.add_child(note)
+	_apply_shipyard_collapse()   # set the header caret + body visibility
+
+
+func _toggle_shipyard() -> void:
+	ship_collapsed = not ship_collapsed
+	_apply_shipyard_collapse()
+
+
+func _apply_shipyard_collapse() -> void:
+	if ship_body == null or ship_head_btn == null:
+		return
+	ship_body.visible = not ship_collapsed
+	# ▸ collapsed / ▾ expanded — the caret advertises that the header is clickable.
+	ship_head_btn.text = ("▸ Build ships" if ship_collapsed else "▾ Build ships — by tier")
 
 
 # Keep the right-edge selection panel docked just below the shipyard's real bottom, so the
@@ -2555,6 +2583,19 @@ func _autoshot() -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://autoshot_colony.png")
+	# Same city, shipyard COLLAPSED: the selection panel should reclaim the whole right
+	# column and show every action button without scrolling (the O7 fix). Hiding ship_body
+	# fires the shipyard's resized signal, which re-docks the selection panel up under the
+	# collapsed header.
+	ship_collapsed = true
+	_apply_shipyard_collapse()
+	_refresh_ui()
+	queue_redraw()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://autoshot_colony_collapsed.png")
+	ship_collapsed = false   # restore the expanded shipyard for the remaining poses
+	_apply_shipyard_collapse()
 	# Fifth shot: a LIVE FLEET BATTLE. Stage an enemy fleet in the player's home system so
 	# _resolve_combat pins both sides and flags combat_at/combat_kind, then show the galaxy
 	# with the player's fleet selected — the fleet panel renders the full who-vs-who battle
