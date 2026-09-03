@@ -108,6 +108,7 @@ var _last_sample_day := -1
 const _MONTH_DAYS := [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 var standing_label: Label
 var hint_label: Label
+var top_bar: PanelContainer   # the top HUD bar; hint/event labels dock below its real height
 var _tooltip_panel: PanelContainer   # Paradox-style hover popup (map nodes + HUD terms)
 var _tooltip_label: RichTextLabel
 var _ui_tips: Array = []              # [Control, bbcode] HUD elements with an explainer
@@ -1616,8 +1617,12 @@ func _build_ui() -> void:
 	add_child(layer)
 
 	var top := PanelContainer.new()
+	top_bar = top
 	UiStyle.make_opaque_bar(top)   # solid bg so the small resource figures read over the map
 	top.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	# Keep the top-left hint / event labels just under the bar's real bottom (its height
+	# depends on the resource text), so they never tuck under the now-opaque bar.
+	top.resized.connect(_dock_top_labels)
 	layer.add_child(top)
 	var bar := HBoxContainer.new()
 	bar.add_theme_constant_override("separation", 24)
@@ -2031,6 +2036,18 @@ func _dock_selection_panel() -> void:
 	if panel == null or ship_panel == null:
 		return
 	panel.offset_top = ship_panel.offset_top + ship_panel.size.y + 12.0
+
+
+# Park the top-left hint + event feed just below the top bar's real bottom, so they clear
+# the (now opaque) bar regardless of its height.
+func _dock_top_labels() -> void:
+	if top_bar == null:
+		return
+	var y := top_bar.size.y + 6.0
+	if hint_label != null:
+		hint_label.position = Vector2(16.0, y)
+	if event_label != null:
+		event_label.position = Vector2(16.0, y + 24.0)
 
 
 func _on_colonize() -> void:

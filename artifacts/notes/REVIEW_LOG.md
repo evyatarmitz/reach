@@ -43,9 +43,10 @@ right.
   both PNGs came out identical. Fix in `_autoshot()`: clear `selected_fleet_id`, drop the
   hover hold, then `_refresh_ui()` + `queue_redraw()` before the 2nd save. `autoshot.png`
   now correctly shows the system/planet panel (verified: Karon colony readout).
-- **O3 — Top-left hint line can overlap the date/water labels.** `hint_label` is pinned
-  at (16, 40), just under the auto-height top bar; on a tall top bar it can touch the
-  first HUD row. Low severity.
+- **O3 — Top-left hint line can overlap the date/water labels.** ✅ FIXED (cycle 4). Was
+  pinned at a fixed (16, 40) that tucked under the now-opaque top bar. Added
+  `_dock_top_labels` (driven by `top_bar.resized`) to park the hint + event feed just
+  below the bar's real laid-out height — same runtime-dock pattern as the selection panel.
 - **O4 — Selection panel can overflow the bottom edge (found after O2's fix let us see the
   system panel).** The selection panel now docks below the shipyard, giving it a shorter
   vertical lane; a content-heavy OWN colony (planet list + 6-line body + up to ~6 action
@@ -91,6 +92,28 @@ Capture: `autoshot_galaxy.png` (rebuilt). Focus: the top HUD bar.
   per-figure detail on hover (intentional, per the HUD comment). With the bar now opaque
   the amount/rate table lines up and reads fine — closing the "cramped/label the tiers"
   part of O1 as acceptable. Revisit only if playtesting shows people can't tell tiers apart.
+
+---
+
+## Cycle 4 — 2026-09-03 — top-left labels
+
+Capture: `autoshot_galaxy.png` (rebuilt). Fixed R4/O3 (hint dock). Verified: the hint
+line clears the opaque bar with a clean gap.
+
+---
+
+## Status after cycle 4
+
+Every item from cycle 1's triage is resolved (R1, R2/O4, R3/O1, O3, O2). Both captured
+views — galaxy (fleet selected) and system (colony selected) — now read cleanly: opaque
+panels, no overlaps, nothing cut off.
+
+**What the current harness can't show us (candidates for a wider review):** `--autoshot`
+only stages one scenario (two empires, a moving fleet, a home colony). Findings we can't
+surface yet, worth adding shot variants for later: a live fleet battle (the pin/combat
+readout + crossed-swords marker), a zoomed-in cluster (label density / lane clutter), the
+one-time intro overlay, and a multi-planet owned system (to stress the new panel scroll).
+Not urgent — noted so a future cycle can widen coverage by teaching the harness more poses.
 
 ### 🟢 Green (working well — leave alone)
 - Border contest reads clearly (blue vs. gold influence field, deformed border).
