@@ -117,6 +117,7 @@ var _prev_pcolonies: Dictionary = {}  # planet_id -> system_id, player's colonie
 var _seen_combat: Dictionary = {}     # system_id -> last combat day already logged
 var speed_buttons: Array[Button] = []
 var panel: PanelContainer
+var ship_panel: PanelContainer   # top-right shipyard; the selection panel docks below it
 var panel_title: Label
 var panel_body: Label
 var colonize_btn: Button
@@ -1702,18 +1703,21 @@ func _build_ui() -> void:
 	bar.add_child(menu_btn)
 
 	panel = PanelContainer.new()
+	UiStyle.make_opaque(panel)   # solid bg so it never shows the shipyard/map through it
 	layer.add_child(panel)
-	# Explicit anchors/offsets — the preset helpers size from the internal
-	# minimum (just the stylebox) and ignore custom_minimum_size, which pushed
-	# the panel off-screen. 280x240, pinned 12px inside the right edge.
+	# Docked to the right edge, BELOW the top-right shipyard panel and down to just above
+	# the bottom — a fixed lane of its own, so the selection readout can never overlap the
+	# shipyard's helper text (it used to float around vertical center and collide with it).
+	# offset_bottom hugs the floor; offset_top is a sane fallback that _dock_selection_panel
+	# overrides with the shipyard's real bottom once it lays out.
 	panel.anchor_left = 1.0
 	panel.anchor_right = 1.0
-	panel.anchor_top = 0.5
-	panel.anchor_bottom = 0.5
+	panel.anchor_top = 0.0
+	panel.anchor_bottom = 1.0
 	panel.offset_left = -292.0
 	panel.offset_right = -12.0
-	panel.offset_top = -50.0    # sits below the top-right shipyard panel
-	panel.offset_bottom = 290.0
+	panel.offset_top = 340.0
+	panel.offset_bottom = -12.0
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 6)
 	panel.add_child(vbox)
@@ -1957,11 +1961,16 @@ func _on_update_check_done(available: bool, latest: String, note: String) -> voi
 # when that tier's national resource can pay for it.
 func _build_ship_panel(layer: CanvasLayer) -> void:
 	var sp := PanelContainer.new()
+	ship_panel = sp
+	UiStyle.make_opaque(sp)   # solid bg so the map doesn't bleed through the tier note
 	sp.anchor_left = 1.0
 	sp.anchor_right = 1.0
 	sp.offset_left = -232.0
 	sp.offset_right = -12.0
 	sp.offset_top = 40.0
+	# Dock the selection panel just under the shipyard's ACTUAL bottom, and keep it there
+	# if the shipyard ever re-lays-out (font/DPI change) — no brittle hard-coded height.
+	sp.resized.connect(_dock_selection_panel)
 	layer.add_child(sp)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 4)
@@ -2007,6 +2016,14 @@ func _build_ship_panel(layer: CanvasLayer) -> void:
 	note.modulate = Color(1, 1, 1, 0.5)
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(note)
+
+
+# Keep the right-edge selection panel docked just below the shipyard's real bottom, so the
+# two never overlap regardless of font/DPI (the shipyard's height isn't hard-coded here).
+func _dock_selection_panel() -> void:
+	if panel == null or ship_panel == null:
+		return
+	panel.offset_top = ship_panel.offset_top + ship_panel.size.y + 12.0
 
 
 func _on_colonize() -> void:
@@ -2444,8 +2461,16 @@ func _autoshot() -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://autoshot_galaxy.png")
+	# Second shot: the system/planet selection panel. Clear the fleet selection first —
+	# _refresh_ui() returns on the fleet branch before it reaches the system branch, so a
+	# lingering selected_fleet_id kept the panel on "Fleet" and the two shots came out
+	# identical. Then refresh the UI + redraw so the panel and the system ring actually paint.
+	selected_fleet_id = -1
+	_hover_hold = false
 	view_system_id = home.id
 	selected_planet_id = home.planet_ids[0]
+	_refresh_ui()
+	queue_redraw()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://autoshot.png")
