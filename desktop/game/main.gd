@@ -1718,15 +1718,21 @@ func _build_ui() -> void:
 	panel.offset_right = -12.0
 	panel.offset_top = 340.0
 	panel.offset_bottom = -12.0
+	# A ScrollContainer so a content-heavy colony (planet list + long body + many action
+	# buttons) scrolls inside the docked lane instead of running its lowest buttons off the
+	# bottom of the screen. Horizontal scroll off — the panel width is fixed.
+	var panel_scroll := ScrollContainer.new()
+	panel_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(panel_scroll)
 	var vbox := VBoxContainer.new()
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.add_theme_constant_override("separation", 6)
-	panel.add_child(vbox)
+	panel_scroll.add_child(vbox)
 	panel_title = Label.new()
 	planet_list = VBoxContainer.new()   # one selectable row per planet
 	planet_list.add_theme_constant_override("separation", 2)
 	panel_body = Label.new()            # detail for the selected planet / fleet
 	panel_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	panel_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	colonize_btn = Button.new()
 	colonize_btn.text = "Found colony (%d alloys)" % int(SimConstants.FOUND_COST_ALLOYS)
 	colonize_btn.pressed.connect(_on_colonize)

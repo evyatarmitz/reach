@@ -51,7 +51,27 @@ right.
   vertical lane; a content-heavy OWN colony (planet list + 6-line body + up to ~6 action
   buttons) can run past the bottom of the screen, cutting off the lowest buttons. Not a
   regression in kind (it could overflow before too) but the shorter lane makes it likelier.
-  Fix: wrap the panel's VBox in a ScrollContainer so it never overflows. → next cycle's red.
+  Fix: wrap the panel's VBox in a ScrollContainer so it never overflows. → cycle 2's red.
+
+---
+
+## Cycle 2 — 2026-09-03 — system/planet view
+
+Capture: `autoshot.png` (now works, per O2). Player's own established city (Karon)
+selected, full stat readout + action buttons.
+
+### 🔴 Red (fixed this cycle)
+- **R2 (was O4) — Selection panel could overflow the bottom edge, cutting off action
+  buttons.** ✅ FIXED. Wrapped the selection panel's VBox in a `ScrollContainer`
+  (horizontal scroll disabled) and dropped the `panel_body` EXPAND_FILL so content takes
+  natural height. The panel's solid background now fills its whole lane to the bottom and
+  any overflow scrolls — no button can be pushed off-screen and left unreachable. Verified
+  in the system capture: readout intact, opaque, docked below the shipyard.
+
+### 🟢 Green (confirmed this cycle)
+- System/planet readout is clear and well-ordered: name, owner, status, pop, refining
+  capacity + the T3 gate, water deposit rate — good information hierarchy.
+- The `_dock_selection_panel` runtime dock holds correctly in the system view too.
 
 ### 🟢 Green (working well — leave alone)
 - Border contest reads clearly (blue vs. gold influence field, deformed border).
