@@ -2498,5 +2498,17 @@ func _autoshot() -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://autoshot.png")
+	# Third shot: a zoomed-in view centered on home, so a review can judge label/lane
+	# density and node legibility up close (the full-galaxy shot is too far out for that).
+	view_system_id = -1
+	selected_planet_id = -1
+	_galaxy_cam_pos = home.map_pos
+	_galaxy_cam_zoom = 2.5
+	_apply_camera()
+	_refresh_ui()
+	queue_redraw()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://autoshot_zoom.png")
 	print("autoshots saved: ", ProjectSettings.globalize_path("user://"))
 	get_tree().quit()

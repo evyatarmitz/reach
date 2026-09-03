@@ -109,11 +109,35 @@ views — galaxy (fleet selected) and system (colony selected) — now read clea
 panels, no overlaps, nothing cut off.
 
 **What the current harness can't show us (candidates for a wider review):** `--autoshot`
-only stages one scenario (two empires, a moving fleet, a home colony). Findings we can't
-surface yet, worth adding shot variants for later: a live fleet battle (the pin/combat
-readout + crossed-swords marker), a zoomed-in cluster (label density / lane clutter), the
-one-time intro overlay, and a multi-planet owned system (to stress the new panel scroll).
-Not urgent — noted so a future cycle can widen coverage by teaching the harness more poses.
+staged one scenario (two empires, a moving fleet, a home colony). Added a zoomed-in pose
+this pass (see cycle 5). Still worth adding later: a live fleet battle (the pin/combat
+readout + crossed-swords marker), the one-time intro overlay, and a multi-planet owned
+system (to stress the new panel scroll). Not urgent — noted for a future coverage-widening
+cycle.
+
+---
+
+## Cycle 5 — 2026-09-03 — zoomed-in view (new harness pose)
+
+Added a 3rd `--autoshot` pose (`autoshot_zoom.png`): galaxy centered on home at 2.5x, no
+selection, so we can judge close-up legibility. Capture reviewed.
+
+### 🟢 Green (working well at zoom)
+- System nodes read cleanly: cyan ownership rings, star cores, and names (Rotia, Karon,
+  Lolex) all legible. The fleet marker (arrow + green count) and the capital diamond are
+  clear. Lanes are thin but traceable.
+
+### 🟠 Orange (logged, low severity — not fixing now)
+- **O5 — Fleet arrow overlaps its home star node at high zoom.** The fleet icon's small
+  upward offset isn't enough at 2.5x, so the arrow sits on the node glow. Cosmetic; it's
+  genuinely at that system, so the overlap isn't misleading. Consider scaling the offset
+  with zoom if it bothers in play.
+- **O6 — Structure glyphs need the legend to decode.** A small blue-outlined square marker
+  (depot/obs-post/transport?) sits by a system with no inline label. Fine given the L
+  legend, but a one-cycle pass to make the structure glyphs more self-evident could help
+  new players. Low priority.
+
+No reds at zoom — the close-up view is in good shape.
 
 ### 🟢 Green (working well — leave alone)
 - Border contest reads clearly (blue vs. gold influence field, deformed border).
