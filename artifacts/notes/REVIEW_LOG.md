@@ -73,6 +73,25 @@ selected, full stat readout + action buttons.
   capacity + the T3 gate, water deposit rate — good information hierarchy.
 - The `_dock_selection_panel` runtime dock holds correctly in the system view too.
 
+---
+
+## Cycle 3 — 2026-09-03 — top resource bar
+
+Capture: `autoshot_galaxy.png` (rebuilt). Focus: the top HUD bar.
+
+### 🔴 Red (fixed this cycle)
+- **R3 (was O1) — Top resource bar was semi-transparent and low-contrast over the map.**
+  ✅ FIXED. Added `UiStyle.opaque_bar()` / `make_opaque_bar()` (a solid edge-docked bar
+  variant: square corners, thin inner-edge border, one shared HUD palette with the panels)
+  and applied it to the top bar. The date / water / minerals+alloy figures now read
+  cleanly against a solid strip. Verified in the galaxy capture.
+
+### 🟢 Green / acceptable-by-design
+- The alloy tiers use small dice-pip badge icons rather than "T1..T5" text, with the
+  per-figure detail on hover (intentional, per the HUD comment). With the bar now opaque
+  the amount/rate table lines up and reads fine — closing the "cramped/label the tiers"
+  part of O1 as acceptable. Revisit only if playtesting shows people can't tell tiers apart.
+
 ### 🟢 Green (working well — leave alone)
 - Border contest reads clearly (blue vs. gold influence field, deformed border).
 - Fog-of-war states legible: bright in-sight, dim last-seen, black unknown.

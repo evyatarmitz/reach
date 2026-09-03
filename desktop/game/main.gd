@@ -1616,6 +1616,7 @@ func _build_ui() -> void:
 	add_child(layer)
 
 	var top := PanelContainer.new()
+	UiStyle.make_opaque_bar(top)   # solid bg so the small resource figures read over the map
 	top.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	layer.add_child(top)
 	var bar := HBoxContainer.new()
