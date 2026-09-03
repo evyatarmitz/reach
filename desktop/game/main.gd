@@ -1401,11 +1401,14 @@ func _rate_of(key: String, tier: int) -> float:
 	return (newv - oldv) / span
 
 
-# Colour + sign a per-day rate for the HUD ("+1.4/d" green, "-0.3/d" red, "0.0/d" grey).
+# Colour + sign a per-day rate for the HUD ("+1.4/d" green, "-0.3/d" red, "0.0/d" dim).
+# Idle (zero) rates are dimmed nearly to the bar background so a steady/paused economy's
+# row of "0.0/d 0.0/d …" recedes and the eye lands on whatever is actually changing; only
+# the +/- rates carry saturated colour.
 # Alloy production is small and fractional, so always show one decimal (k-suffix stays
 # one decimal too, e.g. "+1.2k/d").
 func _fmt_rate(r: float) -> String:
-	var col := "#8a8f99"
+	var col := "#565b66"   # dim: an idle rate should barely register
 	var sign := ""
 	if r > 0.05:
 		col = "#7fd08a"; sign = "+"
