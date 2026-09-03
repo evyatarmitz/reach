@@ -19,14 +19,21 @@ Priority tags: 💡 nice-to-have · ⭐ strong fit, worth scheduling · 🧭 nee
    or you're near a shipyard, collapsed when managing a distant colony) so the player rarely
    toggles it by hand — a 🧭 design call, not scheduled.
 
-2. 💡 **Dim/hide zero rates in the top resource bar.** *(all galaxy captures)* The per-day
-   rate row is mostly `0.0/d 0.0/d …` when steady/paused, which is visual noise competing
-   with the amounts above it. Dim zeros (or color +/- rates green/red) so the eye lands on
-   what's actually changing.
+2. ✅ **DONE (cycle 8 follow-up) — Dimmed idle (zero) rates in the top resource bar.**
+   *(all galaxy captures)* The per-day rate row is mostly `0.0/d 0.0/d …` when steady/paused,
+   which was visual noise competing with the amounts above it. `_fmt_rate` now dims the zero
+   case toward the bar background (#565b66) while +/- rates keep saturated green/red, so the
+   eye lands on what's actually changing. Verified in the re-captured galaxy shot.
 
-3. 💡 **Empire color swatch next to empire names.** *(battle capture)* The battle readout
-   names "Ortia Ascendancy" / "Karon Compact" in plain text; a tiny color chip matching the
-   map influence colors would tie the words to the territory you see on the map at a glance.
+3. 💡 **Empire color swatch next to empire names in the FLEET-PANEL battle readout.**
+   *(battle capture)* The `_battle_readout` names "Ortia Ascendancy" / "Karon Compact" in
+   plain text; a color chip matching the map influence colors would tie the words to the
+   territory. *Cost note (found while scoping):* `panel_body` is a plain `Label` (monochrome)
+   with 5 assignment sites incl. procedurally-named colony/system readouts, so this needs the
+   whole selection panel converted to a `RichTextLabel` first — and any stray `[` in a
+   generated name would then be mis-parsed as BBCode. *Lower urgency than it looks:* the
+   hover tooltip (already RichText, 0.79.0) colors belligerent names on map-hover, so the
+   colored-name case is partly covered. Do this only alongside a broader panel→RichText pass.
 
 ## Combat / map
 
