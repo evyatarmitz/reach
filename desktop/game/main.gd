@@ -1792,15 +1792,17 @@ func _build_ui() -> void:
 func _build_intro(layer: CanvasLayer) -> void:
 	intro_overlay = PanelContainer.new()
 	UiStyle.make_opaque(intro_overlay)
+	# Centered card, sized to its content. The body sits in a height-capped ScrollContainer
+	# (below) so the whole card can never grow past the viewport — otherwise, at 1280x720
+	# the welcome copy overflowed and pushed the "Begin" button off the bottom of the
+	# screen, leaving a new player unable to dismiss the intro and start the game.
 	intro_overlay.set_anchors_preset(Control.PRESET_CENTER)
 	intro_overlay.anchor_left = 0.5
 	intro_overlay.anchor_right = 0.5
 	intro_overlay.anchor_top = 0.5
 	intro_overlay.anchor_bottom = 0.5
-	intro_overlay.offset_left = -270
-	intro_overlay.offset_right = 270
-	intro_overlay.offset_top = -160
-	intro_overlay.offset_bottom = 160
+	intro_overlay.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	intro_overlay.grow_vertical = Control.GROW_DIRECTION_BOTH
 	intro_overlay.visible = false
 	layer.add_child(intro_overlay)
 	var v := VBoxContainer.new()
@@ -1811,11 +1813,18 @@ func _build_intro(layer: CanvasLayer) -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 24)
 	v.add_child(title)
+	# The body scrolls inside a fixed-height viewport; the title and Begin button stay
+	# outside it, so Begin is always on-screen regardless of copy length or window size.
+	var body_scroll := ScrollContainer.new()
+	body_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	body_scroll.custom_minimum_size = Vector2(540, 440)
+	v.add_child(body_scroll)
 	var body := Label.new()
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	body.custom_minimum_size = Vector2(520, 0)
+	body.custom_minimum_size = Vector2(540, 0)
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.text = "You have no body and no direct control — you cultivate a population and it does the rest.\n\n• Click a planet to open it. Send a construction vessel to found a colony or build a mine — it travels the lanes from your capital and can't cross enemy space.\n• Population lives on WATER: your water mines feed it directly, and it's a flow, not a stockpile — grow only as far as your water income supports, or it shrinks. Population drives influence, and influence sets your borders.\n• Minerals refine up a single alloy chain (T1→T5): small cities make lots of cheap T1 (which also pays for building), big cities reach the rare high tiers. High tiers need both water and mineral mines.\n• Build ships (top-right) to defend and to bombard enemy worlds. Use the speed dial (top-right) to skip slow stretches.\n• Press L for a legend of every map symbol.\n\nGoal: grow, spread, and outlast the rival empires."
-	v.add_child(body)
+	body_scroll.add_child(body)
 	var begin := Button.new()
 	begin.text = "Begin"
 	begin.custom_minimum_size = Vector2(0, 38)
@@ -2510,5 +2519,93 @@ func _autoshot() -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://autoshot_zoom.png")
+	# Fourth shot: a content-heavy OWN-city panel — the worst case for panel overflow
+	# (established city + own mine + specialization + all three system structures still
+	# buildable = the most action buttons at once). This is what the panel ScrollContainer
+	# has to survive. The one-planet-per-node model means there's no multi-planet list to
+	# stress; max button count is the real stress case. Fund the empire so the structure
+	# buttons are ENABLED (not just visible), then pick a city whose system has no
+	# structures yet so depot/obs/transport all offer.
+	sim.empires[player_empire_id].nat[0] = 100000.0   # T1 alloys pay for structures
+	sim.empires[player_empire_id].minerals = 100000.0
+	var city_sys := -1
+	var city_pid := -1
+	for c in sim.colonies:
+		if c.empire_id != player_empire_id or not c.established:
+			continue
+		var sid: int = sim.planets[c.planet_id].system_id
+		var s: StarSystem = sim.systems[sid]
+		if s.depot_empire_id == -1 and s.obs_post_empire_id == -1 \
+				and s.transport_empire_id == -1:
+			city_sys = sid
+			city_pid = c.planet_id
+			break
+	if city_sys == -1:   # fallback: home city
+		city_sys = home.id
+		city_pid = home.planet_ids[0]
+	selected_fleet_id = -1
+	_hover_hold = false
+	view_system_id = city_sys
+	selected_planet_id = city_pid
+	_galaxy_cam_pos = sim.systems[city_sys].map_pos
+	_galaxy_cam_zoom = 1.0
+	_apply_camera()
+	_refresh_ui()
+	queue_redraw()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://autoshot_colony.png")
+	# Fifth shot: a LIVE FLEET BATTLE. Stage an enemy fleet in the player's home system so
+	# _resolve_combat pins both sides and flags combat_at/combat_kind, then show the galaxy
+	# with the player's fleet selected — the fleet panel renders the full who-vs-who battle
+	# readout + verdict, and the map draws the clash marker. Combat is a design pillar, so
+	# this is the highest-value coverage the harness was missing.
+	var enemy_id := -1
+	for eid in sim.empires:
+		if eid != player_empire_id:
+			enemy_id = eid
+			break
+	if enemy_id != -1:
+		var pf := sim._fleet_at(player_empire_id, home.id)
+		if pf.ship_count() == 0:
+			pf.fighters[2] += 16
+			pf.bombers[1] += 6
+		var ef := sim._fleet_at(enemy_id, home.id)
+		ef.fighters[2] += 10
+		ef.bombers[1] += 3
+		sim.tick(SimConstants.TICK_DAYS)   # resolves combat → combat_at/kind populate
+		_recompute_borders()
+		# The tick can merge/cull fleets, so re-find the player's stationary fleet at home.
+		selected_fleet_id = -1
+		for f in sim.fleets:
+			if f.empire_id == player_empire_id and f.system_id == home.id \
+					and not f.is_moving():
+				selected_fleet_id = f.id
+				break
+		view_system_id = -1
+		selected_planet_id = -1
+		_galaxy_cam_pos = home.map_pos
+		_galaxy_cam_zoom = 1.8
+		_apply_camera()
+		_refresh_ui()
+		queue_redraw()
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png("user://autoshot_battle.png")
+	# Sixth shot: the one-time intro overlay (shown on every new game). Pure UI over the
+	# galaxy — verifies the welcome copy fits its opaque panel and reads cleanly.
+	selected_fleet_id = -1
+	view_system_id = -1
+	selected_planet_id = -1
+	_galaxy_cam_pos = home.map_pos
+	_galaxy_cam_zoom = 1.4
+	_apply_camera()
+	_refresh_ui()
+	if intro_overlay != null:
+		intro_overlay.visible = true
+	queue_redraw()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://autoshot_intro.png")
 	print("autoshots saved: ", ProjectSettings.globalize_path("user://"))
 	get_tree().quit()

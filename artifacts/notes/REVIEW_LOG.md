@@ -139,6 +139,49 @@ selection, so we can judge close-up legibility. Capture reviewed.
 
 No reds at zoom — the close-up view is in good shape.
 
+---
+
+## Cycle 6 — 2026-09-03 — WIDER COVERAGE: battle, colony, intro (3 new harness poses)
+
+Taught `--autoshot` three new poses (per the user's "update your tool set whenever it
+becomes unsatisfactory"): a **live fleet battle** (`autoshot_battle.png`), a **content-heavy
+own-city panel** (`autoshot_colony.png`), and the **one-time intro overlay**
+(`autoshot_intro.png`). Staging code lives at the end of `_autoshot()` in
+`desktop/game/main.gd`: the battle spawns an enemy fleet in the home system and ticks once
+so `_resolve_combat` pins both sides and flags `combat_at/combat_kind`; the colony funds
+the empire and selects the best-stocked established city; the intro just shows the overlay.
+
+### 🔴 Red (fixed this cycle)
+- **R5 — Intro overlay's "Begin" button pushed off the bottom of the screen at 1280×720.**
+  ✅ FIXED. The welcome card was a fixed 320px-tall centered box, but the copy is ~510px
+  tall, so it overflowed the viewport and the only control that dismisses the intro and
+  starts the game ("Begin") sat below the screen edge — a genuine new-game blocker at a
+  common resolution, and there was no scroll to reach it. Fix (`_build_intro`): the body
+  now lives in a height-capped `ScrollContainer` (540×440, horizontal scroll off) while the
+  title and Begin button stay OUTSIDE it, and the card is content-sized with `grow_*=BOTH`.
+  Begin is now always on-screen regardless of copy length or window size; the body scrolls.
+  Verified in the re-captured `autoshot_intro.png`: contained card, visible scrollbar,
+  Begin pinned at the bottom.
+
+### 🟢 Green (working well — leave alone)
+- **Live battle reads excellently.** `autoshot_battle.png`: Karon shows the crossed-swords
+  clash marker over the node, the fleet arrow + count, a top-left "⚔ Battle at Karon" event
+  line, and the Fleet panel renders the full who-vs-who readout ("you: 406⚔ / Ortia
+  Ascendancy: 289⚔ / → upper hand"). This is the combat design pillar surfacing clearly —
+  the highest-value coverage the harness had been missing, and it's solid.
+- **Colony panel** (`autoshot_colony.png`): Orron reads cleanly — owner (Karon Compact),
+  ESTABLISHED CITY, pop, refine capacity + T-gate, deposit, immigration + specialize
+  actions, docked below the shipyard on its opaque background. The R2 ScrollContainer holds.
+
+### 🟠 Orange (logged, not urgent)
+- **O7 — The always-open "Build ships" shipyard panel permanently squeezes the selection
+  panel into a short lane.** In the battle shot the fleet readout's tail ("🔒 held in the
+  fight…") and in the colony shot the system-structure buttons (depot / obs post / transport)
+  sit below the fold and need a scroll to reach. Nothing is lost (the ScrollContainer works),
+  but time-relevant info/actions being below the fold by default is a mild cost. Root cause
+  is layout, not the panel — see IDEAS.md #1 (make the shipyard collapsible / free the right
+  column). Low priority.
+
 ### 🟢 Green (working well — leave alone)
 - Border contest reads clearly (blue vs. gold influence field, deformed border).
 - Fog-of-war states legible: bright in-sight, dim last-seen, black unknown.

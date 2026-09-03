@@ -33,6 +33,8 @@ field), `system_owner`/`claim_strength` (per-system logic queries), `sight_posit
 - [TODO.md](TODO.md) — Active tasks, what to build next
 - [REVIEW_LOG.md](REVIEW_LOG.md) — Screenshot-driven visual/UX review log (red/orange/
   green triage per cycle); what's solid and what still needs a look
+- [IDEAS.md](IDEAS.md) — Design/feature ideas that surfaced from seeing the game rendered
+  (the `--autoshot` captures). Candidates, not commitments — weigh each against vision.md
 - [../refrences/vision.md](../refrences/vision.md) — Founding vision, non-negotiable
   for this game specifically. Read first, every session. This game has no methods/tips
   file yet — nothing from the old codebase directly applies, it's genuinely new design.
