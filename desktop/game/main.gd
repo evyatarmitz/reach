@@ -1093,18 +1093,8 @@ func _draw_galaxy() -> void:
 					spop += pcol.population
 			var sscale: float = 1.0 + clampf(spop / 2500.0, 0.0, 1.0) * 0.7
 			_draw_star(sys.map_pos, _star_color(sys.id), 1.0, sscale)
-			if sys.depot_empire_id != -1:   # supply depot: filled square
-				draw_rect(Rect2(sys.map_pos + Vector2(-16, -16), Vector2(6, 6)),
-					sim.empires[sys.depot_empire_id].color)
-			if sys.obs_post_empire_id != -1:   # observation post: ringed dot (eye)
-				var oc: Color = sim.empires[sys.obs_post_empire_id].color
-				draw_arc(sys.map_pos + Vector2(-13, -18), 4.0, 0.0, TAU, 12, oc, 1.5)
-				draw_circle(sys.map_pos + Vector2(-13, -18), 1.3, oc)
-			if sys.transport_empire_id != -1:   # transport hub: small chevron/link
-				var tc: Color = sim.empires[sys.transport_empire_id].color
-				var tp: Vector2 = sys.map_pos + Vector2(-4, -18)
-				draw_line(tp + Vector2(-3, 2), tp, tc, 1.5)
-				draw_line(tp, tp + Vector2(3, 2), tc, 1.5)
+			_draw_structure_badges(sys.map_pos, sys.depot_empire_id,
+				sys.obs_post_empire_id, sys.transport_empire_id)
 			var owner: int = _system_owner.get(sys.id, -1)
 			if owner != -1:
 				draw_arc(sys.map_pos, 13.0 * sscale, 0.0, TAU, 32,
@@ -1233,7 +1223,8 @@ func _draw_galaxy() -> void:
 
 # Under a hovered system: one glyph per planet — filled circle = colony (owner
 # colour), diamond = uncolonised deposit (blue water / orange minerals), a small
-# bright square overlaid = a mine; plus a square for a system supply depot.
+# owner-colour corner brackets framing it = a mine; a row of icon badges above the
+# star = the system's structures (crate depot / eye obs-post / linked-node transport).
 # One-line hover readout for the hint area — live detail for a system in sight, the
 # frozen last-seen snapshot otherwise (respects fog; no live enemy data in grey).
 func _add_ui_tip(ctrl: Control, bbcode: String) -> void:
@@ -1482,6 +1473,51 @@ func _draw_gem(c: Vector2) -> void:
 	draw_line(lft, rgt, Color(1.0, 0.85, 0.55, 0.5), 1.0)          # girdle line
 
 
+# Structure badges: a system's built structures shown as a tidy centred row of
+# owner-coloured icons just above the star. Laid out by count so 1-3 badges never
+# collide (the old per-structure fixed offsets sat on different baselines and could
+# overlap). Each icon is deliberately distinct: crate / eye / linked-node.
+func _draw_structure_badges(center: Vector2, depot_id: int, obs_id: int,
+		transport_id: int) -> void:
+	var badges: Array = []
+	if depot_id != -1:
+		badges.append(["depot", sim.empires[depot_id].color])
+	if obs_id != -1:
+		badges.append(["obs", sim.empires[obs_id].color])
+	if transport_id != -1:
+		badges.append(["transport", sim.empires[transport_id].color])
+	if badges.is_empty():
+		return
+	var gap := 10.0
+	var x0: float = center.x - (badges.size() - 1) * gap * 0.5
+	var y: float = center.y - 20.0
+	for i in badges.size():
+		var p := Vector2(x0 + i * gap, y)
+		var col: Color = badges[i][1]
+		match badges[i][0]:
+			"depot":   # supply crate: filled square
+				draw_rect(Rect2(p + Vector2(-3, -3), Vector2(6, 6)), col)
+			"obs":     # observation post: an eye (ring + pupil)
+				draw_arc(p, 3.5, 0.0, TAU, 12, col, 1.5)
+				draw_circle(p, 1.3, col)
+			"transport":   # transport hub: a node feeding two links (logistics)
+				draw_circle(p + Vector2(0.0, -2.0), 1.7, col)
+				draw_line(p + Vector2(-3.0, 3.0), p + Vector2(0.0, -1.0), col, 1.5)
+				draw_line(p + Vector2(3.0, 3.0), p + Vector2(0.0, -1.0), col, 1.5)
+
+
+# A mine: four owner-colour corner brackets framing the planet glyph (a "claimed and
+# worked" tag) instead of a square over it, so the deposit shape stays readable.
+func _draw_mine_mark(c: Vector2, col: Color) -> void:
+	var r := 6.0    # half-size of the frame (glyphs span ~5px, so this clears them)
+	var t := 2.2    # tick length of each corner L
+	for sx in [-1.0, 1.0]:
+		for sy in [-1.0, 1.0]:
+			var corner := c + Vector2(sx * r, sy * r)
+			draw_line(corner, corner + Vector2(-sx * t, 0.0), col, 1.5)
+			draw_line(corner, corner + Vector2(0.0, -sy * t), col, 1.5)
+
+
 func _draw_star(pos: Vector2, col: Color, intensity: float, scale := 1.0) -> void:
 	# A luminous body with depth: a wide faint corona, tighter coloured glow layers, a
 	# bright core and a hot near-white pip. scale grows it with the system's population.
@@ -1544,9 +1580,12 @@ func _draw_system_symbols(sys: StarSystem) -> void:
 		else:
 			draw_circle(c, 2.5, Color(0.5, 0.5, 0.55))
 		if has_mine and mine_owner != -1:
-			# Mine: bracketed square in the owner's colour over the planet glyph.
-			draw_rect(Rect2(c + Vector2(-3.5, -3.5), Vector2(7, 7)),
-				sim.empires[mine_owner].color, false, 1.5)
+			# Mine: owner-colour corner brackets that FRAME the deposit/colony glyph
+			# rather than a square drawn on top of it. The old centred 7x7 square cut
+			# straight through the teardrop/gem, mashing the deposit mark into an
+			# unreadable clump once a mine was built; brackets say "this deposit is
+			# worked, by empire X" while leaving the shape underneath intact.
+			_draw_mine_mark(c, sim.empires[mine_owner].color)
 		i += 1
 	if depot_owner != -1:
 		var dcpos := start + Vector2(i * step, 0)
@@ -1773,10 +1812,13 @@ func _build_ui() -> void:
 	upgrade_btn.pressed.connect(_on_upgrade_mine)
 	depot_btn = Button.new()
 	depot_btn.pressed.connect(_on_build_depot)
+	depot_btn.tooltip_text = "Supply depot — friendly fleets in this system or one lane-jump away take no overstay attrition, so you can hold a front line here."
 	obs_post_btn = Button.new()
 	obs_post_btn.pressed.connect(_on_build_obs_post)
+	obs_post_btn.tooltip_text = "Observation post — doubles this system's influence reach (its border pushes twice as far) and, since sight rides influence, extends your vision well past the border (early warning)."
 	transport_btn = Button.new()
 	transport_btn.pressed.connect(_on_build_transport)
+	transport_btn.tooltip_text = "Transport hub — logistics that supply this system's colonies efficiently, cutting most of their per-colony water overhead. Build it in your densest cluster to blunt the water cost of spreading out."
 	vbox.add_child(panel_title)
 	vbox.add_child(planet_list)
 	vbox.add_child(panel_body)
@@ -1876,8 +1918,8 @@ func _build_legend(layer: CanvasLayer) -> void:
 		"bright = in sight · dim = last-seen · black = unknown",
 		"bold coloured line — contested border",
 		"hover a system for its planets",
-		"● colony  ◆ mineral  ○ water  ▫ mine",
-		"□ depot  ◉ obs-post (2x reach)  ⌃ transport",
+		"● colony  ◆ mineral  ○ water  ⌞⌟ mine",
+		"■ depot (hold)  ◉ obs-post (2× reach)  ◈ transport (water logi.)",
 		"purple nebula — anomaly (blocks influence + sight)",
 	]
 	for i in lines.size():
@@ -2405,7 +2447,7 @@ func _show_system_panel(sys_id: int) -> void:
 		obs_post_btn.disabled = not sim.can_build_obs_post(player_empire_id, sys_id)
 	else:
 		obs_post_btn.visible = false
-	# Transportation hub (strengthens the neighbor bonus).
+	# Transportation hub (relieves per-colony water overhead in its system).
 	if not live:
 		transport_btn.visible = false
 	elif sysd.transport_empire_id == player_empire_id:
@@ -2699,7 +2741,43 @@ func _autoshot() -> void:
 	get_viewport().get_texture().get_image().save_png("user://autoshot_legend.png")
 	if legend_panel != null:
 		legend_panel.visible = false
-	# Eighth shot: the one-time intro overlay (shown on every new game). Pure UI over the
+	# Eighth shot: a system with ALL THREE STRUCTURES built, zoomed in. Nothing else in the
+	# harness ever shows a built structure (the colony pose deliberately picks a structure-
+	# free city to keep the build buttons enabled), so the depot/obs-post/transport map
+	# badges — and the mine corner-brackets on a worked deposit — had no coverage at all.
+	# Pick a structures system away from any player fleet — home is the most-populated
+	# city, so ships spawn there and the fleet arrow would sit on top of the badge row and
+	# hide the middle badge. Prefer an established player city whose system has no player
+	# fleet; fall back to home only if none exists.
+	sim.empires[player_empire_id].nat[0] = 100000.0
+	var struct_sys := home.id
+	for c in sim.colonies:
+		if c.empire_id != player_empire_id or not c.established:
+			continue
+		var sid: int = sim.planets[c.planet_id].system_id
+		if not sim.empire_fleet_in_system(player_empire_id, sid) \
+				and sim.can_build_depot(player_empire_id, sid):
+			struct_sys = sid
+			break
+	sim.build_depot(player_empire_id, struct_sys)
+	sim.build_obs_post(player_empire_id, struct_sys)
+	sim.build_transport(player_empire_id, struct_sys)
+	_recompute_borders()
+	_hover_hold = true
+	_hover_system = struct_sys
+	selected_fleet_id = -1
+	view_system_id = -1
+	selected_planet_id = -1
+	_galaxy_cam_pos = sim.systems[struct_sys].map_pos
+	_galaxy_cam_zoom = 2.5
+	_apply_camera()
+	_refresh_ui()
+	queue_redraw()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://autoshot_structures.png")
+	_hover_hold = false
+	# Ninth shot: the one-time intro overlay (shown on every new game). Pure UI over the
 	# galaxy — verifies the welcome copy fits its opaque panel and reads cleanly.
 	selected_fleet_id = -1
 	view_system_id = -1
