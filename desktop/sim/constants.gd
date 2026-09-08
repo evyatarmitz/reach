@@ -168,9 +168,13 @@ const DEPOT_COST_ALLOYS := 60.0
 # border). Vision: "doubles influence range, adds a separate visibility range."
 const OBS_POST_COST_ALLOYS := 90.0
 const OBS_POST_REACH_MULT := 2.0
-# Transportation infrastructure: multiplies the neighbor/proximity growth bonus for
-# colonies in its system (vision: "strengthens the proximity bonus between
-# established centers"), so a well-connected cluster climbs higher.
+# Transportation infrastructure: its PRIMARY effect now is to relieve the per-colony
+# water overhead for colonies in its system (see TRANSPORT_WATER_RELIEF) — logistics that
+# make a cluster water-efficient, the counter-play to the sprawl penalty. It ALSO still
+# amplifies the neighbor/proximity growth bonus (TRANSPORT_BONUS_MULT) for any future mode
+# that re-enables NEIGHBOR_BONUS_ENABLED; with the bonus off, that multiplier is inert and
+# the water relief is the whole effect. (Vision: "strengthens the connection between
+# established centers.")
 const TRANSPORT_COST_ALLOYS := 90.0
 const TRANSPORT_BONUS_MULT := 1.6
 
@@ -208,6 +212,22 @@ const VARIETY_MIN_TIER := 2
 # income supports it (income / WATER_PER_POP), a ceiling set by how much water
 # territory you hold (map geometry).
 const WATER_PER_POP := 0.01
+
+# Per-colony water OVERHEAD (a flow, like the per-pop need): every colony draws a fixed
+# baseline of water beyond what its people drink — a settlement has to be supplied at all,
+# not just fed. So the same total population spread across many colonies costs MORE water
+# than concentrated in a few: 200 pop in one place needs 200*WATER_PER_POP + 1 overhead;
+# 100+100 in two places needs the same 200*WATER_PER_POP + 2 overhead. Sprawl is punished
+# (concentration is more water-efficient), but expansion is never forbidden — it's a
+# marginal cost that lowers your pop ceiling a little per colony, self-limiting, no hard
+# cap. Kept small relative to a mature colony's per-pop draw so it's "close, but not the
+# same," not a cliff. Tune for feel.
+const WATER_PER_COLONY := 0.5
+# A transport hub in a colony's system supplies it efficiently, relieving this fraction of
+# that colony's overhead — the hub's job is now to make a cluster water-efficient (the
+# counter-play to the sprawl penalty above), since the old neighbor-bonus effect it used
+# to amplify is switched off (NEIGHBOR_BONUS_ENABLED).
+const TRANSPORT_WATER_RELIEF := 0.6
 
 # Fog of war: how far VR reaches past your influence. It's the claim-ratio margin
 # in the field VR test (visible where player_claim * this >= rival_claim). At 1.5

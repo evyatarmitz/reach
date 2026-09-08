@@ -699,21 +699,53 @@ func _test_support_structures() -> void:
 		reach_before * SimConstants.OBS_POST_REACH_MULT),
 		"observation post doubles influence reach")
 
-	# Transport hub multiplies a colony's neighbor bonus.
+	# Transport hub relieves the per-colony water overhead in its system. Two
+	# identical single-colony empires, run one tick each; the one with a hub in the
+	# colony's system posts a lower water_demand (over one tick the pop trajectories
+	# are effectively identical, so the gap is the relieved overhead).
 	var sim2 := Sim.new()
 	var e2 := sim2.add_empire("T", Color.WHITE)
 	e2.nat[0] = 100000.0
 	var a := sim2.add_system("A")
 	a.map_pos = Vector2.ZERO
-	var b := sim2.add_system("B")
-	b.map_pos = Vector2(200, 0)
-	sim2.add_lane(a.id, b.id)
 	sim2.inject_colony(e2.id, sim2.add_planet(a.id, "pa").id, 500.0, true)
-	sim2.inject_colony(e2.id, sim2.add_planet(b.id, "pb").id, 500.0, true)
-	# (The neighbor bonus it would amplify is switched off for now, so just confirm the
-	# hub builds; when the bonus returns, restore the amplification assertion.)
-	check(sim2.build_transport(e2.id, a.id), "transport hub builds in own influence")
-	check(sim2.systems[a.id].transport_empire_id == e2.id, "the hub belongs to its empire")
+
+	var sim3 := Sim.new()
+	var e3 := sim3.add_empire("T", Color.WHITE)
+	e3.nat[0] = 100000.0
+	var a3 := sim3.add_system("A")
+	a3.map_pos = Vector2.ZERO
+	sim3.inject_colony(e3.id, sim3.add_planet(a3.id, "pa").id, 500.0, true)
+	check(sim3.build_transport(e3.id, a3.id), "transport hub builds in own influence")
+	check(sim3.systems[a3.id].transport_empire_id == e3.id, "the hub belongs to its empire")
+
+	sim2.tick(SimConstants.TICK_DAYS)
+	sim3.tick(SimConstants.TICK_DAYS)
+	check(e3.water_demand < e2.water_demand,
+		"transport hub lowers water demand by relieving its colonies' overhead")
+
+	# Sprawl penalty: many small colonies cost more water than the same total pop
+	# concentrated (per-colony overhead), but only marginally ("close, but not the same").
+	var sim4 := Sim.new()
+	var e4 := sim4.add_empire("C", Color.WHITE)
+	var s4 := sim4.add_system("S")
+	s4.map_pos = Vector2.ZERO
+	sim4.inject_colony(e4.id, sim4.add_planet(s4.id, "p").id, 200.0, true)
+	sim4.tick(SimConstants.TICK_DAYS)
+	var concentrated: float = e4.water_demand
+
+	var sim5 := Sim.new()
+	var e5 := sim5.add_empire("C", Color.WHITE)
+	var s5 := sim5.add_system("S")
+	s5.map_pos = Vector2.ZERO
+	sim5.inject_colony(e5.id, sim5.add_planet(s5.id, "p1").id, 100.0, true)
+	sim5.inject_colony(e5.id, sim5.add_planet(s5.id, "p2").id, 100.0, true)
+	sim5.tick(SimConstants.TICK_DAYS)
+	var spread: float = e5.water_demand
+	check(spread > concentrated,
+		"spreading the same pop over more colonies costs more water (sprawl penalty)")
+	check(spread < concentrated * 1.5,
+		"the sprawl penalty stays marginal, not punitive")
 
 
 func _test_construction_vessel() -> void:

@@ -1446,11 +1446,21 @@ func tick(dt_days: float) -> void:
 	#    surplus to over-grow on, and never crashes off a drained reserve.
 	var grow_sign := {}
 	for e in empires.values():
-		var total_pop := 0.0
+		# Demand = Σ over the empire's colonies of (pop*WATER_PER_POP + a fixed per-colony
+		# overhead). The overhead is what makes sprawl cost more than concentration: the
+		# same total pop spread across more colonies pays the overhead more times. A
+		# transport hub in a colony's system relieves most of that colony's overhead
+		# (logistics), so investing in hubs is the counter-play to the sprawl penalty.
+		var demand := 0.0
 		for c in colonies:
-			if c.empire_id == e.id:
-				total_pop += c.population
-		e.water_demand = total_pop * SimConstants.WATER_PER_POP * dt_days
+			if c.empire_id != e.id:
+				continue
+			demand += c.population * SimConstants.WATER_PER_POP
+			var oh: float = SimConstants.WATER_PER_COLONY
+			if systems[planets[c.planet_id].system_id].transport_empire_id == c.empire_id:
+				oh *= 1.0 - SimConstants.TRANSPORT_WATER_RELIEF
+			demand += oh
+		e.water_demand = demand * dt_days
 		var balance: float = e.water_income - e.water_demand
 		grow_sign[e.id] = 0 if is_zero_approx(balance) \
 			else (1 if balance > 0.0 else -1)
