@@ -73,6 +73,28 @@ PROCESSING APPROACH (user asked per-point vs integral; recommendation = field sa
   the visual border + "is this free-space point mine." Prereq for going bigger than
   one screen: camera pan/zoom (not built yet).
 
+## Status — 0.83.0 (2026-09-08, Godot 4.7) — gap hunt: sprawl water + live transport hub + map marks
+
+Screenshot-driven GAP hunt (half-implemented things, not bugs). See REVIEW_LOG Cycle 9.
+- **Sprawl now costs water.** Added `WATER_PER_COLONY` (0.5) fixed overhead per colony to
+  the demand loop, so 100+100 costs one overhead more than 200-in-one ("close, but not the
+  same"). Subtle vs per-pop draw; no hard cap → growth pillar intact. Balance report after:
+  final = 100% of peak, top empire 70% (< 75%) — both pillars hold.
+- **Transport hub is no longer a dead building.** It multiplied the disabled neighbor bonus
+  (did nothing for 90 alloys). Now relieves `TRANSPORT_WATER_RELIEF` (60%) of a served
+  colony's overhead — the deliberate counter-play to the sprawl penalty. NOTE: this
+  SUPERSEDES the "transport = strengthens the neighbor bonus" description in the 0.55.0 entry
+  and build-order step 11 below — those are historical; water relief is the live effect.
+- **Structure map marks reworked** into a tidy centred badge row above the star (square
+  depot / eye obs-post / node-link transport), laid out by count so they never overlap. Mine
+  mark changed from a square drawn *over* the deposit glyph (clumped it) to corner brackets
+  that *frame* it. Legend labels each; `◈` used for transport (`⬡` tofu'd — OS-fallback font
+  covers Geometric-Shapes U+25xx but not U+2B21; `has_char` is unreliable, verify visually).
+- **Harness widened:** 10th autoshot pose `autoshot_structures.png` (all three structures in
+  a fleet-free player city, zoomed) — nothing else ever showed a built structure.
+Tests: transport test repointed to the water-relief effect + a sprawl-penalty test added;
+suite green. Two commits (sprawl/transport mechanic; map-marks + harness pose).
+
 ## Status — 0.82.0 (2026-08-21, Godot 4.7) — in-game self-update
 
 Integrated the spell-book `windows-self-update` pattern (Rust) into Reach as

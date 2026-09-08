@@ -250,3 +250,51 @@ end of `_autoshot()`.
 Every scenario flagged as "what the harness can't show us" (cycle 4) is now covered: live
 battle (cycle 6), colony panel (6), intro overlay (6), zoom (5), bombardment (8), legend (8).
 Nine harness poses total. No open reds across any pose.
+
+---
+
+## Cycle 9 — 2026-09-08 — GAP HUNT: half-implemented systems (not bugs)
+
+User re-pointed the same screenshot loop at *gaps* — things that render but are only
+half-built — rather than bugs. Three targets, all closed.
+
+### G1 — The transport hub was a dead building. ✅ CLOSED
+It cost 90 alloys and multiplied `neighbor_growth_multiplier`, which early-returns 1.0
+while `NEIGHBOR_BONUS_ENABLED` is false — so it did *nothing*. Given it a real, load-bearing
+job: it now relieves `TRANSPORT_WATER_RELIEF` (60%) of the per-colony water overhead for
+every colony in its system. That ties it to G3 below (it's the counter-play to the sprawl
+penalty). Tested (`_test_transport_water_relief`-style assertion: a hub lowers the empire's
+`water_demand`). Commit "Punish sprawl…".
+
+### G3 — Sprawl cost nothing (design idea from the user). ✅ CLOSED
+Water demand was pure `pop*WATER_PER_POP`, so 200 pop in one colony and 100+100 in two cost
+identical water. Added a fixed `WATER_PER_COLONY` (0.5) overhead paid once per colony, so
+spreading the same pop over more colonies costs marginally more ("close, but not the same" —
+the user's phrasing). Kept small vs a mature colony's per-pop draw, so it's a subtle pull
+toward concentration, never a hard cap (growth pillar preserved). Balance report after:
+peak pop 23403, final = 100% of peak (still climbing, no boom-bust), top empire 70% < 75%
+(no steamroll) — both pillars intact. Tested (sprawl > concentrated, but < 1.5× — marginal).
+
+### G2 — Structure map marks + a mined-deposit glyph clump. ✅ CLOSED
+- **Structures** had marks but at three fixed offsets on different baselines that could
+  overlap when a system held more than one. Replaced with `_draw_structure_badges()`: a tidy
+  centred row above the star, laid out by count so 1–3 never collide, each icon distinct —
+  filled square (depot), eye (obs-post), node-with-two-links (transport). Verified clean on
+  Orron in the new pose (see below).
+- **Mined worlds** drew a 7×7 square centred on the water teardrop / mineral gem, cutting it
+  into an unreadable clump. Now four owner-colour corner brackets that *frame* the deposit,
+  leaving its shape intact.
+- Legend updated: each structure mark labelled with its effect; `◈` chosen for transport
+  after `⬡` rendered as tofu (the OS fallback font covers the Geometric-Shapes block U+25xx
+  but not U+2B21 — `has_char` on the theme font lies, it reports false even for glyphs that
+  render via fallback, so verify glyphs visually, not with `has_char`).
+
+### Harness widened (standing "improve the toolset" instruction)
+Added a 10th pose, `autoshot_structures.png`: builds all three structures in a player city
+that has **no fleet parked on it** (so the fleet arrow doesn't hide the badge row) and
+captures it zoomed in. Nothing else in the harness ever showed a built structure — the colony
+pose deliberately picks a structure-free city to keep the build buttons enabled — so these
+badges and the mine brackets had zero coverage until now.
+
+### Coverage status
+Ten harness poses. No open reds. Structure/mine glyphs now have dedicated coverage.
