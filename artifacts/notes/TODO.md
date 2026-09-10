@@ -4,6 +4,32 @@ New project, split from To Infinity (2026-07-02). This game is genuinely novel �
 nothing from the old codebase transfers directly, because the old build assumed an
 embodied player and direct entity control, and Reach has neither.
 
+## Shipped 2026-09-10 — 7-feature batch (one commit each, all green)
+
+1. **Water-gate on founding** — panel shows the new colony's water cost and blocks the
+   build when spare flow is short (`f109e6d`).
+2. **Imperial center** replaces the transport hub — pay +bonus% water for +bonus%
+   system influence; build L1, upgrade to L2/L3 as the colony grows (10/30/50%),
+   `1fccea2`.
+3. **Border attrition + depot supply radius** — a fleet outside its borders bleeds
+   hull immediately; a depot projects a 3-lane-hop supply bubble that negates it
+   (`71c883e`).
+4. **Storms → snaking bands over lanes** — tactical blind corridors fleets fly through
+   (`c37e742`, the "massive change", committed last on purpose).
+5. **Citadel** — expensive massive-HP fortress that blocks enemy transit until
+   bombarded to 0 (`d229abd`).
+6. **Enemy systems block fleet transit** (planets block enemy movement) — `92242b5`.
+7. **Drag-rectangle fleet select** — box-select a group and issue one move order
+   (`6419248`).
+
+### Open follow-up from the batch
+- **Drag-select has no static screenshot pose** (Cycle 10 🟡). Add an 11th `--autoshot`
+  pose that scripts a drag — or fakes `_dragging=true` with a populated
+  `selected_fleets` — so the drag box + multi-fleet selection rings get visual
+  coverage like every other feature.
+- **AI never builds citadels** (by design for now). If the AI should fortify
+  chokepoints, extend `empire_ai._build_support` with a citadel heuristic.
+
 ## Border collision / deformation — IMPLEMENTED in 0.8.0 (spec kept for reference)
 
 STATUS: built as specced below. Resolution of the open same-system question: went

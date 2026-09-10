@@ -298,3 +298,34 @@ badges and the mine brackets had zero coverage until now.
 
 ### Coverage status
 Ten harness poses. No open reds. Structure/mine glyphs now have dedicated coverage.
+
+---
+
+## Cycle 10 — 2026-09-10 — 7-feature batch: screenshot pass (🟢/🟡/🔴)
+
+A seven-item feature batch shipped as one commit each (water-gate, imperial center,
+attrition/depot, planets-block-transit, citadel, drag-select, then the storm reshape
+last so everything was committed before "the massive change"). Full test suite green
+including the new storm + transit + citadel + attrition + imperial tests and the
+bit-identical determinism check. Screenshot triage below.
+
+- **🟢 Storms reshaped into snaking bands (`autoshot_galaxy.png`).** Anomalies are now
+  a spine polyline thickened into a capsule chain, allowed to lie across hyperlanes.
+  Renders as a continuous magenta nebula corridor with rounded caps, visibly crossing
+  lanes — the intended "tactical blind corridor you can fly through" reads clearly.
+  They still block influence + sight (measured to the spine); movement never consulted
+  them, so fleets pass through unchanged.
+- **🟢 Imperial center (`autoshot_structures.png` + `autoshot_zoom.png`).** Orron shows
+  the "M1" badge in the centred structure row; Karon's hover tooltip reads "imperial
+  center L3 (+50% influence)" — upgrade levels and the water-for-influence bonus both
+  surface correctly.
+- **🟡 Drag-rectangle fleet select.** Logic + selection-ring/drag-box draw code are in
+  and the project parses clean, but a static autoshot pose can't perform a live drag,
+  so the box + multi-ring visuals are unverified on-screen. Add an 11th harness pose
+  that scripts a drag (or fakes `_dragging` + a populated `selected_fleets`) to cover
+  it — noted in TODO.
+- **🟢 No regressions.** Battle, bombard, colony, legend, intro poses all re-rendered
+  clean at their new timestamps.
+
+### Coverage status
+Ten poses. No open reds. One 🟡 coverage gap: drag-select has no static pose (TODO).
