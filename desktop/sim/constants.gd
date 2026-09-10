@@ -274,7 +274,11 @@ const ANOMALY_MAX := 6
 const ANOMALY_RADIUS_MIN := 42.0         # band half-width (thinner than the old blobs)
 const ANOMALY_RADIUS_MAX := 78.0
 const ANOMALY_STEPS_MIN := 5             # spine points — more = longer snake
-const ANOMALY_STEPS_MAX := 9
+const ANOMALY_STEPS_MAX := 7             # was 9 — shorter snakes so one storm can't span the map
 const ANOMALY_STEP_LEN := 130.0          # spine segment length
 const ANOMALY_TURN := 0.9                # max radians a snake turns per step (wiggle)
 const ANOMALY_SYSTEM_CLEARANCE := 30.0   # keep the band this far off any system
+const ANOMALY_CORRIDOR := 190.0          # guaranteed clear gap between any two storm BODIES,
+                                         # so storms can never chain into a wall that splits the
+                                         # map — there's always a corridor to route influence/
+                                         # fleets through (storms are tactical, not barriers)

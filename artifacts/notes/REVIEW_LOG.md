@@ -408,3 +408,31 @@ Five-point feedback on the Cycle 11 borders + storms. All addressed in `main.gd`
 ### Coverage status
 Eleven poses, no open reds. Borders curve (open + closed); storm-adjacent straightness
 and colony-less islands gone; storms restyled; capitals marked.
+
+---
+
+## Cycle 13 — 2026-09-11 — storm clipping / border-storm / map-splitting (screenshot)
+
+Follow-up on the Cycle 12 storms. Three issues from a screenshot:
+
+- **Storms "clipping" (hard rectangular edges).** The storm body used a fat
+  `draw_polyline` (width ~`ar*0.85`); a thick polyline has square butt-caps and hard
+  miter joints, which read as rectangular clipping. Removed it — the round soft
+  `_draw_glow` bands now carry the body, and the filament is a thin (2–4px) line. Storm
+  is a soft glowing nebula with round edges (verified `autoshot_bombard.png`).
+- **"Border doesn't stick to storm."** Cycle 12 dropped border segments near storms, so
+  the border detached and floated off. Reverted that drop (removed the gate, the
+  `BORDER_STORM_MARGIN` const, and the orphaned `sim.point_near_anomaly`). The contour
+  again follows the storm's rounded edge (distance `r` from the spine), now Chaikin-
+  smoothed so it reads as a curve hugging the storm rather than a faceted straight line.
+- **"Storms basically cut the map in half."** Placement only kept storm HEADS apart, so
+  bodies could lie end-to-end / cross into a continuous wall (blocking influence + sight
+  across the whole map). Added a guaranteed corridor: reject a candidate whose whole
+  spine comes within `r + other.r + ANOMALY_CORRIDOR` (190px) of any existing storm
+  (`_polyline_min_dist`). Also shortened snakes (`ANOMALY_STEPS_MAX` 9→7). Storms stay
+  tactical obstacles with an always-navigable gap; fleets already pass through, and
+  influence/sight now always has a route around. Determinism + all sim tests still green.
+
+### Coverage status
+Eleven poses, no open reds. Storms soft (no clip), border hugs storms smoothly, and
+storm layout can't wall off the map.

@@ -193,6 +193,14 @@ static func _place_anomalies(sim: Sim, positions: Array, size: Vector2,
 					clear = false
 					break
 		if clear:
+			# Keep a clear corridor between whole storm BODIES (not just heads), so two
+			# storms can never lie end-to-end / cross into a continuous wall that cuts the
+			# map. There's always a gap wide enough to route influence and fleets through.
+			for an in sim.anomalies:
+				if _polyline_min_dist(pts, an.pts) < r + an.r + SimConstants.ANOMALY_CORRIDOR:
+					clear = false
+					break
+		if clear:
 			sim.add_anomaly(pts, r)
 
 
@@ -588,19 +596,6 @@ func point_in_anomaly(p: Vector2) -> bool:
 	return false
 
 
-# True if p lies within `margin` of any anomaly's blocking body. The border bake uses
-# this to STOP a contour from tracing a storm's hard influence cutoff as an ugly straight
-# edge: segments hugging a storm are dropped, so the border just opens where the storm's
-# haze already covers it (the storm's blocking EFFECT is untouched — this is draw-only).
-func point_near_anomaly(p: Vector2, margin: float) -> bool:
-	for an in anomalies:
-		if not (an.bb as Rect2).grow(margin).has_point(p):
-			continue
-		if _dist_point_to_polyline(p, an.pts) < an.r + margin:
-			return true
-	return false
-
-
 # True if the segment a→b passes through any anomaly (blocking influence/sight).
 func segment_hits_anomaly(a: Vector2, b: Vector2) -> bool:
 	for an in anomalies:
@@ -643,6 +638,24 @@ static func _seg_seg_dist(p1: Vector2, p2: Vector2, p3: Vector2, p4: Vector2) ->
 	return minf(
 		minf(_dist_point_to_segment(p1, p3, p4), _dist_point_to_segment(p2, p3, p4)),
 		minf(_dist_point_to_segment(p3, p1, p2), _dist_point_to_segment(p4, p1, p2)))
+
+
+# Shortest distance between two polylines (storm spines). Used at map-gen to enforce a
+# clear corridor between storms so they can't chain into a map-splitting wall.
+static func _polyline_min_dist(a: PackedVector2Array, b: PackedVector2Array) -> float:
+	if a.is_empty() or b.is_empty():
+		return INF
+	if a.size() == 1 and b.size() == 1:
+		return a[0].distance_to(b[0])
+	if a.size() == 1:
+		return _dist_point_to_polyline(a[0], b)
+	if b.size() == 1:
+		return _dist_point_to_polyline(b[0], a)
+	var best := INF
+	for i in a.size() - 1:
+		for j in b.size() - 1:
+			best = minf(best, _seg_seg_dist(a[i], a[i + 1], b[j], b[j + 1]))
+	return best
 
 
 # Influence from source system to a point is blocked if the point is inside an

@@ -77,10 +77,6 @@ const SAVE_PATH := "user://reach_save.json"
 const FLEET_ICON_OFF := Vector2(0, -17)   # drawn above the system so it stays clickable
 const FLEET_CLICK_R := 24.0   # screen-space click radius for fleets (÷ zoom in _select_at)
 const BORDER_INSET := 3.5    # push each empire's border curve into its own territory
-const BORDER_STORM_MARGIN := 15.0   # drop border segments this close to a storm so the
-                                    # contour doesn't trace the storm's straight hard-cutoff
-                                    # edge — it opens into the haze instead (draw-only; the
-                                    # storm's influence/sight blocking is unchanged)
 const COMBAT_FLASH_DAYS := 5.0   # how long a clash starburst lingers on the map
 
 var cam: Camera2D
@@ -698,11 +694,7 @@ func _bake_field(job: Dictionary) -> Dictionary:
 					# in rival space where the player's VR is marginal, so the line flickered
 					# in and out between rebakes as the border drifted — despite the seam
 					# plainly being inside VR.)
-					# Also skip segments hugging a storm: those trace the storm's hard
-					# influence cutoff as a straight ugly edge. Dropping them opens the
-					# border into the storm haze (which already covers that ground).
-					if _player_vr_at(mid, ids, pos, infl, reach, reach_vr, pk) \
-							and not (_has_anomalies and sim.point_near_anomaly(mid, BORDER_STORM_MARGIN)):
+					if _player_vr_at(mid, ids, pos, infl, reach, reach_vr, pk):
 						esegs.append([seg[0], seg[1], idir])
 		# Chain the visible segments into connected polylines, inset each toward the
 		# empire's interior (so a shared seam shows both colours side by side), then
@@ -1330,10 +1322,12 @@ func _draw_galaxy() -> void:
 			var hc: Color = h[1]
 			for c in band:
 				_draw_glow(c, hr, hc)
-		# A bright turbulent filament threads the spine — the storm's charged "eye".
+		# A bright turbulent filament threads the spine — the storm's charged "eye". Kept
+		# THIN: a fat polyline has square butt-caps and hard miter joints that read as
+		# rectangular clipping, so the soft round glow bands above carry the body instead.
 		if pts.size() >= 2:
-			draw_polyline(pts, Color(0.72, 0.45, 0.85, 0.10), ar * 0.85)   # filament halo
-			draw_polyline(pts, Color(0.92, 0.74, 1.0, 0.5), 2.0, true)     # crisp bright core
+			draw_polyline(pts, Color(0.86, 0.66, 1.0, 0.22), 4.0, true)   # soft filament halo
+			draw_polyline(pts, Color(0.92, 0.74, 1.0, 0.5), 2.0, true)    # crisp bright core
 		# Charged knots sparkle along the band, giving the cloud texture and shimmer.
 		for c in band:
 			_draw_glow(c, ar * 0.15, Color(0.95, 0.83, 1.0, 0.16))
