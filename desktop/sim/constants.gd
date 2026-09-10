@@ -155,13 +155,15 @@ const BOMBARD_RATE := 0.15
 # flat per-battle cap used to flatten every ratio to the same tiny kill rate). This
 # constant is now just the AI's "I've massed a decisive strike force" threshold.
 const POWER_CEILING := 200.0
-# Overstay attrition: a fleet parked in space it doesn't own (and out of supply)
-# bleeds this fraction of its own hull per day after a grace period — so bigger
-# fleets bleed more in absolute terms and can't camp enemy territory forever.
-const ATTRITION_GRACE_DAYS := 20.0
-const ATTRITION_FRAC := 0.01
-# Supply depot: a structure that negates attrition for friendly fleets in its
-# system or one lane-jump away (doesn't stack).
+# Border attrition: a fleet outside its own borders bleeds this fraction of its
+# own hull per day — immediately, no grace. Bigger fleets bleed more in absolute
+# terms, so no one can project force into hostile space indefinitely. The counter-
+# play is a supply depot (below), which extends a safe supply radius forward.
+const ATTRITION_FRAC := 0.02
+# Supply depot: negates border attrition for friendly fleets within this many lane
+# jumps of the depot's system (0 = same system). This is what lets you campaign in
+# foreign space — plant a depot, and everything DEPOT_SUPPLY_JUMPS hops out is safe.
+const DEPOT_SUPPLY_JUMPS := 3
 const DEPOT_COST_ALLOYS := 60.0
 # Observation post: doubles the influence REACH of its system (border pushes twice
 # as far, and — since VR rides influence reach — grants early warning well past the

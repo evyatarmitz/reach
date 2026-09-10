@@ -908,6 +908,7 @@ func _attacker_output(n: int, days: float) -> float:
 	var def := sim.add_empire("D", Color.BLUE)
 	var s := sim.add_system("S")
 	s.map_pos = Vector2.ZERO
+	s.depot_empire_id = def.id   # isolate combat: no border attrition on the defender
 	var af := sim._fleet_at(atk.id, s.id)
 	af.fighters[4] = n
 	var df := sim._fleet_at(def.id, s.id)
@@ -969,8 +970,8 @@ func _test_attrition_and_depot() -> void:
 	var f := sim._fleet_at(e.id, far.id)
 	f.fighters[0] = 200
 	var hull0: float = f.hull()
-	run_days(sim, SimConstants.ATTRITION_GRACE_DAYS + 60.0)
-	check(f.hull() < hull0, "a fleet overstaying unowned space bleeds hull to attrition")
+	run_days(sim, 30.0)   # no grace period: it bleeds right away
+	check(f.hull() < hull0, "a fleet outside its borders bleeds hull to attrition immediately")
 
 	# Same, but a supply depot in the system negates attrition.
 	var sim2 := Sim.new()
@@ -982,8 +983,35 @@ func _test_attrition_and_depot() -> void:
 	var g := sim2._fleet_at(e2.id, far2.id)
 	g.fighters[0] = 200
 	var ghull0: float = g.hull()
-	run_days(sim2, SimConstants.ATTRITION_GRACE_DAYS + 60.0)
-	check(is_equal_approx(g.hull(), ghull0), "a supply depot negates overstay attrition")
+	run_days(sim2, 30.0)
+	check(is_equal_approx(g.hull(), ghull0), "a supply depot negates attrition in its own system")
+
+	# The depot's supply radius reaches DEPOT_SUPPLY_JUMPS hops: a fleet exactly that
+	# many jumps from a friendly depot is safe; one hop further bleeds.
+	var sim3 := Sim.new()
+	var e3 := sim3.add_empire("E3", Color.WHITE)
+	var chain: Array[int] = []
+	for i in range(SimConstants.DEPOT_SUPPLY_JUMPS + 2):
+		var sN := sim3.add_system("N%d" % i)
+		sN.map_pos = Vector2(5000 + i * 500, 0)   # all far from any influence
+		sim3.add_planet(sN.id, "p%d" % i)
+		chain.append(sN.id)
+		if i > 0:
+			sim3.add_lane(chain[i - 1], chain[i])
+	sim3.systems[chain[0]].depot_empire_id = e3.id   # depot at the head of the chain
+	# Fleet exactly DEPOT_SUPPLY_JUMPS hops out — inside the radius, safe.
+	var inr := sim3._fleet_at(e3.id, chain[SimConstants.DEPOT_SUPPLY_JUMPS])
+	inr.fighters[0] = 200
+	var inr0: float = inr.hull()
+	# Fleet one hop beyond the radius — bleeds.
+	var outr := sim3._fleet_at(e3.id, chain[SimConstants.DEPOT_SUPPLY_JUMPS + 1])
+	outr.fighters[0] = 200
+	var outr0: float = outr.hull()
+	run_days(sim3, 30.0)
+	check(is_equal_approx(inr.hull(), inr0),
+		"a depot supplies fleets up to DEPOT_SUPPLY_JUMPS lane hops away")
+	check(outr.hull() < outr0,
+		"a fleet beyond the depot's supply radius still bleeds")
 
 	# Depot build gating: allowed in your influence, not outside it.
 	check(sim.can_build_depot(e.id, home.id), "can build a depot in your own system")

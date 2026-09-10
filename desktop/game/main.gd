@@ -1820,7 +1820,7 @@ func _build_ui() -> void:
 	upgrade_btn.pressed.connect(_on_upgrade_mine)
 	depot_btn = Button.new()
 	depot_btn.pressed.connect(_on_build_depot)
-	depot_btn.tooltip_text = "Supply depot — friendly fleets in this system or one lane-jump away take no overstay attrition, so you can hold a front line here."
+	depot_btn.tooltip_text = "Supply depot — negates border attrition for friendly fleets within 3 lane-jumps, projecting a safe supply radius into foreign space. Plant one forward to campaign past your own borders without bleeding hull."
 	obs_post_btn = Button.new()
 	obs_post_btn.pressed.connect(_on_build_obs_post)
 	obs_post_btn.tooltip_text = "Observation post — doubles this system's influence reach (its border pushes twice as far) and, since sight rides influence, extends your vision well past the border (early warning)."

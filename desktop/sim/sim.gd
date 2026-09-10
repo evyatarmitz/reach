@@ -1080,12 +1080,25 @@ func upgrade_imperial(empire_id: int, system_id: int) -> bool:
 
 
 # A fleet is in supply if a friendly depot sits in its system or a lane-neighbor.
+# True if a friendly supply depot sits within DEPOT_SUPPLY_JUMPS lane hops of the
+# fleet's system (0 hops = same system) — the safe supply radius that negates border
+# attrition. BFS out to the jump limit; sorted neighbours keep it deterministic.
 func _fleet_supplied(f: Fleet) -> bool:
-	if systems[f.system_id].depot_empire_id == f.empire_id:
-		return true
-	for nb in lane_neighbors(f.system_id):
-		if systems[nb].depot_empire_id == f.empire_id:
+	var seen := {f.system_id: 0}
+	var queue: Array = [f.system_id]
+	while not queue.is_empty():
+		var s: int = queue.pop_front()
+		if systems[s].depot_empire_id == f.empire_id:
 			return true
+		var d: int = seen[s]
+		if d >= SimConstants.DEPOT_SUPPLY_JUMPS:
+			continue
+		var nbs: Array = lane_neighbors(s)
+		nbs.sort()
+		for nb in nbs:
+			if not seen.has(nb):
+				seen[nb] = d + 1
+				queue.append(nb)
 	return false
 
 
@@ -1293,18 +1306,16 @@ func _resolve_combat(dt_days: float) -> void:
 	if not destroyed_colonies.is_empty():
 		_invalidate_influence_caches()
 
-	# Overstay attrition: a stationary fleet in space it doesn't own and isn't
-	# supplied bleeds hull ∝ its own size after a grace period.
+	# Border attrition: a fleet outside its own borders bleeds hull ∝ its own size,
+	# immediately (no grace). Negated within a friendly depot's supply radius, so a
+	# forward depot is what lets you campaign in hostile space. Moving fleets bleed
+	# too (keyed on the system they're leaving) — marching through foreign space costs.
 	for f in fleets:
-		if f.is_moving():
-			f.foreign_days = 0.0
-			continue
 		if owner_cached(f.system_id) == f.empire_id or _fleet_supplied(f):
 			f.foreign_days = 0.0
 			continue
 		f.foreign_days += dt_days
-		if f.foreign_days > SimConstants.ATTRITION_GRACE_DAYS:
-			_damage_fleet(f, SimConstants.ATTRITION_FRAC * f.hull() * dt_days)
+		_damage_fleet(f, SimConstants.ATTRITION_FRAC * f.hull() * dt_days)
 
 	# Cull emptied fleets.
 	var empty: Array[Fleet] = []
@@ -1323,7 +1334,7 @@ func _fight(emap: Dictionary, dt_days: float) -> void:
 			p += (f as Fleet).combat_power()
 		# No per-battle cap: full stack power decides the kill rate, so force ratio
 		# actually matters (a 100:1 fleet melts the enemy far faster than a 10:1 one).
-		# Un-steamroll comes from throughput-limited production, overstay attrition, and
+		# Un-steamroll comes from throughput-limited production, border attrition, and
 		# slow population bombardment — not from flattening every battle to one rate.
 		power[eid] = p
 	for eid in emap:
@@ -1369,7 +1380,7 @@ func _bombard(empire_id: int, fleet_list: Array, system_id: int, dt_days: float,
 	for f in fleet_list:
 		budget += (f as Fleet).bomb_power()
 	# BOMBARD_RATE keeps killing population SLOW (vision): a fleet must sit over a
-	# world for many days to grind it down — and it takes overstay attrition while it
+	# world for many days to grind it down — and it takes border attrition while it
 	# does — so no colony falls to a single pass.
 	budget *= dt_days * SimConstants.BOMBARD_RATE
 	if budget <= 0.0:
