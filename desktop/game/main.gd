@@ -85,7 +85,7 @@ var _galaxy_cam_pos := Vector2.ZERO   # persisted galaxy pan/zoom across view sw
 var _galaxy_cam_zoom := 1.0
 var _map_lo := Vector2.ZERO
 var _map_hi := Vector2.ZERO
-var _border_segments: Array = []   # [a, b, color] line segments
+var _border_segments: Array = []   # [{pts: PackedVector2Array, col: Color}] smoothed polylines
 var _border_timer := 0.0
 var _ui_timer := 0.0
 var _rebake_thread: Thread = null   # worker baking the fog/border grids off-thread
@@ -643,6 +643,10 @@ func _bake_field(job: Dictionary) -> Dictionary:
 	for k in order:
 		var ck: PackedFloat32Array = claims[k]
 		var col: Color = sim.empires[ids[k]].color
+		# Collect this empire's raw contour segments (un-nudged), each carrying the
+		# unit direction toward its cell's interior. Chained into polylines and
+		# smoothed below so the border reads as a flowing curve, not faceted twigs.
+		var esegs: Array = []
 		for cy in prows - 1:
 			for cx in pcols - 1:
 				var i_tl := cy * pcols + cx
@@ -680,9 +684,8 @@ func _bake_field(job: Dictionary) -> Dictionary:
 					else (p_tl + p_br) * 0.5
 				for seg in _ms_segments(corners, margins):
 					var mid: Vector2 = (seg[0] + seg[1]) * 0.5
-					var off := inside_c - mid
-					if off.length() > 0.01:
-						off = off.normalized() * BORDER_INSET
+					var idir := inside_c - mid
+					idir = idir.normalized() if idir.length() > 0.01 else Vector2.ZERO
 					# Draw the border where the player can see it — tested at the contour
 					# point itself. Since 0.70.0 VR is FULL at the border and feathers PAST
 					# it, so the line sits in lit fog and this is stable. (The old code
@@ -691,7 +694,21 @@ func _bake_field(job: Dictionary) -> Dictionary:
 					# in and out between rebakes as the border drifted — despite the seam
 					# plainly being inside VR.)
 					if _player_vr_at(mid, ids, pos, infl, reach, reach_vr, pk):
-						segments.append([seg[0] + off, seg[1] + off, col])
+						esegs.append([seg[0], seg[1], idir])
+		# Chain the visible segments into connected polylines, inset each toward the
+		# empire's interior (so a shared seam shows both colours side by side), then
+		# Chaikin-smooth so the grid faceting rounds off into a curve.
+		for chain in _chain_border_segments(esegs):
+			var cpts: Array = chain.pts
+			var cdirs: Array = chain.dirs
+			var inset: Array = []
+			for vi in cpts.size():
+				var d: Vector2 = cdirs[vi]
+				d = d.normalized() * BORDER_INSET if d.length() > 0.001 else Vector2.ZERO
+				inset.append((cpts[vi] as Vector2) + d)
+			var sm: Array = _chaikin(inset, 2)
+			if sm.size() >= 2:
+				segments.append({"pts": PackedVector2Array(sm), "col": col})
 	return {"img": img, "fog_rect": fog_rect, "segments": segments}
 
 
@@ -849,6 +866,89 @@ func _ms_segments(p: Array, m: Array) -> Array:
 	if keys.size() == 4:   # saddle — connect adjacent edge pairs
 		return [[e[0], e[3]], [e[1], e[2]]]
 	return []
+
+
+# Quantise a contour point to an integer key. Adjacent cells produce algebraically
+# identical shared-edge crossings, but the two float expressions can differ by an ULP,
+# so snap to 1/8 world-unit before matching — far below the visible threshold.
+func _bq(p: Vector2) -> Vector2i:
+	return Vector2i(roundi(p.x * 8.0), roundi(p.y * 8.0))
+
+
+# Chain marching-squares segments (each [a, b, inside_dir]) into connected polylines by
+# endpoint matching. Returns [{pts: Array[Vector2], dirs: Array[Vector2]}] where dirs[i]
+# is the summed interior direction at pts[i] (used to inset the whole curve inward).
+func _chain_border_segments(segs: Array) -> Array:
+	var adj := {}    # Vector2i key -> Array of segment indices touching it
+	var keys := []   # keys[i] = [key(a), key(b)]
+	for i in segs.size():
+		var ka := _bq(segs[i][0])
+		var kb := _bq(segs[i][1])
+		keys.append([ka, kb])
+		for kk in [ka, kb]:
+			if not adj.has(kk):
+				adj[kk] = []
+			adj[kk].append(i)
+	var used := {}
+	var out: Array = []
+	for i0 in segs.size():
+		if used.has(i0):
+			continue
+		used[i0] = true
+		var pts: Array = [segs[i0][0], segs[i0][1]]
+		var dirs: Array = [segs[i0][2], segs[i0][2]]
+		var tail_key: Vector2i = keys[i0][1]
+		var head_key: Vector2i = keys[i0][0]
+		# Extend from the tail (append), then from the head (prepend).
+		while true:
+			var nxt := _next_seg(adj, tail_key, used)
+			if nxt < 0:
+				break
+			used[nxt] = true
+			dirs[dirs.size() - 1] += segs[nxt][2]
+			var other: int = 1 if keys[nxt][0] == tail_key else 0
+			pts.append(segs[nxt][other])
+			dirs.append(segs[nxt][2])
+			tail_key = keys[nxt][other]
+		while true:
+			var nxt := _next_seg(adj, head_key, used)
+			if nxt < 0:
+				break
+			used[nxt] = true
+			dirs[0] += segs[nxt][2]
+			var other: int = 1 if keys[nxt][0] == head_key else 0
+			pts.insert(0, segs[nxt][other])
+			dirs.insert(0, segs[nxt][2])
+			head_key = keys[nxt][other]
+		out.append({"pts": pts, "dirs": dirs})
+	return out
+
+
+func _next_seg(adj: Dictionary, k: Vector2i, used: Dictionary) -> int:
+	if not adj.has(k):
+		return -1
+	for i in adj[k]:
+		if not used.has(i):
+			return i
+	return -1
+
+
+# Chaikin corner-cutting: each pass replaces every interior edge with two points at
+# 1/4 and 3/4, rounding the polyline. Endpoints are pinned so chains stay anchored.
+func _chaikin(pts: Array, iters: int) -> Array:
+	var p: Array = pts
+	for _it in iters:
+		if p.size() < 3:
+			break
+		var np: Array = [p[0]]
+		for i in p.size() - 1:
+			var a: Vector2 = p[i]
+			var b: Vector2 = p[i + 1]
+			np.append(a.lerp(b, 0.25))
+			np.append(a.lerp(b, 0.75))
+		np.append(p[p.size() - 1])
+		p = np
+	return p
 
 
 # One always-on galaxy camera now (the old orbital system view is gone —
@@ -1160,12 +1260,12 @@ func _draw_galaxy() -> void:
 		draw_arc(pts[pts.size() - 1], ar, 0.0, TAU, 32, Color(0.60, 0.46, 0.72, 0.32), 1.5, true)
 	# Deformed influence borders (already fog-gated to VR in _recompute_borders).
 	# Two passes: a wide translucent underlay for a soft glow, then the crisp core.
-	for seg in _border_segments:
-		var gc: Color = seg[2]
+	for bl in _border_segments:
+		var gc: Color = bl.col
 		gc.a = 0.22
-		draw_line(seg[0], seg[1], gc, 5.0, true)
-	for seg in _border_segments:
-		draw_line(seg[0], seg[1], seg[2], 2.0, true)
+		draw_polyline(bl.pts, gc, 5.0, true)
+	for bl in _border_segments:
+		draw_polyline(bl.pts, bl.col, 2.0, true)
 	# Lanes: full between two known systems; HALF (out to the midpoint) when one
 	# end is known and the other is never-seen; nothing when neither is known.
 	var lane_col := Color(1, 1, 1, 0.13)
