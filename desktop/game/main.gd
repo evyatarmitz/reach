@@ -77,6 +77,10 @@ const SAVE_PATH := "user://reach_save.json"
 const FLEET_ICON_OFF := Vector2(0, -17)   # drawn above the system so it stays clickable
 const FLEET_CLICK_R := 24.0   # screen-space click radius for fleets (÷ zoom in _select_at)
 const BORDER_INSET := 3.5    # push each empire's border curve into its own territory
+const BORDER_STORM_MARGIN := 15.0   # drop border segments this close to a storm so the
+                                    # contour doesn't trace the storm's straight hard-cutoff
+                                    # edge — it opens into the haze instead (draw-only; the
+                                    # storm's influence/sight blocking is unchanged)
 const COMBAT_FLASH_DAYS := 5.0   # how long a clash starburst lingers on the map
 
 var cam: Camera2D
@@ -643,6 +647,7 @@ func _bake_field(job: Dictionary) -> Dictionary:
 	for k in order:
 		var ck: PackedFloat32Array = claims[k]
 		var col: Color = sim.empires[ids[k]].color
+		var kpos: PackedVector2Array = pos[k]   # this empire's colony positions
 		# Collect this empire's raw contour segments (un-nudged), each carrying the
 		# unit direction toward its cell's interior. Chained into polylines and
 		# smoothed below so the border reads as a flowing curve, not faceted twigs.
@@ -693,7 +698,11 @@ func _bake_field(job: Dictionary) -> Dictionary:
 					# in rival space where the player's VR is marginal, so the line flickered
 					# in and out between rebakes as the border drifted — despite the seam
 					# plainly being inside VR.)
-					if _player_vr_at(mid, ids, pos, infl, reach, reach_vr, pk):
+					# Also skip segments hugging a storm: those trace the storm's hard
+					# influence cutoff as a straight ugly edge. Dropping them opens the
+					# border into the storm haze (which already covers that ground).
+					if _player_vr_at(mid, ids, pos, infl, reach, reach_vr, pk) \
+							and not (_has_anomalies and sim.point_near_anomaly(mid, BORDER_STORM_MARGIN)):
 						esegs.append([seg[0], seg[1], idir])
 		# Chain the visible segments into connected polylines, inset each toward the
 		# empire's interior (so a shared seam shows both colours side by side), then
@@ -701,14 +710,33 @@ func _bake_field(job: Dictionary) -> Dictionary:
 		for chain in _chain_border_segments(esegs):
 			var cpts: Array = chain.pts
 			var cdirs: Array = chain.dirs
+			var closed: bool = chain.closed
+			# Disregard an influence ISLAND (vision rule: a blob needs a colony inside):
+			# a CLOSED border loop enclosing none of this empire's colonies is territory
+			# claimed by pure falloff math with no colony in it — drop the loop so the
+			# neighbours' borders fill the gap. Open chains are partial borders, not
+			# islands, so they're always kept.
+			if closed:
+				var has_colony := false
+				for cp in kpos:
+					if _point_in_poly(cp, cpts):
+						has_colony = true
+						break
+				if not has_colony:
+					continue
 			var inset: Array = []
 			for vi in cpts.size():
 				var d: Vector2 = cdirs[vi]
 				d = d.normalized() * BORDER_INSET if d.length() > 0.001 else Vector2.ZERO
 				inset.append((cpts[vi] as Vector2) + d)
-			var sm: Array = _chaikin(inset, 2)
+			# Closed loops smooth without pinned endpoints and wrap around, so the whole
+			# ring becomes a flowing curve (no seam kink at an arbitrary start vertex).
+			var sm: Array = _chaikin(inset, 3, closed)
 			if sm.size() >= 2:
-				segments.append({"pts": PackedVector2Array(sm), "col": col})
+				var packed := PackedVector2Array(sm)
+				if closed:
+					packed.append(sm[0])   # close the ring for draw_polyline
+				segments.append({"pts": packed, "col": col})
 	return {"img": img, "fog_rect": fog_rect, "segments": segments}
 
 
@@ -920,7 +948,16 @@ func _chain_border_segments(segs: Array) -> Array:
 			pts.insert(0, segs[nxt][other])
 			dirs.insert(0, segs[nxt][2])
 			head_key = keys[nxt][other]
-		out.append({"pts": pts, "dirs": dirs})
+		# A chain that returns to its start is a CLOSED loop (an empire's ring border or
+		# an island). Fold the duplicate closing vertex back into the start so the loop
+		# can be smoothed as a wrap-around curve, and flag it for the island test.
+		var closed := false
+		if pts.size() > 3 and _bq(pts[0]) == _bq(pts[pts.size() - 1]):
+			closed = true
+			dirs[0] += dirs[dirs.size() - 1]
+			pts.remove_at(pts.size() - 1)
+			dirs.remove_at(dirs.size() - 1)
+		out.append({"pts": pts, "dirs": dirs, "closed": closed})
 	return out
 
 
@@ -933,22 +970,51 @@ func _next_seg(adj: Dictionary, k: Vector2i, used: Dictionary) -> int:
 	return -1
 
 
-# Chaikin corner-cutting: each pass replaces every interior edge with two points at
-# 1/4 and 3/4, rounding the polyline. Endpoints are pinned so chains stay anchored.
-func _chaikin(pts: Array, iters: int) -> Array:
+# Chaikin corner-cutting: each pass replaces every edge with two points at 1/4 and 3/4,
+# rounding the polyline toward a quadratic B-spline. OPEN chains pin their endpoints so
+# they stay anchored to their neighbours; CLOSED loops wrap around with no pinned point,
+# so the entire ring becomes one continuous curve (no kink at an arbitrary start vertex).
+func _chaikin(pts: Array, iters: int, closed := false) -> Array:
 	var p: Array = pts
 	for _it in iters:
 		if p.size() < 3:
 			break
-		var np: Array = [p[0]]
-		for i in p.size() - 1:
-			var a: Vector2 = p[i]
-			var b: Vector2 = p[i + 1]
-			np.append(a.lerp(b, 0.25))
-			np.append(a.lerp(b, 0.75))
-		np.append(p[p.size() - 1])
+		var np: Array = []
+		if closed:
+			var n := p.size()
+			for i in n:
+				var a: Vector2 = p[i]
+				var b: Vector2 = p[(i + 1) % n]
+				np.append(a.lerp(b, 0.25))
+				np.append(a.lerp(b, 0.75))
+		else:
+			np.append(p[0])
+			for i in p.size() - 1:
+				var a: Vector2 = p[i]
+				var b: Vector2 = p[i + 1]
+				np.append(a.lerp(b, 0.25))
+				np.append(a.lerp(b, 0.75))
+			np.append(p[p.size() - 1])
 		p = np
 	return p
+
+
+# Even-odd point-in-polygon (ray cast). Used to test whether an empire's colony lies
+# inside a closed border loop — a loop enclosing none of its colonies is a disregarded
+# influence island (vision: an influence blob needs a colony inside).
+func _point_in_poly(pt: Vector2, poly: Array) -> bool:
+	var inside := false
+	var n := poly.size()
+	var j := n - 1
+	for i in n:
+		var a: Vector2 = poly[i]
+		var b: Vector2 = poly[j]
+		if (a.y > pt.y) != (b.y > pt.y):
+			var x := a.x + (pt.y - a.y) / (b.y - a.y) * (b.x - a.x)
+			if pt.x < x:
+				inside = not inside
+		j = i
+	return inside
 
 
 # One always-on galaxy camera now (the old orbital system view is gone —
@@ -1250,16 +1316,30 @@ func _draw_galaxy() -> void:
 		var pts: PackedVector2Array = an.pts
 		var ar: float = an.r
 		var band: PackedVector2Array = _storm_bands[ai]
-		for layer in 5:
-			var t := float(layer) / 5.0
-			var col := Color(0.40, 0.26, 0.48, 0.10 + t * 0.06)
+		# Nebula body: layered soft discs down the spine, from a wide cool indigo breath
+		# inward to a warm magenta core. Overlapping glows accumulate toward the centre,
+		# so the storm reads as a turbulent charged cloud with depth — not a flat sausage.
+		var haze := [
+			[1.18, Color(0.22, 0.15, 0.38, 0.045)],   # cool indigo outer breath
+			[0.94, Color(0.33, 0.19, 0.47, 0.065)],
+			[0.68, Color(0.47, 0.24, 0.56, 0.085)],
+			[0.44, Color(0.63, 0.31, 0.62, 0.11)],    # warm magenta core
+		]
+		for h in haze:
+			var hr: float = ar * (h[0] as float)
+			var hc: Color = h[1]
 			for c in band:
-				_draw_glow(c, ar * (1.05 - t * 0.78), col)   # soft discs, no hard edges
-		# Rounded outline: thick line down the spine + a cap circle at each end.
+				_draw_glow(c, hr, hc)
+		# A bright turbulent filament threads the spine — the storm's charged "eye".
 		if pts.size() >= 2:
-			draw_polyline(pts, Color(0.56, 0.42, 0.68, 0.26), ar * 2.0)
-		draw_arc(pts[0], ar, 0.0, TAU, 32, Color(0.60, 0.46, 0.72, 0.32), 1.5, true)
-		draw_arc(pts[pts.size() - 1], ar, 0.0, TAU, 32, Color(0.60, 0.46, 0.72, 0.32), 1.5, true)
+			draw_polyline(pts, Color(0.72, 0.45, 0.85, 0.10), ar * 0.85)   # filament halo
+			draw_polyline(pts, Color(0.92, 0.74, 1.0, 0.5), 2.0, true)     # crisp bright core
+		# Charged knots sparkle along the band, giving the cloud texture and shimmer.
+		for c in band:
+			_draw_glow(c, ar * 0.15, Color(0.95, 0.83, 1.0, 0.16))
+		# Soft rounded ends — glow blobs, not a hard ring.
+		_draw_glow(pts[0], ar * 0.55, Color(0.60, 0.34, 0.66, 0.14))
+		_draw_glow(pts[pts.size() - 1], ar * 0.55, Color(0.60, 0.34, 0.66, 0.14))
 	# Deformed influence borders (already fog-gated to VR in _recompute_borders).
 	# Two passes: a wide translucent underlay for a soft glow, then the crisp core.
 	for bl in _border_segments:
@@ -1282,6 +1362,13 @@ func _draw_galaxy() -> void:
 			draw_line(a, (a + b) * 0.5, lane_col, 1.5, true)
 		elif kb:
 			draw_line(b, (a + b) * 0.5, lane_col, 1.5, true)
+	# Each empire's capital (its most-populated system — the de-facto shipyard) gets a
+	# distinctive star glyph. Resolved once per frame so the per-system loop is a lookup.
+	var capitals := {}
+	for e in sim.empires.values():
+		var cap: int = sim.most_populated_system(e.id)
+		if cap != -1:
+			capitals[cap] = e.color
 	for sys in sim.systems.values():
 		var sp: Vector2 = sys.map_pos
 		if sp.x < view_lo.x or sp.x > view_hi.x or sp.y < view_lo.y or sp.y > view_hi.y:
@@ -1307,6 +1394,8 @@ func _draw_galaxy() -> void:
 			if owner != -1:
 				draw_arc(sys.map_pos, 13.0 * sscale, 0.0, TAU, 40,
 					sim.empires[owner].color, 2.0, true)
+			if capitals.has(sys.id):
+				_draw_capital_mark(sys.map_pos, capitals[sys.id], sscale)
 			if _galaxy_cam_zoom >= LABEL_ZOOM:
 				if cc > 0:
 					draw_string(font, sys.map_pos + Vector2(14.0, -12.0), str(cc),
@@ -1781,6 +1870,26 @@ func _draw_star(pos: Vector2, col: Color, intensity: float, scale := 1.0) -> voi
 	core.a = 0.85 + 0.15 * intensity
 	_draw_glow(pos, (5.2 + 1.0 * intensity) * scale, core)
 	_draw_glow(pos, (2.4 + 0.6 * intensity) * scale, Color(1, 1, 1, 0.9 * intensity))
+
+
+# A five-pointed star badge marking an empire's CAPITAL (its most-populated system —
+# where its ships are built). Floated above the system so it never hides the star or
+# clashes with structure badges; filled bright with a soft halo and a dark rim so it
+# reads instantly as the seat of the empire — a proper star, not a ring.
+func _draw_capital_mark(pos: Vector2, col: Color, scale := 1.0) -> void:
+	var center := pos + Vector2(0.0, -22.0 - 12.0 * scale)   # crown, clear of the badges
+	var ro := 9.0                    # fixed size → an even, legible star at any zoom
+	var ri := ro * 0.4               # deep valleys so it always reads as a 5-point star
+	var star := PackedVector2Array()
+	for i in 10:   # 5 tips + 5 valleys, first point straight up
+		var ang: float = -PI / 2.0 + float(i) * PI / 5.0
+		var r: float = ro if i % 2 == 0 else ri
+		star.append(center + Vector2(cos(ang), sin(ang)) * r)
+	_draw_glow(center, ro * 1.8, Color(col.r, col.g, col.b, 0.35))   # soft halo
+	draw_colored_polygon(star, col.lerp(Color.WHITE, 0.5))           # bright filled star
+	var rim := star.duplicate()
+	rim.append(star[0])
+	draw_polyline(rim, col.darkened(0.45), 1.2, true)                # crisp dark rim
 
 
 func _draw_system_symbols(sys: StarSystem) -> void:

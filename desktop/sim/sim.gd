@@ -588,6 +588,19 @@ func point_in_anomaly(p: Vector2) -> bool:
 	return false
 
 
+# True if p lies within `margin` of any anomaly's blocking body. The border bake uses
+# this to STOP a contour from tracing a storm's hard influence cutoff as an ugly straight
+# edge: segments hugging a storm are dropped, so the border just opens where the storm's
+# haze already covers it (the storm's blocking EFFECT is untouched — this is draw-only).
+func point_near_anomaly(p: Vector2, margin: float) -> bool:
+	for an in anomalies:
+		if not (an.bb as Rect2).grow(margin).has_point(p):
+			continue
+		if _dist_point_to_polyline(p, an.pts) < an.r + margin:
+			return true
+	return false
+
+
 # True if the segment a→b passes through any anomaly (blocking influence/sight).
 func segment_hits_anomaly(a: Vector2, b: Vector2) -> bool:
 	for an in anomalies:

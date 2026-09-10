@@ -370,3 +370,41 @@ re-rendered clean at fresh timestamps.
 
 ### Coverage status
 Eleven poses. No open reds. Borders now smooth; the one text defect closed.
+
+---
+
+## Cycle 12 — 2026-09-11 — border-curve / storm / capital polish (screenshot feedback)
+
+Five-point feedback on the Cycle 11 borders + storms. All addressed in `main.gd`
+(+ one pure-read sim helper). Tests 116/116 incl. determinism; main.gd compiles;
+11 poses re-rendered.
+
+- **P3 — borders "still verry sectioned, could they be a curve?"** Chained loops now
+  smooth as CLOSED curves: `_chain_border_segments` detects a loop (start key == end
+  key), folds the duplicate vertex, and `_chaikin` gained a `closed` mode that wraps
+  around with no pinned endpoints (was pinning an arbitrary start vertex → a kink).
+  Bumped to 3 passes. A ring border now reads as one flowing curve, not faceted twigs.
+- **P1 — green's border "so straight and ugly" along a storm (don't change storm
+  effects).** The contour was tracing the storm's hard influence cutoff. Fix is
+  draw-only: new `sim.point_near_anomaly(p, margin)` (pure read of the same anomaly
+  bodies the influence test already uses); border segments within `BORDER_STORM_MARGIN`
+  (15px) of a storm are dropped, so the border opens into the haze that already covers
+  that ground. Storm influence/sight blocking is untouched.
+- **P4 — yellow "island" between blue and green with no colony inside → disregard it.**
+  Per vision ("a blob needs a colony inside"): a CLOSED border loop enclosing none of
+  that empire's colony positions (`pos[k]`, which already = its colony-bearing systems)
+  is dropped via an even-odd `_point_in_poly` test. Open chains (partial borders) are
+  always kept. Neighbours' borders fill the vacated gap. Draw-only — sim ownership
+  unchanged (the pockets are empty space; noted for future if it ever gates gameplay).
+- **P2 — "the storms are ugly."** Restyled from a flat dusk-violet sausage to a layered
+  nebula: 4 haze bands (cool indigo outer → warm magenta core) accumulating toward the
+  centre, a bright turbulent filament threading the spine, charged sparkle knots along
+  the band, and soft glow end-caps (no hard arc ring).
+- **P5 — "add a spesial star mark to the capital."** `_draw_capital_mark`: a filled
+  5-point star (fixed proportions, deep valleys → always reads as a star) with a soft
+  halo + dark rim, floated above each empire's `most_populated_system`, clear of the
+  structure-badge row. Verified above "Karon" in `autoshot_zoom.png`.
+
+### Coverage status
+Eleven poses, no open reds. Borders curve (open + closed); storm-adjacent straightness
+and colony-less islands gone; storms restyled; capitals marked.
