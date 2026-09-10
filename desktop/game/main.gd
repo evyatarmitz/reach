@@ -103,6 +103,9 @@ var _starfield: Array = []  # backdrop: [pos, radius, Color] faint stars (static
 var _has_anomalies := false # cached each refresh so _claim_at skips anomaly tests
 var _storm_bands: Array = [] # per-anomaly baked haze-blob centers; anomalies are
                             # immutable after map-gen, so this is built once (not per frame)
+var _glow_tex: ImageTexture  # soft radial disc (white, alpha falloff). Linear-filtered,
+                            # so star glows read smooth at any size — our stand-in for the
+                            # 2D MSAA the GL-compatibility renderer won't give us.
 
 var raw_label: Label       # what you gather: water flow (net/day)
 var goods_label: RichTextLabel   # minerals + alloy tiers 1-5: amount over income rate
@@ -181,6 +184,7 @@ func _ready() -> void:
 	# smooth influence-shaped gradient instead of visible cells. (Only the fog is a
 	# texture here; lines/text/arcs are vector-drawn and unaffected.)
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_glow_tex = _make_glow_texture()
 	# New game from the menu's settings, or the default demo map. (A pending load
 	# replaces this after the UI/camera exist.)
 	if not Session.config.is_empty():
@@ -1146,22 +1150,22 @@ func _draw_galaxy() -> void:
 		var band: PackedVector2Array = _storm_bands[ai]
 		for layer in 5:
 			var t := float(layer) / 5.0
-			var col := Color(0.5, 0.2, 0.6, 0.10 + t * 0.06)
+			var col := Color(0.40, 0.26, 0.48, 0.10 + t * 0.06)
 			for c in band:
-				draw_circle(c, ar * (1.0 - t * 0.8), col)
+				_draw_glow(c, ar * (1.05 - t * 0.78), col)   # soft discs, no hard edges
 		# Rounded outline: thick line down the spine + a cap circle at each end.
 		if pts.size() >= 2:
-			draw_polyline(pts, Color(0.7, 0.4, 0.9, 0.30), ar * 2.0)
-		draw_arc(pts[0], ar, 0.0, TAU, 24, Color(0.7, 0.4, 0.9, 0.35), 1.5)
-		draw_arc(pts[pts.size() - 1], ar, 0.0, TAU, 24, Color(0.7, 0.4, 0.9, 0.35), 1.5)
+			draw_polyline(pts, Color(0.56, 0.42, 0.68, 0.26), ar * 2.0)
+		draw_arc(pts[0], ar, 0.0, TAU, 32, Color(0.60, 0.46, 0.72, 0.32), 1.5, true)
+		draw_arc(pts[pts.size() - 1], ar, 0.0, TAU, 32, Color(0.60, 0.46, 0.72, 0.32), 1.5, true)
 	# Deformed influence borders (already fog-gated to VR in _recompute_borders).
 	# Two passes: a wide translucent underlay for a soft glow, then the crisp core.
 	for seg in _border_segments:
 		var gc: Color = seg[2]
 		gc.a = 0.22
-		draw_line(seg[0], seg[1], gc, 5.0)
+		draw_line(seg[0], seg[1], gc, 5.0, true)
 	for seg in _border_segments:
-		draw_line(seg[0], seg[1], seg[2], 2.0)
+		draw_line(seg[0], seg[1], seg[2], 2.0, true)
 	# Lanes: full between two known systems; HALF (out to the midpoint) when one
 	# end is known and the other is never-seen; nothing when neither is known.
 	var lane_col := Color(1, 1, 1, 0.13)
@@ -1171,11 +1175,11 @@ func _draw_galaxy() -> void:
 		var ka := _sys_known(lane[0])
 		var kb := _sys_known(lane[1])
 		if ka and kb:
-			draw_line(a, b, lane_col, 1.5)
+			draw_line(a, b, lane_col, 1.5, true)
 		elif ka:
-			draw_line(a, (a + b) * 0.5, lane_col, 1.5)
+			draw_line(a, (a + b) * 0.5, lane_col, 1.5, true)
 		elif kb:
-			draw_line(b, (a + b) * 0.5, lane_col, 1.5)
+			draw_line(b, (a + b) * 0.5, lane_col, 1.5, true)
 	for sys in sim.systems.values():
 		var sp: Vector2 = sys.map_pos
 		if sp.x < view_lo.x or sp.x > view_hi.x or sp.y < view_lo.y or sp.y > view_hi.y:
@@ -1199,12 +1203,12 @@ func _draw_galaxy() -> void:
 				sys.citadel_empire_id)
 			var owner: int = _system_owner.get(sys.id, -1)
 			if owner != -1:
-				draw_arc(sys.map_pos, 13.0 * sscale, 0.0, TAU, 32,
-					sim.empires[owner].color, 2.0)
+				draw_arc(sys.map_pos, 13.0 * sscale, 0.0, TAU, 40,
+					sim.empires[owner].color, 2.0, true)
 			if _galaxy_cam_zoom >= LABEL_ZOOM:
 				if cc > 0:
 					draw_string(font, sys.map_pos + Vector2(14.0, -12.0), str(cc),
-						HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.35, 1.0, 0.5))
+						HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.55, 0.85, 0.6))
 				_draw_name(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
 					Color(1, 1, 1, 0.85))
 		else:
@@ -1216,7 +1220,7 @@ func _draw_galaxy() -> void:
 			if sowner != -1:
 				var gc: Color = sim.empires[sowner].color
 				gc.a = 0.4
-				draw_arc(sys.map_pos, 13.0, 0.0, TAU, 32, gc, 1.5)
+				draw_arc(sys.map_pos, 13.0, 0.0, TAU, 40, gc, 1.5, true)
 			if _galaxy_cam_zoom >= LABEL_ZOOM:
 				var scc := 0
 				for pinfo in snap.get("planets", {}).values():
@@ -1240,17 +1244,17 @@ func _draw_galaxy() -> void:
 		if kind == 0:
 			# Live fleet battle: pulsing red-orange clash — a ring + crossed swords.
 			var bc := Color(1.0, 0.4, 0.2, 0.35 + 0.4 * pulse)
-			draw_arc(p, 15.0 + 3.0 * pulse, 0.0, TAU, 28, bc, 2.0)
+			draw_arc(p, 15.0 + 3.0 * pulse, 0.0, TAU, 32, bc, 2.0, true)
 			for k in 2:
 				var d := Vector2.RIGHT.rotated(PI * 0.25 + k * PI * 0.5) * 12.0
-				draw_line(p - d, p + d, Color(1.0, 0.5, 0.25, 0.9), 2.5)
+				draw_line(p - d, p + d, Color(1.0, 0.5, 0.25, 0.9), 2.5, true)
 		elif kind == 1:
 			# Live bombardment: pulsing yellow streaks raining onto the system.
 			var yc := Color(1.0, 0.85, 0.2, 0.5 + 0.4 * pulse)
 			for k in 3:
 				var x := p.x - 8.0 + k * 8.0
 				draw_line(Vector2(x, p.y - 20.0), Vector2(x, p.y - 10.0), yc, 2.0)
-			draw_arc(p, 14.0, 0.0, TAU, 24, Color(1.0, 0.8, 0.2, 0.3 * pulse), 1.5)
+			draw_arc(p, 14.0, 0.0, TAU, 32, Color(1.0, 0.8, 0.2, 0.3 * pulse), 1.5, true)
 		else:
 			# Ended recently: fading red starburst afterglow.
 			var age: float = sim.day - sim.combat_at[sid]
@@ -1310,10 +1314,10 @@ func _draw_galaxy() -> void:
 				c + Vector2(0, -3), c + Vector2(3, 0),
 				c + Vector2(0, 3), c + Vector2(-3, 0)]), Color(1, 1, 0.4))
 		if f.id == selected_fleet_id or selected_fleets.has(f.id):
-			draw_arc(fp, 10.0, 0.0, TAU, 24, Color.WHITE, 1.5)
+			draw_arc(fp, 10.0, 0.0, TAU, 32, Color.WHITE, 1.5, true)
 			if f.is_moving():
 				draw_line(fp, sim.systems[f.path[f.path.size() - 1]].map_pos,
-					Color(1, 1, 1, 0.4), 1.0)
+					Color(1, 1, 1, 0.4), 1.0, true)
 
 	# Live box-select rectangle while the player is dragging.
 	if _dragging:
@@ -1324,8 +1328,8 @@ func _draw_galaxy() -> void:
 	# Hover: a faint ring for feedback + a row of symbols showing what's inside.
 	if _hover_system != -1 and sim.systems.has(_hover_system) \
 			and _sys_known(_hover_system):
-		draw_arc(sim.systems[_hover_system].map_pos, 18.0, 0.0, TAU, 32,
-			Color(1, 1, 1, 0.35), 1.0)
+		draw_arc(sim.systems[_hover_system].map_pos, 18.0, 0.0, TAU, 40,
+			Color(1, 1, 1, 0.35), 1.0, true)
 		_draw_system_symbols(sim.systems[_hover_system])
 
 
@@ -1643,24 +1647,38 @@ func _draw_mine_mark(c: Vector2, col: Color) -> void:
 			draw_line(corner, corner + Vector2(0.0, -sy * t), col, 1.5)
 
 
+# A soft white radial disc: alpha falls off from the centre so, linear-filtered, it
+# has no hard edge to alias. Tinted at draw time, it's every star's glow and core.
+func _make_glow_texture(size: int = 64) -> ImageTexture:
+	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var c := (size - 1) * 0.5
+	for y in size:
+		for x in size:
+			var d := Vector2(x - c, y - c).length() / c
+			var a := clampf(1.0 - d, 0.0, 1.0)
+			img.set_pixel(x, y, Color(1.0, 1.0, 1.0, a * a))   # quadratic → soft halo
+	return ImageTexture.create_from_image(img)
+
+
+# Draw the glow disc centred at pos, radius r, tinted (rgb + alpha) by col.
+func _draw_glow(pos: Vector2, r: float, col: Color) -> void:
+	draw_texture_rect(_glow_tex, Rect2(pos - Vector2(r, r), Vector2(r * 2.0, r * 2.0)),
+		false, col)
+
+
 func _draw_star(pos: Vector2, col: Color, intensity: float, scale := 1.0) -> void:
-	# A luminous body with depth: a wide faint corona, tighter coloured glow layers, a
-	# bright core and a hot near-white pip. scale grows it with the system's population.
-	# Stacked translucent discs read as volume; MSAA keeps every edge crisp.
-	var corona := col
-	corona.a = 0.06 * intensity
-	draw_circle(pos, 20.0 * scale, corona)          # outer haze — the "reach" of the light
-	corona.a = 0.10 * intensity
-	draw_circle(pos, 13.0 * scale, corona)
-	var g := col
-	for i in 3:                                       # coloured glow falloff
-		g.a = (0.14 + i * 0.10) * intensity
-		draw_circle(pos, (9.0 - i * 2.4) * scale, g)
+	# A luminous body with depth, built from soft radial discs so every edge is smooth
+	# (no MSAA on GL-compat): a wide faint corona, a coloured glow, a bright near-white
+	# core and a hot pip. scale grows it with the system's population.
+	var c := col
+	c.a = 0.16 * intensity
+	_draw_glow(pos, 20.0 * scale, c)                 # outer haze — the "reach" of the light
+	c.a = 0.42 * intensity
+	_draw_glow(pos, 11.0 * scale, c)                 # coloured body glow
 	var core := col.lerp(Color.WHITE, 0.55)
-	core.a = 0.7 + 0.3 * intensity
-	draw_circle(pos, (3.6 + 0.8 * intensity) * scale, core)
-	var pip := Color(1, 1, 1, 0.85 * intensity)      # hot white centre for a sharp glint
-	draw_circle(pos, (1.4 + 0.4 * intensity) * scale, pip)
+	core.a = 0.85 + 0.15 * intensity
+	_draw_glow(pos, (5.2 + 1.0 * intensity) * scale, core)
+	_draw_glow(pos, (2.4 + 0.6 * intensity) * scale, Color(1, 1, 1, 0.9 * intensity))
 
 
 func _draw_system_symbols(sys: StarSystem) -> void:

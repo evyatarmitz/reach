@@ -48,9 +48,11 @@ const _SYL_B := ["ron", "dis", "lex", "mos", "tia", "var", "nyx", "del", "sor",
 	"pel"]
 const _EMPIRE_SUFFIX := ["Compact", "Ascendancy", "Union", "Dominion", "League",
 	"Accord", "Pact", "Reach"]
+# Softer, slightly desaturated empire hues — distinct on the dark map without the
+# fluorescent/neon glare of fully-saturated primaries.
 const _EMPIRE_COLORS := [
-	Color(0.35, 0.8, 1.0), Color(1.0, 0.4, 0.35), Color(0.5, 1.0, 0.45),
-	Color(1.0, 0.82, 0.3), Color(0.75, 0.5, 1.0), Color(1.0, 0.6, 0.25)]
+	Color(0.44, 0.68, 0.90), Color(0.88, 0.46, 0.42), Color(0.53, 0.78, 0.50),
+	Color(0.87, 0.76, 0.44), Color(0.66, 0.55, 0.85), Color(0.87, 0.62, 0.40)]
 
 
 static func _system_name(idx: int) -> String:
