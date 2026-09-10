@@ -264,12 +264,17 @@ const BORDER_A2 := 1.8
 const MAP_AREA_PER_PLANET := 30000.0
 const MAP_MIN_SEPARATION := 90.0
 
-# Cosmic anomalies: circular regions that block influence and visibility. Placed in
-# open space (clear of systems and lanes) so they never break connectivity or
-# movement — they force influence/sight to route around them. Count scales a little
-# with map size (see generate_map).
+# Cosmic anomalies ("storms"): snaking bands that block influence and visibility but
+# NOT movement — fleets fly straight through them, and they're allowed to lie across
+# hyperlanes. That makes a storm a tactical object (a blind, un-defended corridor)
+# rather than a wall. Each is a capsule-chain: a spine polyline of ANOMALY_STEPS
+# points, thickened by ANOMALY_RADIUS. Count scales a little with map size.
 const ANOMALY_MIN := 2
 const ANOMALY_MAX := 6
-const ANOMALY_RADIUS_MIN := 110.0
-const ANOMALY_RADIUS_MAX := 190.0
-const ANOMALY_SYSTEM_CLEARANCE := 30.0   # keep this far off any system
+const ANOMALY_RADIUS_MIN := 42.0         # band half-width (thinner than the old blobs)
+const ANOMALY_RADIUS_MAX := 78.0
+const ANOMALY_STEPS_MIN := 5             # spine points — more = longer snake
+const ANOMALY_STEPS_MAX := 9
+const ANOMALY_STEP_LEN := 130.0          # spine segment length
+const ANOMALY_TURN := 0.9                # max radians a snake turns per step (wiggle)
+const ANOMALY_SYSTEM_CLEARANCE := 30.0   # keep the band this far off any system

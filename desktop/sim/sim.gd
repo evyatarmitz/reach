@@ -142,44 +142,51 @@ static func generate_map(cfg_in: Dictionary) -> Sim:
 	return sim
 
 
-# Scatter a few anomalies in open space — clear of every system and every lane, so
-# they block influence/visibility without ever cutting the map or a fleet's route.
+# Grow a few snaking storm-bands in open space. They may cross lanes (movement is
+# never blocked) but are kept clear of systems, so no colony is ever born blind inside
+# one. Each band is a spine polyline thickened by its radius (a capsule chain).
 static func _place_anomalies(sim: Sim, positions: Array, size: Vector2,
 		rng: RandomNumberGenerator) -> void:
 	var target: int = clampi(int(positions.size() / 12),
 		SimConstants.ANOMALY_MIN, SimConstants.ANOMALY_MAX)
-	# Spread them across the map instead of letting them clump: reject a candidate that's
-	# too near an anomaly already placed. ~the spacing of `target` points on a grid over
-	# the map, so they distribute rather than pile into one open region.
+	# Spread bands across the map instead of letting them clump: reject a candidate whose
+	# head starts too near an existing band's head. ~the spacing of `target` points on a
+	# grid over the map.
 	var min_apart: float = sqrt(size.x * size.y / maxf(1.0, float(target))) * 0.62
 	var attempts := 0
 	while sim.anomalies.size() < target and attempts < target * 800:
 		attempts += 1
 		var r := rng.randf_range(SimConstants.ANOMALY_RADIUS_MIN,
 			SimConstants.ANOMALY_RADIUS_MAX)
-		var p := Vector2(rng.randf_range(r, size.x - r), rng.randf_range(r, size.y - r))
+		var steps: int = rng.randi_range(SimConstants.ANOMALY_STEPS_MIN,
+			SimConstants.ANOMALY_STEPS_MAX)
+		# Grow the spine from a random head along a wandering heading. Reject the whole
+		# band if any spine point strays off-map or too near a system.
+		var head := Vector2(rng.randf_range(r, size.x - r), rng.randf_range(r, size.y - r))
 		var clear := true
-		for an in sim.anomalies:   # keep anomalies spread apart
-			if p.distance_to(an.pos) < min_apart:
+		for an in sim.anomalies:   # keep band heads spread apart
+			if head.distance_to(an.pts[0]) < min_apart:
 				clear = false
 				break
+		if not clear:
+			continue
+		var pts := PackedVector2Array([head])
+		var heading := rng.randf_range(0.0, TAU)
+		var p := head
+		for s in steps - 1:
+			heading += rng.randf_range(-SimConstants.ANOMALY_TURN, SimConstants.ANOMALY_TURN)
+			p = p + Vector2.from_angle(heading) * SimConstants.ANOMALY_STEP_LEN
+			if p.x < r or p.y < r or p.x > size.x - r or p.y > size.y - r:
+				clear = false
+				break
+			pts.append(p)
 		if clear:
-			for q in positions:   # keep off systems
-				if p.distance_to(q) < r + SimConstants.ANOMALY_SYSTEM_CLEARANCE:
+			for q in positions:   # keep the whole band off systems
+				if _dist_point_to_polyline(q, pts) < r + SimConstants.ANOMALY_SYSTEM_CLEARANCE:
 					clear = false
 					break
 		if clear:
-			for l in sim.lanes:   # keep off lanes (movement never blocked)
-				var a: Vector2 = sim.systems[l[0]].map_pos
-				var b: Vector2 = sim.systems[l[1]].map_pos
-				var ab := b - a
-				var len2 := ab.length_squared()
-				var t := 0.0 if len2 <= 0.0 else clampf((p - a).dot(ab) / len2, 0.0, 1.0)
-				if p.distance_to(a + ab * t) < r:
-					clear = false
-					break
-		if clear:
-			sim.anomalies.append({"pos": p, "r": r})
+			sim.anomalies.append({"pts": pts, "r": r})
 
 
 # Minimum spanning tree (Prim) so the whole map is one connected component, plus
@@ -324,7 +331,12 @@ func serialize() -> Dictionary:
 			"nad": a._next_action_day})
 	var ans: Array = []
 	for an in anomalies:
-		ans.append({"x": an.pos.x, "y": an.pos.y, "r": an.r})
+		var xs: Array = []
+		var ys: Array = []
+		for pt in an.pts:
+			xs.append(pt.x)
+			ys.append(pt.y)
+		ans.append({"xs": xs, "ys": ys, "r": an.r})
 	var bs: Array = []
 	for b in builders:
 		bs.append({"id": b.id, "eid": b.eid, "sys": b.sys, "path": b.path.duplicate(),
@@ -413,7 +425,12 @@ static func deserialize(d: Dictionary) -> Sim:
 	for l in d.lanes:
 		sim.lanes.append([int(l[0]), int(l[1])])
 	for an in d.get("anomalies", []):
-		sim.anomalies.append({"pos": Vector2(an.x, an.y), "r": float(an.r)})
+		var pts := PackedVector2Array()
+		var xs: Array = an.get("xs", [])
+		var ys: Array = an.get("ys", [])
+		for i in xs.size():
+			pts.append(Vector2(float(xs[i]), float(ys[i])))
+		sim.anomalies.append({"pts": pts, "r": float(an.r)})
 	for b in d.get("builders", []):
 		var bpath: Array[int] = []
 		for x in b.path:
@@ -557,7 +574,7 @@ func imperial_bonus_at(system_id: int) -> float:
 
 func point_in_anomaly(p: Vector2) -> bool:
 	for an in anomalies:
-		if p.distance_to(an.pos) < an.r:
+		if _dist_point_to_polyline(p, an.pts) < an.r:
 			return true
 	return false
 
@@ -565,13 +582,42 @@ func point_in_anomaly(p: Vector2) -> bool:
 # True if the segment a→b passes through any anomaly (blocking influence/sight).
 func segment_hits_anomaly(a: Vector2, b: Vector2) -> bool:
 	for an in anomalies:
-		var c: Vector2 = an.pos
-		var ab := b - a
-		var len2 := ab.length_squared()
-		var t := 0.0 if len2 <= 0.0 else clampf((c - a).dot(ab) / len2, 0.0, 1.0)
-		if c.distance_to(a + ab * t) < an.r:
+		var pts: PackedVector2Array = an.pts
+		for i in pts.size() - 1:
+			if _seg_seg_dist(a, b, pts[i], pts[i + 1]) < an.r:
+				return true
+		# A single-point (degenerate) spine has no segment to test above.
+		if pts.size() == 1 and _dist_point_to_segment(pts[0], a, b) < an.r:
 			return true
 	return false
+
+
+# Shortest distance from point p to the polyline `pts` (a storm's spine).
+static func _dist_point_to_polyline(p: Vector2, pts: PackedVector2Array) -> float:
+	if pts.is_empty():
+		return INF
+	if pts.size() == 1:
+		return p.distance_to(pts[0])
+	var best := INF
+	for i in pts.size() - 1:
+		best = minf(best, _dist_point_to_segment(p, pts[i], pts[i + 1]))
+	return best
+
+
+static func _dist_point_to_segment(p: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var len2 := ab.length_squared()
+	var t := 0.0 if len2 <= 0.0 else clampf((p - a).dot(ab) / len2, 0.0, 1.0)
+	return p.distance_to(a + ab * t)
+
+
+# Shortest distance between two segments (p1p2 and p3p4). 0 if they cross.
+static func _seg_seg_dist(p1: Vector2, p2: Vector2, p3: Vector2, p4: Vector2) -> float:
+	if Geometry2D.segment_intersects_segment(p1, p2, p3, p4) != null:
+		return 0.0
+	return minf(
+		minf(_dist_point_to_segment(p1, p3, p4), _dist_point_to_segment(p2, p3, p4)),
+		minf(_dist_point_to_segment(p3, p1, p2), _dist_point_to_segment(p4, p1, p2)))
 
 
 # Influence from source system to a point is blocked if the point is inside an

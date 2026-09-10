@@ -1112,17 +1112,33 @@ func _draw_galaxy() -> void:
 	# to grey explored-memory to never-seen black. Baked in the border refresh.
 	if _fog_tex != null:
 		draw_texture_rect(_fog_tex, _fog_rect, false)
-	# Cosmic anomalies: a magenta nebula haze with a darker core — physical hazards
-	# that block influence and sight, so they're always visible (you route around
-	# them). Drawn over the fog.
+	# Cosmic anomalies ("storms"): a magenta nebula haze snaking along a spine. They
+	# block influence and sight (not movement), so they're always visible — a blind
+	# corridor to route sight around but fly fleets through. The band is a capsule
+	# chain: overlapping haze blobs down the spine, then a bright outline of the same
+	# rounded sausage so its edges read clearly.
 	for an in sim.anomalies:
-		var ac: Vector2 = an.pos
+		var pts: PackedVector2Array = an.pts
 		var ar: float = an.r
-		for i in 5:
-			var t := float(i) / 5.0
+		# Sample the spine finely so blobs overlap into a continuous band.
+		var band := PackedVector2Array()
+		for i in pts.size() - 1:
+			var a: Vector2 = pts[i]
+			var b: Vector2 = pts[i + 1]
+			var segs := maxi(1, int(a.distance_to(b) / (ar * 0.5)))
+			for s in segs:
+				band.append(a.lerp(b, float(s) / float(segs)))
+		band.append(pts[pts.size() - 1])
+		for layer in 5:
+			var t := float(layer) / 5.0
 			var col := Color(0.5, 0.2, 0.6, 0.10 + t * 0.06)
-			draw_circle(ac, ar * (1.0 - t * 0.8), col)
-		draw_arc(ac, ar, 0.0, TAU, 48, Color(0.7, 0.4, 0.9, 0.35), 1.5)
+			for c in band:
+				draw_circle(c, ar * (1.0 - t * 0.8), col)
+		# Rounded outline: thick line down the spine + a cap circle at each end.
+		if pts.size() >= 2:
+			draw_polyline(pts, Color(0.7, 0.4, 0.9, 0.30), ar * 2.0)
+		draw_arc(pts[0], ar, 0.0, TAU, 24, Color(0.7, 0.4, 0.9, 0.35), 1.5)
+		draw_arc(pts[pts.size() - 1], ar, 0.0, TAU, 24, Color(0.7, 0.4, 0.9, 0.35), 1.5)
 	# Deformed influence borders (already fog-gated to VR in _recompute_borders).
 	# Two passes: a wide translucent underlay for a soft glow, then the crisp core.
 	for seg in _border_segments:
