@@ -2947,5 +2947,29 @@ func _autoshot() -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://autoshot_intro.png")
+	if intro_overlay != null:
+		intro_overlay.visible = false
+	# Tenth shot: drag-select. A static pose can't perform a live drag, so fake the
+	# state the way a real drag leaves it — a world-space box around home's parked
+	# fleets, box-selected — and freeze mid-drag (_dragging=true) so the selection
+	# rings AND the live drag rectangle both paint. Covers the only feature the harness
+	# couldn't otherwise show (Cycle 10 🟡).
+	view_system_id = -1
+	selected_planet_id = -1
+	selected_fleet_id = -1
+	_galaxy_cam_pos = home.map_pos
+	_galaxy_cam_zoom = 2.0
+	_apply_camera()
+	var box_c: Vector2 = home.map_pos + FLEET_ICON_OFF
+	_drag_start = box_c + Vector2(-70, -70)
+	_drag_cur = box_c + Vector2(70, 70)
+	_box_select(_drag_start, _drag_cur)   # populates selected_fleets + the rings
+	_dragging = true                      # freeze mid-drag so the box draws
+	_refresh_ui()
+	queue_redraw()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://autoshot_drag_select.png")
+	_dragging = false
 	print("autoshots saved: ", ProjectSettings.globalize_path("user://"))
 	get_tree().quit()

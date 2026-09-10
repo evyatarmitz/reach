@@ -23,10 +23,10 @@ embodied player and direct entity control, and Reach has neither.
    (`6419248`).
 
 ### Open follow-up from the batch
-- **Drag-select has no static screenshot pose** (Cycle 10 🟡). Add an 11th `--autoshot`
-  pose that scripts a drag — or fakes `_dragging=true` with a populated
-  `selected_fleets` — so the drag box + multi-fleet selection rings get visual
-  coverage like every other feature.
+- ✅ **Drag-select harness pose** — added as the 11th `--autoshot` pose
+  (`autoshot_drag_select.png`), fakes the mid-drag state; flipped Cycle 10's 🟡 to 🟢.
+  Minor deferred: the pose catches only 1 fleet (built ships pool into one fleet at the
+  shipyard) — a true multi-fleet group shot would need fleets spawned apart.
 - **AI never builds citadels** (by design for now). If the AI should fortify
   chokepoints, extend `empire_ai._build_support` with a citadel heuristic.
 

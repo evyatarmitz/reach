@@ -319,13 +319,17 @@ bit-identical determinism check. Screenshot triage below.
   the "M1" badge in the centred structure row; Karon's hover tooltip reads "imperial
   center L3 (+50% influence)" — upgrade levels and the water-for-influence bonus both
   surface correctly.
-- **🟡 Drag-rectangle fleet select.** Logic + selection-ring/drag-box draw code are in
-  and the project parses clean, but a static autoshot pose can't perform a live drag,
-  so the box + multi-ring visuals are unverified on-screen. Add an 11th harness pose
-  that scripts a drag (or fakes `_dragging` + a populated `selected_fleets`) to cover
-  it — noted in TODO.
+- **🟢 Drag-rectangle fleet select (`autoshot_drag_select.png`).** Started 🟡 (no static
+  pose can perform a live drag), closed same cycle by adding an 11th harness pose that
+  fakes the mid-drag state — a world-space box around home's parked fleets, box-selected,
+  frozen with `_dragging=true`. The shot shows the cyan drag rectangle, the selected
+  fleet's white ring, and the "▭ Selected N fleets — click a system to move them" log
+  line all painting correctly.
 - **🟢 No regressions.** Battle, bombard, colony, legend, intro poses all re-rendered
   clean at their new timestamps.
 
 ### Coverage status
-Ten poses. No open reds. One 🟡 coverage gap: drag-select has no static pose (TODO).
+Eleven poses. No open reds, no open 🟡 — every item in the batch has visual or test
+coverage. (Note: the drag pose catches only 1 fleet, since freshly-built ships pool
+into a single fleet at the shipyard; enough to prove the box + ring render, but a
+genuine multi-fleet group would need distinct fleets spawned apart — minor, deferred.)
