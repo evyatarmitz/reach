@@ -69,6 +69,7 @@ func _init() -> void:
 	_test_mine_upgrade()
 	_test_combat_scaling()
 	_test_fleet_pin()
+	_test_enemy_transit_block()
 	_test_attrition_and_depot()
 	_test_structure_capture()
 	_test_support_structures()
@@ -952,6 +953,35 @@ func _test_fleet_pin() -> void:
 	var h := sim2._fleet_at(f2.id, x.id); h.fighters[0] = 3
 	check(sim2.fleet_pin(g) == 2, "enemy fleet present -> locked (battle)")
 	check(not sim2.order_fleet(g.id, y.id), "cannot jump out of an active battle")
+
+
+func _test_enemy_transit_block() -> void:
+	# A fleet may not thread a route THROUGH an enemy-held system (its colony blocks
+	# passage). Layout: A -- B(enemy colony) -- C, plus a detour A -- D -- C.
+	var sim := Sim.new()
+	var me := sim.add_empire("Me", Color.BLUE)
+	var foe := sim.add_empire("Foe", Color.RED)
+	var a := sim.add_system("A"); a.map_pos = Vector2.ZERO
+	var b := sim.add_system("B"); b.map_pos = Vector2(100, 0)
+	var c := sim.add_system("C"); c.map_pos = Vector2(200, 0)
+	sim.add_lane(a.id, b.id)
+	sim.add_lane(b.id, c.id)
+	sim.inject_colony(foe.id, sim.add_planet(b.id, "B I").id, 100.0, true)
+	var f := sim._fleet_at(me.id, a.id); f.fighters[0] = 3
+	# Only route A->C is through the enemy colony at B: refused.
+	check(not sim.order_fleet(f.id, c.id),
+		"cannot route through an enemy-held system to reach a system beyond it")
+	# But B itself is a legal destination — you march in to attack it.
+	check(sim.order_fleet(f.id, b.id) and f.is_moving(),
+		"an enemy-held system is still a legal attack destination")
+	# Add a detour A -- D -- C that avoids B: now A->C routes around.
+	var d := sim.add_system("D"); d.map_pos = Vector2(100, 200)
+	sim.add_lane(a.id, d.id)
+	sim.add_lane(d.id, c.id)
+	var f2 := sim._fleet_at(me.id, a.id); f2.fighters[0] = 3
+	check(sim.order_fleet(f2.id, c.id), "a detour around the enemy system is accepted")
+	check(f2.path.has(d.id) and not f2.path.has(b.id),
+		"the accepted route goes through the neutral detour, not the enemy system")
 
 
 func _test_attrition_and_depot() -> void:

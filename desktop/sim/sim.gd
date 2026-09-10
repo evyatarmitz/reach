@@ -1245,6 +1245,42 @@ func lane_path(from_sys: int, to_sys: int) -> Array[int]:
 	return out
 
 
+# True if this system stops an enemy fleet from passing THROUGH it: it holds an enemy
+# colony (planets block movement). Such a system can still be a fleet's destination —
+# you march in to attack it — but a route may not thread through it to somewhere beyond.
+func _blocks_enemy_transit(empire_id: int, system_id: int) -> bool:
+	return _has_enemy_colony(empire_id, system_id)
+
+
+# Lane BFS for a fleet: like lane_path, but a route may not pass THROUGH a system that
+# blocks enemy transit (enemy colony or standing enemy citadel). The destination itself
+# is always reachable if a lane leads to it — you can always march in to attack. [] if
+# no legal route.
+func lane_path_fleet(from_sys: int, to_sys: int, empire_id: int) -> Array[int]:
+	var out: Array[int] = []
+	if from_sys == to_sys or not systems.has(from_sys) or not systems.has(to_sys):
+		return out
+	var prev := {from_sys: from_sys}
+	var queue: Array[int] = [from_sys]
+	while not queue.is_empty():
+		var s: int = queue.pop_front()
+		if s == to_sys:
+			break
+		for nb in lane_neighbors(s):
+			if prev.has(nb):
+				continue
+			if nb == to_sys or not _blocks_enemy_transit(empire_id, nb):
+				prev[nb] = s
+				queue.append(nb)
+	if not prev.has(to_sys):
+		return out
+	var cur := to_sys
+	while cur != from_sys:
+		out.push_front(cur)
+		cur = prev[cur]
+	return out
+
+
 # Order a fleet to a system. Returns false (order refused) when the fleet is pinned:
 # locked in a fleet battle (can't move), or over an enemy colony and told to advance
 # somewhere other than its retreat lane. This is the FTL inhibitor — it stops fleets
@@ -1258,7 +1294,12 @@ func order_fleet(fleet_id: int, dest_system: int) -> bool:
 		return false   # in a battle — held until it resolves
 	if pin == 1 and dest_system != f.prev_system:
 		return false   # over an enemy colony — retreat the way you came, or take it
-	f.path = lane_path(f.system_id, dest_system)
+	# Fleets can't thread through enemy-held systems (they must go around, or make the
+	# blocking system their target). No legal route = order refused.
+	var route := lane_path_fleet(f.system_id, dest_system, f.empire_id)
+	if route.is_empty():
+		return false
+	f.path = route
 	f.progress = 0.0
 	return true
 
