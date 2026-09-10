@@ -168,15 +168,22 @@ const DEPOT_COST_ALLOYS := 60.0
 # border). Vision: "doubles influence range, adds a separate visibility range."
 const OBS_POST_COST_ALLOYS := 90.0
 const OBS_POST_REACH_MULT := 2.0
-# Transportation infrastructure: its PRIMARY effect now is to relieve the per-colony
-# water overhead for colonies in its system (see TRANSPORT_WATER_RELIEF) — logistics that
-# make a cluster water-efficient, the counter-play to the sprawl penalty. It ALSO still
-# amplifies the neighbor/proximity growth bonus (TRANSPORT_BONUS_MULT) for any future mode
-# that re-enables NEIGHBOR_BONUS_ENABLED; with the bonus off, that multiplier is inert and
-# the water relief is the whole effect. (Vision: "strengthens the connection between
-# established centers.")
-const TRANSPORT_COST_ALLOYS := 90.0
-const TRANSPORT_BONUS_MULT := 1.6
+# Imperial center: an administrative seat built on one of your systems. It amplifies the
+# influence its colony projects (bigger borders, longer reach/VR) in exchange for extra
+# water — the colony has to be supplied to run the bureaucracy. The trade is symmetric and
+# upgrades as the colony grows: +10% influence for +10% water at level 1, then +30/+30 at
+# level 2, capped at +50/+50 at level 3. So influence is something you can BUY with water
+# territory, not only grow — but it deepens your water dependence, keeping the water
+# economy the master constraint. (Was the transport hub, whose water-relief job is gone.)
+const IMPERIAL_COST_ALLOYS := 90.0
+const IMPERIAL_UPGRADE_COST_ALLOYS := 60.0
+const IMPERIAL_MAX_LEVEL := 3
+# Influence bonus AND matching water surcharge per level (index = level-1). Same number for
+# both: you pay in water exactly the fraction of influence you gain.
+const IMPERIAL_BONUS := [0.10, 0.30, 0.50]
+# The system's strongest colony must reach this pop to build/upgrade to each level
+# (index = level-1). Level 1 just needs the colony; higher levels need it to have grown.
+const IMPERIAL_UPGRADE_POP := [0.0, 400.0, 900.0]
 
 # --- refining: the single tiered ALLOY chain (minerals -> T1 -> T2 -> ... -> T5) ---
 # One chain now, no separate "alloys" resource: minerals refine into tier-1 alloy,
@@ -223,11 +230,10 @@ const WATER_PER_POP := 0.01
 # cap. Kept small relative to a mature colony's per-pop draw so it's "close, but not the
 # same," not a cliff. Tune for feel.
 const WATER_PER_COLONY := 0.5
-# A transport hub in a colony's system supplies it efficiently, relieving this fraction of
-# that colony's overhead — the hub's job is now to make a cluster water-efficient (the
-# counter-play to the sprawl penalty above), since the old neighbor-bonus effect it used
-# to amplify is switched off (NEIGHBOR_BONUS_ENABLED).
-const TRANSPORT_WATER_RELIEF := 0.6
+# (The transport hub's water-relief effect was removed — that building is now the imperial
+# center, which spends water to buy influence instead of saving it. Sprawl's per-colony
+# overhead above therefore has no dedicated counter-play now: concentration is simply more
+# water-efficient, full stop.)
 
 # Fog of war: how far VR reaches past your influence. It's the claim-ratio margin
 # in the field VR test (visible where player_claim * this >= rival_claim). At 1.5

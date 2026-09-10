@@ -299,7 +299,8 @@ func serialize() -> Dictionary:
 	for s in systems.values():
 		ss.append({"id": s.id, "name": s.name, "x": s.map_pos.x, "y": s.map_pos.y,
 			"depot": s.depot_empire_id, "obs": s.obs_post_empire_id,
-			"trans": s.transport_empire_id, "planets": s.planet_ids.duplicate()})
+			"imp": s.imperial_empire_id, "implvl": s.imperial_level,
+			"planets": s.planet_ids.duplicate()})
 	var ps: Array = []
 	for p in planets.values():
 		ps.append({"id": p.id, "sys": p.system_id, "name": p.name,
@@ -356,7 +357,8 @@ static func deserialize(d: Dictionary) -> Sim:
 		sys.map_pos = Vector2(s.x, s.y)
 		sys.depot_empire_id = int(s.depot)
 		sys.obs_post_empire_id = int(s.get("obs", -1))
-		sys.transport_empire_id = int(s.get("trans", -1))
+		sys.imperial_empire_id = int(s.get("imp", -1))
+		sys.imperial_level = int(s.get("implvl", 0))
 		var pl: Array[int] = []
 		for pid in s.planets:
 			pl.append(int(pid))
@@ -526,7 +528,24 @@ func system_influence(system_id: int, empire_id: int) -> float:
 		var c: Colony = planets[pid].colony
 		if c != null and c.empire_id == empire_id:
 			best = maxf(best, SimConstants.INFLUENCE_A1 * c.population)
+	# An imperial center here amplifies the influence its colony projects (for extra water,
+	# charged in the demand loop). Bigger borders/reach/VR — influence you buy, not grow.
+	if best > 0.0 and systems[system_id].imperial_empire_id == empire_id:
+		best *= 1.0 + _imperial_bonus(system_id)
 	return best
+
+
+# Influence/water bonus fraction of the imperial center in a system (0 if none).
+func _imperial_bonus(system_id: int) -> float:
+	var lvl: int = systems[system_id].imperial_level
+	if lvl <= 0:
+		return 0.0
+	return SimConstants.IMPERIAL_BONUS[mini(lvl, SimConstants.IMPERIAL_MAX_LEVEL) - 1]
+
+
+# Public alias (UI reads this to show the current bonus).
+func imperial_bonus_at(system_id: int) -> float:
+	return _imperial_bonus(system_id)
 
 
 # --- cosmic anomalies ---------------------------------------------------------
@@ -703,10 +722,6 @@ func neighbor_growth_multiplier(colony: Colony) -> float:
 		if r > 0.0:
 			bonus += SimConstants.NEIGHBOR_COEF \
 				* (SimConstants.INFLUENCE_A1 * other.population) / r
-	# Transportation infrastructure in this colony's system amplifies the proximity
-	# bonus it receives (vision: strengthens the bonus between established centers).
-	if systems[sys_id].transport_empire_id == colony.empire_id:
-		bonus *= SimConstants.TRANSPORT_BONUS_MULT
 	# Cap the multiplier: the bonus scales with neighbour population, so a tight,
 	# populous cluster could otherwise compound without bound. Clusters still climb
 	# well past the lone-colony softcap, just not into runaway.
@@ -1009,21 +1024,58 @@ func build_obs_post(empire_id: int, system_id: int) -> bool:
 	return true
 
 
-# Transportation hub: one per system, built in your influence for alloys.
-# Strengthens the neighbor bonus for its colonies (see neighbor_growth_multiplier).
-func can_build_transport(empire_id: int, system_id: int) -> bool:
+# Imperial center: one per system, on your influence, over one of your colonies. Building
+# it is level 1 (+10% influence for +10% water); it upgrades IN PLACE as the colony grows
+# (+30 at L2, +50 at L3). Amplifies system_influence; the water cost is charged in demand.
+func _system_top_pop(system_id: int, empire_id: int) -> float:
+	var best := 0.0
+	for pid in systems[system_id].planet_ids:
+		var c: Colony = planets[pid].colony
+		if c != null and c.empire_id == empire_id:
+			best = maxf(best, c.population)
+	return best
+
+
+func can_build_imperial(empire_id: int, system_id: int) -> bool:
 	var e: Empire = empires.get(empire_id)
 	return e != null and systems.has(system_id) \
-		and systems[system_id].transport_empire_id == -1 \
-		and e.nat[0] >= SimConstants.TRANSPORT_COST_ALLOYS \
-		and is_under_influence(system_id, empire_id)
+		and systems[system_id].imperial_empire_id == -1 \
+		and e.nat[0] >= SimConstants.IMPERIAL_COST_ALLOYS \
+		and is_under_influence(system_id, empire_id) \
+		and _empire_has_colony_in(empire_id, system_id)
 
 
-func build_transport(empire_id: int, system_id: int) -> bool:
-	if not can_build_transport(empire_id, system_id):
+func build_imperial(empire_id: int, system_id: int) -> bool:
+	if not can_build_imperial(empire_id, system_id):
 		return false
-	_pay(empire_id, 0, SimConstants.TRANSPORT_COST_ALLOYS)
-	systems[system_id].transport_empire_id = empire_id
+	_pay(empire_id, 0, SimConstants.IMPERIAL_COST_ALLOYS)
+	systems[system_id].imperial_empire_id = empire_id
+	systems[system_id].imperial_level = 1
+	_invalidate_influence_caches()
+	return true
+
+
+func can_upgrade_imperial(empire_id: int, system_id: int) -> bool:
+	var e: Empire = empires.get(empire_id)
+	if e == null or not systems.has(system_id):
+		return false
+	var s: StarSystem = systems[system_id]
+	if s.imperial_empire_id != empire_id or s.imperial_level < 1 \
+			or s.imperial_level >= SimConstants.IMPERIAL_MAX_LEVEL:
+		return false
+	if e.nat[0] < SimConstants.IMPERIAL_UPGRADE_COST_ALLOYS:
+		return false
+	# The next level needs the system's colony to have grown to its pop gate.
+	return _system_top_pop(system_id, empire_id) \
+		>= SimConstants.IMPERIAL_UPGRADE_POP[s.imperial_level]
+
+
+func upgrade_imperial(empire_id: int, system_id: int) -> bool:
+	if not can_upgrade_imperial(empire_id, system_id):
+		return false
+	_pay(empire_id, 0, SimConstants.IMPERIAL_UPGRADE_COST_ALLOYS)
+	systems[system_id].imperial_level += 1
+	_invalidate_influence_caches()
 	return true
 
 
@@ -1477,18 +1529,20 @@ func tick(dt_days: float) -> void:
 	for e in empires.values():
 		# Demand = Σ over the empire's colonies of (pop*WATER_PER_POP + a fixed per-colony
 		# overhead). The overhead is what makes sprawl cost more than concentration: the
-		# same total pop spread across more colonies pays the overhead more times. A
-		# transport hub in a colony's system relieves most of that colony's overhead
-		# (logistics), so investing in hubs is the counter-play to the sprawl penalty.
+		# same total pop spread across more colonies pays the overhead more times. An
+		# imperial center in a colony's system ADDS to its per-pop draw (buying influence
+		# with water), so it raises demand rather than lowering it.
 		var demand := 0.0
 		for c in colonies:
 			if c.empire_id != e.id:
 				continue
-			demand += c.population * SimConstants.WATER_PER_POP
-			var oh: float = SimConstants.WATER_PER_COLONY
-			if systems[planets[c.planet_id].system_id].transport_empire_id == c.empire_id:
-				oh *= 1.0 - SimConstants.TRANSPORT_WATER_RELIEF
-			demand += oh
+			var sysid: int = planets[c.planet_id].system_id
+			var pop_draw: float = c.population * SimConstants.WATER_PER_POP
+			# An imperial center surcharges this colony's per-pop draw by the same fraction
+			# it boosts influence — running the bureaucracy costs water (the trade in item 2).
+			if systems[sysid].imperial_empire_id == c.empire_id:
+				pop_draw *= 1.0 + _imperial_bonus(sysid)
+			demand += pop_draw + SimConstants.WATER_PER_COLONY
 		e.water_demand = demand * dt_days
 		var balance: float = e.water_income - e.water_demand
 		grow_sign[e.id] = 0 if is_zero_approx(balance) \
@@ -1554,7 +1608,7 @@ func tick(dt_days: float) -> void:
 			struct_systems[p.system_id] = true
 	for sys in systems.values():
 		if sys.depot_empire_id != -1 or sys.obs_post_empire_id != -1 \
-				or sys.transport_empire_id != -1:
+				or sys.imperial_empire_id != -1:
 			struct_systems[sys.id] = true
 	var owner_of := {}
 	for sid in struct_systems:
@@ -1572,5 +1626,5 @@ func tick(dt_days: float) -> void:
 			sys.depot_empire_id = o
 		if sys.obs_post_empire_id != -1 and o != sys.obs_post_empire_id:
 			sys.obs_post_empire_id = o
-		if sys.transport_empire_id != -1 and o != sys.transport_empire_id:
-			sys.transport_empire_id = o
+		if sys.imperial_empire_id != -1 and o != sys.imperial_empire_id:
+			sys.imperial_empire_id = o

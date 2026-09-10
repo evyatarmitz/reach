@@ -722,13 +722,13 @@ func _test_support_structures() -> void:
 		reach_before * SimConstants.OBS_POST_REACH_MULT),
 		"observation post doubles influence reach")
 
-	# Transport hub relieves the per-colony water overhead in its system. Two
-	# identical single-colony empires, run one tick each; the one with a hub in the
-	# colony's system posts a lower water_demand (over one tick the pop trajectories
-	# are effectively identical, so the gap is the relieved overhead).
+	# Imperial center: a symmetric trade — it RAISES the system's colony influence
+	# (bigger borders) in exchange for RAISING water demand (+10% at L1). Compare a
+	# baseline empire against an identical one that builds an imperial center.
 	var sim2 := Sim.new()
 	var e2 := sim2.add_empire("T", Color.WHITE)
 	e2.nat[0] = 100000.0
+	e2.water_income = 1000.0
 	var a := sim2.add_system("A")
 	a.map_pos = Vector2.ZERO
 	sim2.inject_colony(e2.id, sim2.add_planet(a.id, "pa").id, 500.0, true)
@@ -736,16 +736,21 @@ func _test_support_structures() -> void:
 	var sim3 := Sim.new()
 	var e3 := sim3.add_empire("T", Color.WHITE)
 	e3.nat[0] = 100000.0
+	e3.water_income = 1000.0
 	var a3 := sim3.add_system("A")
 	a3.map_pos = Vector2.ZERO
 	sim3.inject_colony(e3.id, sim3.add_planet(a3.id, "pa").id, 500.0, true)
-	check(sim3.build_transport(e3.id, a3.id), "transport hub builds in own influence")
-	check(sim3.systems[a3.id].transport_empire_id == e3.id, "the hub belongs to its empire")
+	var infl_before := sim3.system_influence(a3.id, e3.id)
+	check(sim3.build_imperial(e3.id, a3.id), "imperial center builds in own influence")
+	check(sim3.systems[a3.id].imperial_empire_id == e3.id, "the center belongs to its empire")
+	check(sim3.systems[a3.id].imperial_level == 1, "a fresh imperial center is level 1")
+	check(sim3.system_influence(a3.id, e3.id) > infl_before,
+		"imperial center raises the system's colony influence")
 
 	sim2.tick(SimConstants.TICK_DAYS)
 	sim3.tick(SimConstants.TICK_DAYS)
-	check(e3.water_demand < e2.water_demand,
-		"transport hub lowers water demand by relieving its colonies' overhead")
+	check(e3.water_demand > e2.water_demand,
+		"imperial center raises water demand (paying influence with water)")
 
 	# Sprawl penalty: many small colonies cost more water than the same total pop
 	# concentrated (per-colony overhead), but only marginally ("close, but not the same").

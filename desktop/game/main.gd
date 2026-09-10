@@ -134,7 +134,7 @@ var spec_alloy_btn: Button
 var upgrade_btn: Button
 var depot_btn: Button
 var obs_post_btn: Button
-var transport_btn: Button
+var imperial_btn: Button
 var ship_f_btns: Array = []   # fighter build buttons, tier 1-5
 var ship_b_btns: Array = []   # bomber build buttons, tier 1-5
 var menu_overlay: PanelContainer
@@ -1094,7 +1094,7 @@ func _draw_galaxy() -> void:
 			var sscale: float = 1.0 + clampf(spop / 2500.0, 0.0, 1.0) * 0.7
 			_draw_star(sys.map_pos, _star_color(sys.id), 1.0, sscale)
 			_draw_structure_badges(sys.map_pos, sys.depot_empire_id,
-				sys.obs_post_empire_id, sys.transport_empire_id)
+				sys.obs_post_empire_id, sys.imperial_empire_id, sys.imperial_level)
 			var owner: int = _system_owner.get(sys.id, -1)
 			if owner != -1:
 				draw_arc(sys.map_pos, 13.0 * sscale, 0.0, TAU, 32,
@@ -1224,7 +1224,7 @@ func _draw_galaxy() -> void:
 # Under a hovered system: one glyph per planet — filled circle = colony (owner
 # colour), diamond = uncolonised deposit (blue water / orange minerals), a small
 # owner-colour corner brackets framing it = a mine; a row of icon badges above the
-# star = the system's structures (crate depot / eye obs-post / linked-node transport).
+# star = the system's structures (crate depot / eye obs-post / crown imperial center).
 # One-line hover readout for the hint area — live detail for a system in sight, the
 # frozen last-seen snapshot otherwise (respects fog; no live enemy data in grey).
 func _add_ui_tip(ctrl: Control, bbcode: String) -> void:
@@ -1300,8 +1300,9 @@ func _node_tooltip(sid: int) -> String:
 			structs.append("supply depot")
 		if sys.obs_post_empire_id != -1:
 			structs.append("observation post")
-		if sys.transport_empire_id != -1:
-			structs.append("transport hub")
+		if sys.imperial_empire_id != -1:
+			structs.append("imperial center L%d (+%d%% influence)"
+				% [sys.imperial_level, int(sim.imperial_bonus_at(sys.id) * 100.0)])
 		if not structs.is_empty():
 			lines.append("Structures: %s" % ", ".join(structs))
 		var kind: int = sim.combat_kind.get(sid, -1)
@@ -1476,16 +1477,16 @@ func _draw_gem(c: Vector2) -> void:
 # Structure badges: a system's built structures shown as a tidy centred row of
 # owner-coloured icons just above the star. Laid out by count so 1-3 badges never
 # collide (the old per-structure fixed offsets sat on different baselines and could
-# overlap). Each icon is deliberately distinct: crate / eye / linked-node.
+# overlap). Each icon is deliberately distinct: crate / eye / crown.
 func _draw_structure_badges(center: Vector2, depot_id: int, obs_id: int,
-		transport_id: int) -> void:
+		imperial_id: int, imperial_level: int) -> void:
 	var badges: Array = []
 	if depot_id != -1:
-		badges.append(["depot", sim.empires[depot_id].color])
+		badges.append(["depot", sim.empires[depot_id].color, 0])
 	if obs_id != -1:
-		badges.append(["obs", sim.empires[obs_id].color])
-	if transport_id != -1:
-		badges.append(["transport", sim.empires[transport_id].color])
+		badges.append(["obs", sim.empires[obs_id].color, 0])
+	if imperial_id != -1:
+		badges.append(["imperial", sim.empires[imperial_id].color, imperial_level])
 	if badges.is_empty():
 		return
 	var gap := 10.0
@@ -1500,10 +1501,17 @@ func _draw_structure_badges(center: Vector2, depot_id: int, obs_id: int,
 			"obs":     # observation post: an eye (ring + pupil)
 				draw_arc(p, 3.5, 0.0, TAU, 12, col, 1.5)
 				draw_circle(p, 1.3, col)
-			"transport":   # transport hub: a node feeding two links (logistics)
-				draw_circle(p + Vector2(0.0, -2.0), 1.7, col)
-				draw_line(p + Vector2(-3.0, 3.0), p + Vector2(0.0, -1.0), col, 1.5)
-				draw_line(p + Vector2(3.0, 3.0), p + Vector2(0.0, -1.0), col, 1.5)
+			"imperial":   # imperial center: a crown — a bar with points, tick per level
+				var lvl: int = badges[i][2]
+				var pts := PackedVector2Array([
+					p + Vector2(-3.5, 2.0), p + Vector2(-3.5, -1.0),
+					p + Vector2(-1.5, 1.0), p + Vector2(0.0, -2.5),
+					p + Vector2(1.5, 1.0), p + Vector2(3.5, -1.0),
+					p + Vector2(3.5, 2.0)])
+				draw_polyline(pts, col, 1.4)
+				# One small pip under the crown per upgrade level (1-3) — reads the tier.
+				for k in lvl:
+					draw_circle(p + Vector2(-2.0 + k * 2.0, 3.6), 0.8, col)
 
 
 # A mine: four owner-colour corner brackets framing the planet glyph (a "claimed and
@@ -1816,9 +1824,9 @@ func _build_ui() -> void:
 	obs_post_btn = Button.new()
 	obs_post_btn.pressed.connect(_on_build_obs_post)
 	obs_post_btn.tooltip_text = "Observation post — doubles this system's influence reach (its border pushes twice as far) and, since sight rides influence, extends your vision well past the border (early warning)."
-	transport_btn = Button.new()
-	transport_btn.pressed.connect(_on_build_transport)
-	transport_btn.tooltip_text = "Transport hub — logistics that supply this system's colonies efficiently, cutting most of their per-colony water overhead. Build it in your densest cluster to blunt the water cost of spreading out."
+	imperial_btn = Button.new()
+	imperial_btn.pressed.connect(_on_build_imperial)
+	imperial_btn.tooltip_text = "Imperial center — amplifies this system's colony influence (bigger borders, longer reach and vision) in exchange for extra water: +10% for +10% at L1, upgrading to +30% then +50% as the colony grows. Buy influence with your water surplus."
 	vbox.add_child(panel_title)
 	vbox.add_child(planet_list)
 	vbox.add_child(panel_body)
@@ -1830,7 +1838,7 @@ func _build_ui() -> void:
 	vbox.add_child(spec_alloy_btn)
 	vbox.add_child(depot_btn)
 	vbox.add_child(obs_post_btn)
-	vbox.add_child(transport_btn)
+	vbox.add_child(imperial_btn)
 	vbox.add_child(merge_btn)
 	vbox.add_child(split_btn)
 
@@ -1919,7 +1927,7 @@ func _build_legend(layer: CanvasLayer) -> void:
 		"bold coloured line — contested border",
 		"hover a system for its planets",
 		"● colony  ◆ mineral  ○ water  ⌞⌟ mine",
-		"■ depot (hold)  ◉ obs-post (2× reach)  ◈ transport (water logi.)",
+		"■ depot (hold)  ◉ obs-post (2× reach)  ♛ imperial (+infl./water)",
 		"purple nebula — anomaly (blocks influence + sight)",
 	]
 	for i in lines.size():
@@ -2188,9 +2196,13 @@ func _on_build_obs_post() -> void:
 		sim.build_obs_post(player_empire_id, view_system_id)
 
 
-func _on_build_transport() -> void:
-	if view_system_id != -1:
-		sim.build_transport(player_empire_id, view_system_id)
+func _on_build_imperial() -> void:
+	if view_system_id == -1:
+		return
+	if sim.systems[view_system_id].imperial_empire_id == player_empire_id:
+		sim.upgrade_imperial(player_empire_id, view_system_id)
+	else:
+		sim.build_imperial(player_empire_id, view_system_id)
 
 
 func _on_merge() -> void:
@@ -2388,7 +2400,7 @@ func _show_fleet_panel(fleet: Fleet) -> void:
 		"  → moving" if fleet.is_moving() else "",
 		fleet.combat_power(), fleet.bomb_power(), comp, combat_line]
 	for b in [colonize_btn, mine_btn, emigrate_btn, upgrade_btn, spec_food_btn,
-			spec_alloy_btn, depot_btn, obs_post_btn, transport_btn]:
+			spec_alloy_btn, depot_btn, obs_post_btn, imperial_btn]:
 		b.visible = false
 	merge_btn.visible = true
 	merge_btn.disabled = fleet.is_moving() or not _another_fleet_here(fleet)
@@ -2447,20 +2459,28 @@ func _show_system_panel(sys_id: int) -> void:
 		obs_post_btn.disabled = not sim.can_build_obs_post(player_empire_id, sys_id)
 	else:
 		obs_post_btn.visible = false
-	# Transportation hub (relieves per-colony water overhead in its system).
+	# Imperial center (amplifies this system's colony influence for extra water).
 	if not live:
-		transport_btn.visible = false
-	elif sysd.transport_empire_id == player_empire_id:
-		transport_btn.visible = true
-		transport_btn.disabled = true
-		transport_btn.text = "Transport hub: built"
-	elif sim.is_under_influence(sys_id, player_empire_id):
-		transport_btn.visible = true
-		transport_btn.text = "Build transport hub (%d alloys)" \
-			% int(SimConstants.TRANSPORT_COST_ALLOYS)
-		transport_btn.disabled = not sim.can_build_transport(player_empire_id, sys_id)
+		imperial_btn.visible = false
+	elif sysd.imperial_empire_id == player_empire_id:
+		imperial_btn.visible = true
+		var lvl: int = sysd.imperial_level
+		var cur_pct: int = int(SimConstants.IMPERIAL_BONUS[lvl - 1] * 100.0)
+		if lvl < SimConstants.IMPERIAL_MAX_LEVEL:
+			var next_pct: int = int(SimConstants.IMPERIAL_BONUS[lvl] * 100.0)
+			imperial_btn.text = "Imperial center L%d (+%d%%) → +%d%% (%d alloys)" \
+				% [lvl, cur_pct, next_pct, int(SimConstants.IMPERIAL_UPGRADE_COST_ALLOYS)]
+			imperial_btn.disabled = not sim.can_upgrade_imperial(player_empire_id, sys_id)
+		else:
+			imperial_btn.text = "Imperial center L%d (+%d%%): maxed" % [lvl, cur_pct]
+			imperial_btn.disabled = true
+	elif sysd.imperial_empire_id == -1 and sim.is_under_influence(sys_id, player_empire_id):
+		imperial_btn.visible = true
+		imperial_btn.text = "Build imperial center (%d alloys)" \
+			% int(SimConstants.IMPERIAL_COST_ALLOYS)
+		imperial_btn.disabled = not sim.can_build_imperial(player_empire_id, sys_id)
 	else:
-		transport_btn.visible = false
+		imperial_btn.visible = false
 	# Refresh row labels and highlight the selected planet.
 	for row in _planet_rows:
 		var b: Button = row[0]
@@ -2618,7 +2638,7 @@ func _autoshot() -> void:
 	# has to survive. The one-planet-per-node model means there's no multi-planet list to
 	# stress; max button count is the real stress case. Fund the empire so the structure
 	# buttons are ENABLED (not just visible), then pick a city whose system has no
-	# structures yet so depot/obs/transport all offer.
+	# structures yet so depot/obs/imperial all offer.
 	sim.empires[player_empire_id].nat[0] = 100000.0   # T1 alloys pay for structures
 	sim.empires[player_empire_id].minerals = 100000.0
 	var city_sys := -1
@@ -2629,7 +2649,7 @@ func _autoshot() -> void:
 		var sid: int = sim.planets[c.planet_id].system_id
 		var s: StarSystem = sim.systems[sid]
 		if s.depot_empire_id == -1 and s.obs_post_empire_id == -1 \
-				and s.transport_empire_id == -1:
+				and s.imperial_empire_id == -1:
 			city_sys = sid
 			city_pid = c.planet_id
 			break
@@ -2752,7 +2772,7 @@ func _autoshot() -> void:
 		legend_panel.visible = false
 	# Eighth shot: a system with ALL THREE STRUCTURES built, zoomed in. Nothing else in the
 	# harness ever shows a built structure (the colony pose deliberately picks a structure-
-	# free city to keep the build buttons enabled), so the depot/obs-post/transport map
+	# free city to keep the build buttons enabled), so the depot/obs-post/imperial map
 	# badges — and the mine corner-brackets on a worked deposit — had no coverage at all.
 	# Pick a structures system away from any player fleet — home is the most-populated
 	# city, so ships spawn there and the fleet arrow would sit on top of the badge row and
@@ -2770,7 +2790,7 @@ func _autoshot() -> void:
 			break
 	sim.build_depot(player_empire_id, struct_sys)
 	sim.build_obs_post(player_empire_id, struct_sys)
-	sim.build_transport(player_empire_id, struct_sys)
+	sim.build_imperial(player_empire_id, struct_sys)
 	_recompute_borders()
 	_hover_hold = true
 	_hover_system = struct_sys

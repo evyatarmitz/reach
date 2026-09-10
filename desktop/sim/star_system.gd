@@ -14,5 +14,6 @@ var map_pos: Vector2 = Vector2.ZERO
 var depot_empire_id: int = -1     # supply depot owner (-1 = none)
 var obs_post_empire_id: int = -1  # observation post owner: doubles influence reach
                                   # here + extends visibility (early warning)
-var transport_empire_id: int = -1 # transportation hub owner: strengthens the
-                                  # neighbor/proximity growth bonus for its colonies
+var imperial_empire_id: int = -1  # imperial center owner: amplifies this system's colony
+                                  # influence for extra water (see IMPERIAL_BONUS)
+var imperial_level: int = 0       # 0 = none; 1..IMPERIAL_MAX_LEVEL once built/upgraded

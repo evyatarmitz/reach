@@ -32,15 +32,21 @@ func _act(sim: Sim) -> void:
 
 
 # Support structures, same options the player has (built instantly in own influence).
-# Priority: a transport hub at the capital (lifts the core cluster's growth), then
-# an observation post on a frontier system (early warning + border push). One per
-# interval, only with spare alloys — expansion/defence come first (called after them).
+# Priority: an imperial center at the capital (and its upgrades — buys influence with
+# water), then an observation post on a frontier system (early warning + border push).
+# One per interval, only with spare alloys — expansion/defence come first (called after).
 func _build_support(sim: Sim) -> void:
 	var cap := sim.most_populated_system(empire_id)
-	if cap != -1 and sim.systems[cap].transport_empire_id == -1 \
-			and sim.can_build_transport(empire_id, cap):
-		sim.build_transport(empire_id, cap)
-		return
+	# An imperial center at the capital, then upgrade it as the capital grows — buying
+	# influence (bigger borders) with the empire's water surplus.
+	if cap != -1:
+		if sim.systems[cap].imperial_empire_id == -1 \
+				and sim.can_build_imperial(empire_id, cap):
+			sim.build_imperial(empire_id, cap)
+			return
+		if sim.can_upgrade_imperial(empire_id, cap):
+			sim.upgrade_imperial(empire_id, cap)
+			return
 	for sid in _owned_systems_sorted(sim):
 		if sim.systems[sid].obs_post_empire_id != -1:
 			continue
