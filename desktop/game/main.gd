@@ -1185,7 +1185,9 @@ func _box_select(a: Vector2, b: Vector2) -> void:
 		return
 	selected_fleet_id = selected_fleets[0]
 	view_system_id = -1
-	_log_event("▭ Selected %d fleets — click a system to move them" % selected_fleets.size())
+	var n := selected_fleets.size()
+	_log_event("▭ Selected %d %s — click a system to move them" % [
+		n, "fleet" if n == 1 else "fleets"])
 
 
 # Order every fleet in the box selection to a destination system; report how many

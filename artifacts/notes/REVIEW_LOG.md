@@ -333,3 +333,40 @@ Eleven poses. No open reds, no open 🟡 — every item in the batch has visual 
 coverage. (Note: the drag pose catches only 1 fleet, since freshly-built ships pool
 into a single fleet at the shipyard; enough to prove the box + ring render, but a
 genuine multi-fleet group would need distinct fleets spawned apart — minor, deferred.)
+
+---
+
+## Cycle 11 — 2026-09-11 — border smoothing + logic/text bug pass
+
+Two threads: the user's "borders are still rough" note, then a general bug-fixing
+sweep. All 116 test assertions green (incl. bit-identical determinism); eleven poses
+re-rendered clean at fresh timestamps.
+
+### 🔴 Red (fixed this cycle)
+- **R1 — Influence borders read as a faceted staircase.** ✅ FIXED (commit *border
+  smoothing*). The marching-squares contour was drawn as individual grid-cell segments,
+  each nudged toward its own cell's interior — so adjacent segments also disconnected.
+  Antialiasing (added last cycle) smoothed each twig's edges but not the jagged overall
+  curve. Fix: chain the visible contour segments into connected polylines (endpoint
+  match on a 1/8-unit quantised key — adjacent cells' shared crossings are algebraically
+  identical but can differ by an ULP), inset the whole chain toward the empire interior
+  via per-vertex summed direction, then Chaikin-smooth (2 passes) and draw as
+  antialiased polylines. Decouples smoothness from grid resolution; the shared-seam
+  two-colour offset is preserved. Verified in a 3× border crop — the blue/yellow seam
+  now flows as a smooth parallel pair (`autoshot_galaxy.png`).
+- **R2 — "Selected 1 fleets" — plural noun on a count of one.** ✅ FIXED. The box-select
+  log line hard-coded "fleets"; now agrees with the count ("1 fleet" / "N fleets").
+  Verified in `autoshot_drag_select.png`. (The sibling "%d of %d fleets moving out" line
+  keeps its plural — grammatical under the "of N" frame.)
+
+### 🟢 Green (reviewed, working well)
+- Zoom, battle, structures, legend, drag-select poses all clean: star glows, owner
+  rings, structure badge row (depot/obs/imperial), battle ring + crossed-swords + force
+  readout ("upper hand"), imperial diamond, and the smoothed borders all render correctly.
+- Core sim logic reviewed (combat attrition, the alloy-refining pyramid + carry, water-
+  flow growth sign, influence/claim caches, structure-follows-border flips, save/load) —
+  no defects found; the flip-doesn't-reset-imperial-level path is unreachable because a
+  system holding a colony can't be out-influenced (own presence = INF claim).
+
+### Coverage status
+Eleven poses. No open reds. Borders now smooth; the one text defect closed.
