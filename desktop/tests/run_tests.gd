@@ -835,8 +835,7 @@ func _test_anomalies() -> void:
 	check(sim.claim_strength(b.id, e.id) > 0.0,
 		"influence reaches an in-range system with no anomaly between")
 	# A snaking band (spine polyline) laid across the A→B line blocks influence.
-	sim.anomalies.append({"pts": PackedVector2Array([Vector2(150, -80), Vector2(150, 80)]),
-		"r": 60.0})
+	sim.add_anomaly(PackedVector2Array([Vector2(150, -80), Vector2(150, 80)]), 60.0)
 	check(sim.claim_strength(b.id, e.id) == 0.0,
 		"a storm band across the line between two systems blocks influence")
 	check(sim.point_in_anomaly(Vector2(150, 0)),
@@ -850,8 +849,7 @@ func _test_anomalies() -> void:
 	var s1 := sm.add_system("S1"); s1.map_pos = Vector2(200, 0)
 	sm.add_lane(s0.id, s1.id)
 	var pf := sm._fleet_at(se.id, s0.id); pf.fighters[0] = 3
-	sm.anomalies.append({"pts": PackedVector2Array([Vector2(100, -60), Vector2(100, 60)]),
-		"r": 50.0})
+	sm.add_anomaly(PackedVector2Array([Vector2(100, -60), Vector2(100, 60)]), 50.0)
 	check(sm.order_fleet(pf.id, s1.id) and pf.is_moving(),
 		"a fleet can move through a storm laid across its lane")
 	# A generated map keeps storm bands clear of every system (lanes are fair game now).

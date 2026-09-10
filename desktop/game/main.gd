@@ -101,6 +101,8 @@ var _fog_rect := Rect2()    # world-space rect the fog texture covers
 var _fog_seen := {}         # "gx,gy" -> true, cells ever in VR (explored memory)
 var _starfield: Array = []  # backdrop: [pos, radius, Color] faint stars (static)
 var _has_anomalies := false # cached each refresh so _claim_at skips anomaly tests
+var _storm_bands: Array = [] # per-anomaly baked haze-blob centers; anomalies are
+                            # immutable after map-gen, so this is built once (not per frame)
 
 var raw_label: Label       # what you gather: water flow (net/day)
 var goods_label: RichTextLabel   # minerals + alloy tiers 1-5: amount over income rate
@@ -465,6 +467,24 @@ func _update_hover() -> void:
 # _poll_rebake) so the heavy grid bake runs off the main thread and can't hitch a pan.
 func _recompute_borders() -> void:
 	_apply_field(_bake_field(_prep_field()))
+
+
+# Pre-sample each storm's spine into overlapping haze-blob centers, once. Anomalies
+# never change after map-gen, so _draw reuses these instead of resampling every frame.
+func _bake_storm_bands() -> void:
+	_storm_bands.clear()
+	for an in sim.anomalies:
+		var pts: PackedVector2Array = an.pts
+		var ar: float = an.r
+		var band := PackedVector2Array()
+		for i in pts.size() - 1:
+			var a: Vector2 = pts[i]
+			var b: Vector2 = pts[i + 1]
+			var segs := maxi(1, int(a.distance_to(b) / (ar * 0.5)))
+			for s in segs:
+				band.append(a.lerp(b, float(s) / float(segs)))
+		band.append(pts[pts.size() - 1])
+		_storm_bands.append(band)
 
 
 # Main-thread prep: snapshot each empire's influence sources into flat arrays and
@@ -1117,18 +1137,13 @@ func _draw_galaxy() -> void:
 	# corridor to route sight around but fly fleets through. The band is a capsule
 	# chain: overlapping haze blobs down the spine, then a bright outline of the same
 	# rounded sausage so its edges read clearly.
-	for an in sim.anomalies:
+	if _storm_bands.size() != sim.anomalies.size():
+		_bake_storm_bands()
+	for ai in sim.anomalies.size():
+		var an = sim.anomalies[ai]
 		var pts: PackedVector2Array = an.pts
 		var ar: float = an.r
-		# Sample the spine finely so blobs overlap into a continuous band.
-		var band := PackedVector2Array()
-		for i in pts.size() - 1:
-			var a: Vector2 = pts[i]
-			var b: Vector2 = pts[i + 1]
-			var segs := maxi(1, int(a.distance_to(b) / (ar * 0.5)))
-			for s in segs:
-				band.append(a.lerp(b, float(s) / float(segs)))
-		band.append(pts[pts.size() - 1])
+		var band: PackedVector2Array = _storm_bands[ai]
 		for layer in 5:
 			var t := float(layer) / 5.0
 			var col := Color(0.5, 0.2, 0.6, 0.10 + t * 0.06)

@@ -23,8 +23,10 @@ var combat_at: Dictionary = {} # system_id -> sim day of last combat (transient,
 var combat_kind: Dictionary = {} # system_id -> 0 battle / 1 bombardment, THIS tick's
                                # active combat (rebuilt each tick; drives the live
                                # combat indicator + readout; not serialized)
-var anomalies: Array = []      # [{pos: Vector2, r: float}] — cosmic anomalies that
-                               # block influence AND visibility (you route around them)
+var anomalies: Array = []      # [{pts: PackedVector2Array (spine), r: float, bb: Rect2}]
+                               # — cosmic storm bands that block influence AND visibility
+                               # (route sight around them; fleets fly through). bb is the
+                               # spine's bounding box grown by r, for a cheap reject.
 var builders: Array = []       # construction vessels in transit: [{id, eid, sys,
                                # path:[sys...], prog, type, target:planet_or_system}]
 
@@ -34,6 +36,9 @@ var _owner_cache: Dictionary = {}  # system_id -> owner, rebuilt once per tick (
 var _owner_cache_day: float = -1.0
 var _src_cache: Dictionary = {}    # empire_id -> [influence sources], per-tick (day)
 var _src_cache_day: float = -1.0
+var _blocked_pair: Dictionary = {} # (src_id,dst_id) -> bool anomaly-blocked. Anomalies
+                                   # and system positions are immutable after map-gen, so
+                                   # this is a permanent constant — never invalidated.
 
 
 # Name syllables — combined by index for readable, unique system names.
@@ -186,7 +191,7 @@ static func _place_anomalies(sim: Sim, positions: Array, size: Vector2,
 					clear = false
 					break
 		if clear:
-			sim.anomalies.append({"pts": pts, "r": r})
+			sim.add_anomaly(pts, r)
 
 
 # Minimum spanning tree (Prim) so the whole map is one connected component, plus
@@ -430,7 +435,7 @@ static func deserialize(d: Dictionary) -> Sim:
 		var ys: Array = an.get("ys", [])
 		for i in xs.size():
 			pts.append(Vector2(float(xs[i]), float(ys[i])))
-		sim.anomalies.append({"pts": pts, "r": float(an.r)})
+		sim.add_anomaly(pts, float(an.r))
 	for b in d.get("builders", []):
 		var bpath: Array[int] = []
 		for x in b.path:
@@ -574,6 +579,8 @@ func imperial_bonus_at(system_id: int) -> float:
 
 func point_in_anomaly(p: Vector2) -> bool:
 	for an in anomalies:
+		if not an.bb.has_point(p):   # cheap AABB reject before the polyline distance
+			continue
 		if _dist_point_to_polyline(p, an.pts) < an.r:
 			return true
 	return false
@@ -582,6 +589,9 @@ func point_in_anomaly(p: Vector2) -> bool:
 # True if the segment a→b passes through any anomaly (blocking influence/sight).
 func segment_hits_anomaly(a: Vector2, b: Vector2) -> bool:
 	for an in anomalies:
+		# Cheap AABB reject: skip the storm if the segment's box misses its grown box.
+		if not an.bb.intersects(Rect2(a, Vector2.ZERO).expand(b)):
+			continue
 		var pts: PackedVector2Array = an.pts
 		for i in pts.size() - 1:
 			if _seg_seg_dist(a, b, pts[i], pts[i + 1]) < an.r:
@@ -623,7 +633,38 @@ static func _seg_seg_dist(p1: Vector2, p2: Vector2, p3: Vector2, p4: Vector2) ->
 # Influence from source system to a point is blocked if the point is inside an
 # anomaly or the line to it crosses one. Used by both the logic claim and the field.
 func influence_blocked(src: Vector2, dst: Vector2) -> bool:
+	if anomalies.is_empty():
+		return false
 	return point_in_anomaly(dst) or segment_hits_anomaly(src, dst)
+
+
+# The one place a storm enters the sim: precomputes its AABB so every anomaly dict
+# always carries `bb`. Map-gen and tests both go through here.
+func add_anomaly(pts: PackedVector2Array, r: float) -> void:
+	anomalies.append({"pts": pts, "r": r, "bb": anomaly_bbox(pts, r)})
+
+
+# Bounding box of a spine, grown by r on every side — a cheap AABB reject volume.
+static func anomaly_bbox(pts: PackedVector2Array, r: float) -> Rect2:
+	if pts.is_empty():
+		return Rect2()
+	var bb := Rect2(pts[0], Vector2.ZERO)
+	for i in range(1, pts.size()):
+		bb = bb.expand(pts[i])
+	return bb.grow(r)
+
+
+# influence_blocked between two systems, memoized by ordered id pair. The map is
+# immutable after gen, so a blocked pair stays blocked forever — no invalidation.
+func _pair_blocked(src_id: int, dst_id: int, src_pos: Vector2, dst_pos: Vector2) -> bool:
+	if anomalies.is_empty():
+		return false
+	var key: int = src_id * 100000 + dst_id
+	var v = _blocked_pair.get(key)
+	if v == null:
+		v = point_in_anomaly(dst_pos) or segment_hits_anomaly(src_pos, dst_pos)
+		_blocked_pair[key] = v
+	return v
 
 
 func influence_reach(system_id: int, empire_id: int) -> float:
@@ -667,7 +708,7 @@ func claim_strength(target_system_id: int, empire_id: int) -> float:
 		if src.id == target_system_id:
 			return INF
 		var d: float = src.pos.distance_to(tpos)
-		if d <= src.reach and not influence_blocked(src.pos, tpos):
+		if d <= src.reach and not _pair_blocked(src.id, target_system_id, src.pos, tpos):
 			best = maxf(best, src.inf / d)
 	return best
 
