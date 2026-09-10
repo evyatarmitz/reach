@@ -70,6 +70,7 @@ func _init() -> void:
 	_test_combat_scaling()
 	_test_fleet_pin()
 	_test_enemy_transit_block()
+	_test_citadel()
 	_test_attrition_and_depot()
 	_test_structure_capture()
 	_test_support_structures()
@@ -982,6 +983,60 @@ func _test_enemy_transit_block() -> void:
 	check(sim.order_fleet(f2.id, c.id), "a detour around the enemy system is accepted")
 	check(f2.path.has(d.id) and not f2.path.has(b.id),
 		"the accepted route goes through the neutral detour, not the enemy system")
+
+
+func _test_citadel() -> void:
+	# A citadel walls a system off: enemy fleets can't pass through it until it's
+	# bombarded down. Layout: A(my depot) -- B(foe citadel) -- C.
+	var sim := Sim.new()
+	var me := sim.add_empire("Me", Color.BLUE)
+	var foe := sim.add_empire("Foe", Color.RED)
+	foe.nat[0] = 1.0e9
+	var a := sim.add_system("A"); a.map_pos = Vector2.ZERO
+	var b := sim.add_system("B"); b.map_pos = Vector2(100, 0)
+	var c := sim.add_system("C"); c.map_pos = Vector2(200, 0)
+	sim.add_lane(a.id, b.id)
+	sim.add_lane(b.id, c.id)
+	sim.add_planet(a.id, "pa"); sim.add_planet(b.id, "pb"); sim.add_planet(c.id, "pc")
+	a.depot_empire_id = me.id   # keeps my besieger supplied one hop into B (no attrition)
+
+	# Foe raises a citadel at B (built directly to skip influence gating in this fixture).
+	b.citadel_empire_id = foe.id
+	b.citadel_hp = SimConstants.CITADEL_MAX_HP
+	var mover := sim._fleet_at(me.id, a.id); mover.fighters[0] = 3
+	check(not sim.order_fleet(mover.id, c.id),
+		"a standing enemy citadel blocks passage through its system")
+	check(sim.order_fleet(mover.id, b.id) and mover.is_moving(),
+		"the citadel system is still a legal attack destination")
+
+	# A besieging bomber fleet sits on B and grinds the citadel down.
+	var siege := sim._fleet_at(me.id, b.id); siege.bombers[0] = 400
+	var hp0: float = sim.systems[b.id].citadel_hp
+	run_days(sim, 20.0)
+	check(sim.systems[b.id].citadel_hp < hp0, "bombardment damages the citadel's hull")
+	# Grind it all the way down.
+	run_days(sim, 4000.0)
+	check(sim.systems[b.id].citadel_empire_id == -1,
+		"a fully bombarded citadel is destroyed")
+	# With the citadel gone, a fresh fleet can route A -> C through B.
+	var mover2 := sim._fleet_at(me.id, a.id); mover2.fighters[0] = 3
+	check(sim.order_fleet(mover2.id, c.id),
+		"once the citadel falls, passage through the system reopens")
+
+	# Build gating: heavy alloy cost, only in your own influence.
+	var sim2 := Sim.new()
+	var e2 := sim2.add_empire("E", Color.WHITE)
+	var s := sim2.add_system("S"); s.map_pos = Vector2.ZERO
+	sim2.inject_colony(e2.id, sim2.add_planet(s.id, "p").id, 200.0, true)
+	e2.nat[0] = SimConstants.CITADEL_COST_ALLOYS - 1.0
+	check(not sim2.can_build_citadel(e2.id, s.id), "can't afford a citadel just short of cost")
+	e2.nat[0] = SimConstants.CITADEL_COST_ALLOYS + 1.0
+	check(sim2.can_build_citadel(e2.id, s.id), "can build a citadel in your influence with alloys")
+	check(sim2.build_citadel(e2.id, s.id)
+		and sim2.systems[s.id].citadel_empire_id == e2.id
+		and is_equal_approx(sim2.systems[s.id].citadel_hp, SimConstants.CITADEL_MAX_HP),
+		"a built citadel stands at full hull for its empire")
+	check(not sim2.can_build_citadel(e2.id, s.id), "only one citadel per system")
 
 
 func _test_attrition_and_depot() -> void:

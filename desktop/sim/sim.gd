@@ -300,6 +300,7 @@ func serialize() -> Dictionary:
 		ss.append({"id": s.id, "name": s.name, "x": s.map_pos.x, "y": s.map_pos.y,
 			"depot": s.depot_empire_id, "obs": s.obs_post_empire_id,
 			"imp": s.imperial_empire_id, "implvl": s.imperial_level,
+			"cit": s.citadel_empire_id, "cithp": s.citadel_hp,
 			"planets": s.planet_ids.duplicate()})
 	var ps: Array = []
 	for p in planets.values():
@@ -359,6 +360,8 @@ static func deserialize(d: Dictionary) -> Sim:
 		sys.obs_post_empire_id = int(s.get("obs", -1))
 		sys.imperial_empire_id = int(s.get("imp", -1))
 		sys.imperial_level = int(s.get("implvl", 0))
+		sys.citadel_empire_id = int(s.get("cit", -1))
+		sys.citadel_hp = float(s.get("cithp", 0.0))
 		var pl: Array[int] = []
 		for pid in s.planets:
 			pl.append(int(pid))
@@ -1024,6 +1027,26 @@ func build_obs_post(empire_id: int, system_id: int) -> bool:
 	return true
 
 
+# Citadel: one per system, built in your influence for a heavy alloy cost. A fortress
+# that walls the system off (see _blocks_enemy_transit) until an attacker bombards its
+# massive hull to zero.
+func can_build_citadel(empire_id: int, system_id: int) -> bool:
+	var e: Empire = empires.get(empire_id)
+	return e != null and systems.has(system_id) \
+		and systems[system_id].citadel_empire_id == -1 \
+		and e.nat[0] >= SimConstants.CITADEL_COST_ALLOYS \
+		and is_under_influence(system_id, empire_id)
+
+
+func build_citadel(empire_id: int, system_id: int) -> bool:
+	if not can_build_citadel(empire_id, system_id):
+		return false
+	_pay(empire_id, 0, SimConstants.CITADEL_COST_ALLOYS)
+	systems[system_id].citadel_empire_id = empire_id
+	systems[system_id].citadel_hp = SimConstants.CITADEL_MAX_HP
+	return true
+
+
 # Imperial center: one per system, on your influence, over one of your colonies. Building
 # it is level 1 (+10% influence for +10% water); it upgrades IN PLACE as the colony grows
 # (+30 at L2, +50 at L3). Amplifies system_influence; the water cost is charged in demand.
@@ -1246,10 +1269,15 @@ func lane_path(from_sys: int, to_sys: int) -> Array[int]:
 
 
 # True if this system stops an enemy fleet from passing THROUGH it: it holds an enemy
-# colony (planets block movement). Such a system can still be a fleet's destination —
+# colony (planets block movement), or a standing enemy citadel (a fortress that must be
+# bombarded down to advance past). Such a system can still be a fleet's destination —
 # you march in to attack it — but a route may not thread through it to somewhere beyond.
 func _blocks_enemy_transit(empire_id: int, system_id: int) -> bool:
-	return _has_enemy_colony(empire_id, system_id)
+	if _has_enemy_colony(empire_id, system_id):
+		return true
+	var sys: StarSystem = systems[system_id]
+	return sys.citadel_empire_id != -1 and sys.citadel_empire_id != empire_id \
+		and sys.citadel_hp > 0.0
 
 
 # Lane BFS for a fleet: like lane_path, but a route may not pass THROUGH a system that
@@ -1426,6 +1454,19 @@ func _bombard(empire_id: int, fleet_list: Array, system_id: int, dt_days: float,
 	budget *= dt_days * SimConstants.BOMBARD_RATE
 	if budget <= 0.0:
 		return
+	# A standing enemy citadel soaks bombardment before the colony behind it takes any:
+	# the fortress must fall first. It has enormous hull, so this is many ticks of siege.
+	var sys: StarSystem = systems[system_id]
+	if sys.citadel_empire_id != -1 and sys.citadel_empire_id != empire_id \
+			and sys.citadel_hp > 0.0:
+		var hit: float = minf(budget, sys.citadel_hp)
+		sys.citadel_hp -= hit
+		budget -= hit
+		if sys.citadel_hp <= 0.0:
+			sys.citadel_hp = 0.0
+			sys.citadel_empire_id = -1   # destroyed — the way past is open
+		if budget <= 0.0:
+			return
 	var targets: Array[Colony] = []
 	for pid in systems[system_id].planet_ids:
 		var c: Colony = planets[pid].colony

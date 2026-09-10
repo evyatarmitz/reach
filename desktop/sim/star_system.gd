@@ -17,3 +17,6 @@ var obs_post_empire_id: int = -1  # observation post owner: doubles influence re
 var imperial_empire_id: int = -1  # imperial center owner: amplifies this system's colony
                                   # influence for extra water (see IMPERIAL_BONUS)
 var imperial_level: int = 0       # 0 = none; 1..IMPERIAL_MAX_LEVEL once built/upgraded
+var citadel_empire_id: int = -1   # citadel owner (-1 = none): a massive-HP chokepoint that
+                                  # blocks enemy fleets from passing until it's bombarded down
+var citadel_hp: float = 0.0       # remaining citadel hull; standing while > 0

@@ -170,6 +170,13 @@ const DEPOT_COST_ALLOYS := 60.0
 # border). Vision: "doubles influence range, adds a separate visibility range."
 const OBS_POST_COST_ALLOYS := 90.0
 const OBS_POST_REACH_MULT := 2.0
+# Citadel: an expensive fortress on one of your systems. It walls the system off — enemy
+# fleets cannot pass THROUGH it (they must make it their destination and bombard it down
+# to advance past). Its hull is enormous, so a citadel on a chokepoint lane buys many
+# ticks of siege before it falls; while it stands it fully absorbs bombardment (the
+# colony behind it is untouched). Deliberately costly — a strategic wall, not routine.
+const CITADEL_COST_ALLOYS := 300.0
+const CITADEL_MAX_HP := 6000.0
 # Imperial center: an administrative seat built on one of your systems. It amplifies the
 # influence its colony projects (bigger borders, longer reach/VR) in exchange for extra
 # water — the colony has to be supplied to run the bureaucracy. The trade is symmetric and
