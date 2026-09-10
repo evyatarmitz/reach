@@ -27,6 +27,8 @@ func make_scenario() -> Dictionary:
 	var sim := Sim.new()
 	var e := sim.add_empire("Alpha", Color.WHITE)
 	e.nat[0] = 100000.0   # plenty of T1 alloy so construction never blocks these tests
+	e.water_income = 1000.0   # ample spare water flow so the founding water-gate never
+	                          # blocks these influence/gating tests (see has_water_for_new_colony)
 	var s1 := sim.add_system("Home")
 	s1.map_pos = Vector2.ZERO
 	var deposit_p := sim.add_planet(s1.id, "Home I")
@@ -48,6 +50,7 @@ func _init() -> void:
 	_test_topology()
 	_test_procedural()
 	_test_founding()
+	_test_water_gate()
 	_test_influence_nonstacking()
 	_test_influence_gating()
 	_test_border_contest()
@@ -160,6 +163,25 @@ func _test_founding() -> void:
 		"founding fails when alloys are short")
 	check(sc2.e.nat[0] == SimConstants.FOUND_COST_ALLOYS - 1.0,
 		"failed founding costs nothing")
+
+
+func _test_water_gate() -> void:
+	# Founding is gated on spare water flow, not just alloys: an empire running no water
+	# surplus can't found even with alloys to burn; restore its water income and it can.
+	var sc := make_scenario()
+	var sim: Sim = sc.sim
+	var e: Empire = sc.e
+	e.water_income = 0.0   # no spare water flow
+	e.water_demand = 0.0
+	check(not sim.has_water_for_new_colony(e.id),
+		"an empire with no spare water flow can't supply a new colony")
+	check(not sim.can_found_colony(e.id, sc.plain_p.id),
+		"founding is blocked when there's no spare water, even with alloys")
+	e.water_income = sim.new_colony_water_per_day(e.id) * SimConstants.TICK_DAYS + 0.001
+	check(sim.has_water_for_new_colony(e.id),
+		"just enough spare water flow clears the gate")
+	check(sim.can_found_colony(e.id, sc.plain_p.id),
+		"founding succeeds once water covers the new colony's draw")
 
 
 func _test_influence_nonstacking() -> void:
@@ -321,6 +343,7 @@ func _test_ai_rival() -> void:
 	var sim := Sim.new()
 	var e := sim.add_empire("AI", Color.RED)
 	e.nat[0] = 10000.0
+	e.water_income = 1000.0   # spare water flow so the colony vessel clears the water gate
 	var home := sim.add_system("Home")
 	home.map_pos = Vector2.ZERO
 	sim.inject_colony(e.id, sim.add_planet(home.id, "Home I").id, 150.0, true)
@@ -753,6 +776,7 @@ func _test_construction_vessel() -> void:
 	var sim := Sim.new()
 	var e := sim.add_empire("C", Color.WHITE)
 	e.nat[0] = 100000.0
+	e.water_income = 1000.0   # spare water flow so the colony vessel clears the water gate
 	var a := sim.add_system("A")
 	a.map_pos = Vector2.ZERO
 	var b := sim.add_system("B")
@@ -773,6 +797,7 @@ func _test_construction_vessel() -> void:
 	var s2 := Sim.new()
 	var me := s2.add_empire("Me", Color.WHITE)
 	me.nat[0] = 100000.0
+	me.water_income = 1000.0   # water headroom so enemy territory is the ONLY blocker tested
 	var foe := s2.add_empire("Foe", Color.RED)
 	var sa := s2.add_system("A")
 	sa.map_pos = Vector2.ZERO

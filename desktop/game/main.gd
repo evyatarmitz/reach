@@ -2493,14 +2493,23 @@ func _show_system_panel(sys_id: int) -> void:
 		player_empire_id) else "\nOutside your influence."
 	var inbound := _builder_inbound(planet.id)
 	if planet.colony == null:
-		panel_body.text = "%s%s\n\nFounding costs %d alloys; a construction vessel carries it from your capital (can't cross enemy space).%s" \
+		# Water is a flow: show the empire's spare water/day and what this colony will
+		# draw, so founding into a deficit is a visible, deliberate choice (and blocked).
+		var surplus := sim.water_surplus_per_day(player_empire_id)
+		var need := sim.new_colony_water_per_day(player_empire_id)
+		var water_ok := surplus >= need
+		var water_line := "\n\nWater: %+.1f/day spare · a new colony needs %.1f/day%s" \
+			% [surplus, need, "" if water_ok else "  ⚠ not enough water"]
+		panel_body.text = "%s%s\n\nFounding costs %d alloys; a construction vessel carries it from your capital (can't cross enemy space).%s%s" \
 			% [deposit_line, influence_note, int(SimConstants.FOUND_COST_ALLOYS),
-				"\n⚙ vessel inbound…" if inbound else ""]
+				water_line, "\n⚙ vessel inbound…" if inbound else ""]
 		colonize_btn.visible = true
 		colonize_btn.text = "Send colony vessel (%d alloys)" \
 			% int(SimConstants.FOUND_COST_ALLOYS)
 		colonize_btn.disabled = not sim.can_order_construction(
 			player_empire_id, SimConstants.Build.COLONY, planet.id)
+		colonize_btn.tooltip_text = "" if water_ok \
+			else "Not enough spare water. Each colony draws water to survive; found more water mines (or shrink elsewhere) before expanding."
 	else:
 		var c := planet.colony
 		var status := "ESTABLISHED CITY" if c.established \

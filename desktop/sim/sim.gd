@@ -766,9 +766,34 @@ func _pay(empire_id: int, tier: int, amount: float) -> void:
 	e.spent_nat[tier] += amount
 
 
+# Water is a FLOW: surplus/day = last tick's (income − demand) normalized to one day.
+# It's the empire's spare water — how much a new colony can draw before the empire tips
+# into deficit (which shrinks population). Founding is gated on it so expansion is limited
+# by how much water territory you hold, not just alloys.
+func water_surplus_per_day(empire_id: int) -> float:
+	var e: Empire = empires.get(empire_id)
+	if e == null:
+		return 0.0
+	return (e.water_income - e.water_demand) / SimConstants.TICK_DAYS
+
+
+# Water/day a freshly-founded colony adds to demand: its seed population's draw plus the
+# fixed per-colony overhead (the sprawl cost, WATER_PER_COLONY — a flat 0.5, NOT an
+# exponential). Shown in the UI and used to gate founding.
+func new_colony_water_per_day(_empire_id: int) -> float:
+	return SimConstants.START_POP * SimConstants.WATER_PER_POP \
+		+ SimConstants.WATER_PER_COLONY
+
+
+# Enough spare water flow to supply one more colony? (income − demand covers its draw.)
+func has_water_for_new_colony(empire_id: int) -> bool:
+	return water_surplus_per_day(empire_id) >= new_colony_water_per_day(empire_id)
+
+
 func can_found_colony(empire_id: int, planet_id: int) -> bool:
 	var e: Empire = empires.get(empire_id)
 	return e != null and e.nat[0] >= SimConstants.FOUND_COST_ALLOYS \
+		and has_water_for_new_colony(empire_id) \
 		and _colony_target_ok(empire_id, planet_id)
 
 
@@ -850,6 +875,10 @@ func _target_system_of(build_type: int, target_id: int) -> int:
 func can_order_construction(empire_id: int, build_type: int, target_id: int) -> bool:
 	var e: Empire = empires.get(empire_id)
 	if e == null or e.nat[0] < _construction_cost(build_type):
+		return false
+	# A colony draws water; don't dispatch one the empire can't supply (same gate as
+	# found_colony). Mines have no water cost, so they skip it.
+	if build_type == SimConstants.Build.COLONY and not has_water_for_new_colony(empire_id):
 		return false
 	if not _construction_target_ok(empire_id, build_type, target_id):
 		return false
