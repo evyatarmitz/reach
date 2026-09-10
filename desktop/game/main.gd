@@ -19,7 +19,16 @@ var speed_idx := 1
 var day_accum := 0.0
 var selected_planet_id := -1
 var selected_fleet_id := -1
+var selected_fleets: Array[int] = []   # rectangle multi-select; a group move order
 var view_system_id := -1  # -1 = galaxy view, otherwise the focused system
+
+# Left-drag box-select of fleets (world space). _drag_active while the button is held;
+# _dragging once it's moved past DRAG_SELECT_MIN (below that it's treated as a click).
+var _drag_active := false
+var _dragging := false
+var _drag_start := Vector2.ZERO
+var _drag_cur := Vector2.ZERO
+const DRAG_SELECT_MIN := 8.0   # world units of travel before a press becomes a drag
 
 const ZOOM_MIN := 0.35
 const ZOOM_MAX := 2.5
@@ -946,10 +955,31 @@ func _unhandled_input(event: InputEvent) -> void:
 		_galaxy_cam_pos -= event.relative / _galaxy_cam_zoom
 		return
 
-	if event is InputEventMouseButton and event.pressed \
-			and event.button_index == MOUSE_BUTTON_LEFT:
-		_select_at(get_global_mouse_position())
-	elif event is InputEventKey and event.pressed and not event.echo:
+	# Left button: press begins a potential box-select; drag past a threshold makes it a
+	# rectangle; release either commits the box (multi-select) or falls back to a click.
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			_drag_active = true
+			_dragging = false
+			_drag_start = get_global_mouse_position()
+			_drag_cur = _drag_start
+		elif _drag_active:
+			_drag_active = false
+			if _dragging:
+				_box_select(_drag_start, _drag_cur)
+			else:
+				_select_at(_drag_start)
+			_dragging = false
+			queue_redraw()
+		return
+	if _drag_active and event is InputEventMouseMotion:
+		_drag_cur = get_global_mouse_position()
+		if _drag_start.distance_to(_drag_cur) > DRAG_SELECT_MIN:
+			_dragging = true
+			queue_redraw()
+		return
+
+	if event is InputEventKey and event.pressed and not event.echo:
 		# The controls page captures its own keys (rebinding, and Esc/K to close) in
 		# _unhandled_key_input, which runs before this — so while it's open, swallow any
 		# game hotkey that reaches here so it can't fire behind the panel.
@@ -969,6 +999,14 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _select_at(pos: Vector2) -> void:
+	# 0. With a rectangle group selected, a click on a known system sends the whole group
+	#    there; a click anywhere else drops the group and falls through to normal select.
+	if not selected_fleets.is_empty():
+		for sys in sim.systems.values():
+			if pos.distance_to(sys.map_pos) <= 20.0 and _sys_known(sys.id):
+				_order_group(sys.id)
+				return
+		selected_fleets.clear()
 	# 1. With a fleet selected, a click on a known system orders it there.
 	if selected_fleet_id != -1:
 		for sys in sim.systems.values():
@@ -1004,6 +1042,37 @@ func _select_at(pos: Vector2) -> void:
 			return
 	# Empty space -> close panel / deselect.
 	view_system_id = -1
+	selected_fleet_id = -1
+
+
+# Box-select: pick every player fleet whose icon falls inside the dragged rectangle
+# (world space). Populates selected_fleets for a group move; the first also drives the
+# single-fleet panel. An empty box just clears any selection.
+func _box_select(a: Vector2, b: Vector2) -> void:
+	var rect := Rect2(a, Vector2.ZERO).expand(b)
+	selected_fleets.clear()
+	for f in sim.fleets:
+		if f.empire_id == player_empire_id \
+				and rect.has_point(sim.fleet_position(f) + FLEET_ICON_OFF):
+			selected_fleets.append(f.id)
+	if selected_fleets.is_empty():
+		selected_fleet_id = -1
+		view_system_id = -1
+		return
+	selected_fleet_id = selected_fleets[0]
+	view_system_id = -1
+	_log_event("▭ Selected %d fleets — click a system to move them" % selected_fleets.size())
+
+
+# Order every fleet in the box selection to a destination system; report how many
+# actually got underway (pinned/blocked fleets are silently skipped in a group order).
+func _order_group(dest_sys: int) -> void:
+	var moved := 0
+	for fid in selected_fleets:
+		if sim.get_fleet(fid) != null and sim.order_fleet(fid, dest_sys):
+			moved += 1
+	_log_event("➤ %d of %d fleets moving out" % [moved, selected_fleets.size()])
+	selected_fleets.clear()
 	selected_fleet_id = -1
 
 
@@ -1209,11 +1278,17 @@ func _draw_galaxy() -> void:
 			draw_colored_polygon(PackedVector2Array([
 				c + Vector2(0, -3), c + Vector2(3, 0),
 				c + Vector2(0, 3), c + Vector2(-3, 0)]), Color(1, 1, 0.4))
-		if f.id == selected_fleet_id:
+		if f.id == selected_fleet_id or selected_fleets.has(f.id):
 			draw_arc(fp, 10.0, 0.0, TAU, 24, Color.WHITE, 1.5)
 			if f.is_moving():
 				draw_line(fp, sim.systems[f.path[f.path.size() - 1]].map_pos,
 					Color(1, 1, 1, 0.4), 1.0)
+
+	# Live box-select rectangle while the player is dragging.
+	if _dragging:
+		var r := Rect2(_drag_start, Vector2.ZERO).expand(_drag_cur)
+		draw_rect(r, Color(0.6, 0.9, 1.0, 0.10))
+		draw_rect(r, Color(0.7, 0.95, 1.0, 0.7), false, 1.0)
 
 	# Hover: a faint ring for feedback + a row of symbols showing what's inside.
 	if _hover_system != -1 and sim.systems.has(_hover_system) \
