@@ -1349,6 +1349,14 @@ func _draw_galaxy() -> void:
 		var pts: PackedVector2Array = an.pts
 		var ar: float = an.r
 		var band: PackedVector2Array = _storm_bands[ai]
+		# The storm punches VR=0 into the fog, and that fog is sampled on a coarse grid, so
+		# its dark edge staircases while the storm body curves — an ugly blocky shadow. Lay
+		# a smooth navy shadow band down the ACTUAL spine first (quadratic-soft glow discs,
+		# same deep-space navy as the backdrop): it recolours that jagged fog edge into a
+		# curve that follows the storm, before the violet haze paints over it. Kept near the
+		# storm's own footprint so it curves the existing shadow rather than growing it.
+		for c in band:
+			_draw_glow(c, ar * 1.30, Color(0.05, 0.055, 0.08, 0.6))
 		# Nebula body: layered soft discs down the spine, from a wide cool indigo breath
 		# inward to a warm magenta core. Overlapping glows accumulate toward the centre,
 		# so the storm reads as a turbulent charged cloud with depth — not a flat sausage.
@@ -1425,23 +1433,29 @@ func _draw_galaxy() -> void:
 					spop += pcol.population
 			var sscale: float = 1.0 + clampf(spop / 2500.0, 0.0, 1.0) * 0.7
 			_draw_star(sys.map_pos, _star_color(sys.id), 1.0, sscale)
+			# Ring radius drives where every label/symbol nests — a capital's star ring is
+			# the widest (15*sscale). All offsets below derive from it so nothing collides
+			# with the ring (or each other) as the star scales up with population.
+			var ring_r: float = (15.0 if capitals.has(sys.id) else 13.0) * sscale
+			var label_y: float = 15.0 * sscale + 12.0   # clears even the widest (capital) ring
+			# Structure badges tuck just ABOVE the ring, scaled to clear it.
 			_draw_structure_badges(sys.map_pos, sys.depot_empire_id,
 				sys.obs_post_empire_id, sys.imperial_empire_id, sys.imperial_level,
-				sys.citadel_empire_id)
+				sys.citadel_empire_id, -(15.0 * sscale + 8.0))
 			var owner: int = _system_owner.get(sys.id, -1)
 			if owner != -1:
 				# A capital's owner ring is drawn as a 5-point STAR outline instead of a
 				# circle — the seat of the empire reads at a glance, no floating glyph.
 				if capitals.has(sys.id):
-					_draw_capital_ring(sys.map_pos, sim.empires[owner].color, 15.0 * sscale)
+					_draw_capital_ring(sys.map_pos, sim.empires[owner].color, ring_r)
 				else:
-					draw_arc(sys.map_pos, 13.0 * sscale, 0.0, TAU, 40,
+					draw_arc(sys.map_pos, ring_r, 0.0, TAU, 40,
 						sim.empires[owner].color, 2.0, true)
 			if _galaxy_cam_zoom >= LABEL_ZOOM:
-				if cc > 0:
-					draw_string(font, sys.map_pos + Vector2(14.0, -12.0), str(cc),
-						HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.55, 0.85, 0.6))
-				_draw_name(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
+				if cc > 0:   # colony count sits just OUTSIDE the ring, upper-right
+					draw_string(font, sys.map_pos + Vector2(ring_r + 4.0, -ring_r * 0.35),
+						str(cc), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.55, 0.85, 0.6))
+				_draw_name(font, sys.map_pos + Vector2(-60.0, label_y), sys.name,
 					Color(1, 1, 1, 0.85))
 		else:
 			# Explored but out of VR: dim star + the frozen last-seen snapshot
@@ -1466,7 +1480,7 @@ func _draw_galaxy() -> void:
 		# Setting: draw this system's deposit glyph always (not just on hover). The
 		# hovered system already shows the full symbol row, so skip it here.
 		if _always_show_resources and sys.id != _hover_system:
-			_draw_resource_hint(sys, live)
+			_draw_resource_hint(sys, live, _label_drop(sys) + 16.0)
 
 	# Combat indicators (for systems the player can see): a LIVE battle or bombardment
 	# pulses persistently and distinctly; recently-ended combat leaves a fading
@@ -1834,8 +1848,23 @@ func _draw_gem(c: Vector2, mined := true) -> void:
 # owner-coloured icons just above the star. Laid out by count so 1-3 badges never
 # collide (the old per-structure fixed offsets sat on different baselines and could
 # overlap). Each icon is deliberately distinct: crate / eye / crown.
+# Vertical drop (below a system's centre) at which its name / symbol row should sit, so
+# labels always clear the population-scaled owner ring instead of cutting through it. The
+# ring grows up to ~1.7x with population (and a capital's star ring is the widest at
+# 15*sscale), so a fixed offset collided on big capitals — this tracks the same scale.
+func _label_drop(sys: StarSystem) -> float:
+	var spop := 0.0
+	for pid in sys.planet_ids:
+		var pcol: Colony = sim.planets[pid].colony
+		if pcol != null:
+			spop += pcol.population
+	var sscale: float = 1.0 + clampf(spop / 2500.0, 0.0, 1.0) * 0.7
+	return 15.0 * sscale + 12.0
+
+
 func _draw_structure_badges(center: Vector2, depot_id: int, obs_id: int,
-		imperial_id: int, imperial_level: int, citadel_id: int = -1) -> void:
+		imperial_id: int, imperial_level: int, citadel_id: int = -1,
+		y_off: float = -20.0) -> void:
 	var badges: Array = []
 	if depot_id != -1:
 		badges.append(["depot", sim.empires[depot_id].color, 0])
@@ -1849,7 +1878,7 @@ func _draw_structure_badges(center: Vector2, depot_id: int, obs_id: int,
 		return
 	var gap := 10.0
 	var x0: float = center.x - (badges.size() - 1) * gap * 0.5
-	var y: float = center.y - 20.0
+	var y: float = center.y + y_off
 	for i in badges.size():
 		var p := Vector2(x0 + i * gap, y)
 		var col: Color = badges[i][1]
@@ -1936,7 +1965,9 @@ func _draw_system_symbols(sys: StarSystem) -> void:
 	var depot_owner: int = sys.depot_empire_id if live else snap.get("depot", -1)
 	var n := pids.size() + (1 if depot_owner != -1 else 0)
 	var step := 15.0
-	var start := sys.map_pos + Vector2(-(n - 1) * step * 0.5, 30.0)
+	# Drop the row below the name (which itself clears the scaled ring), so the hovered
+	# system's symbols never sit on its ring or its name — worst on a big capital.
+	var start := sys.map_pos + Vector2(-(n - 1) * step * 0.5, _label_drop(sys) + 16.0)
 	var i := 0
 	for pid in pids:
 		var p: Planet = sim.planets[pid]
@@ -1979,7 +2010,7 @@ func _draw_system_symbols(sys: StarSystem) -> void:
 # Compact per-system deposit glyph for the "always show resources" setting: just the
 # water/gem shape (mined = colour, untapped = greyscale) centred below the star, no
 # colony/depot row. Uses live mine state in VR, else the last-seen snapshot.
-func _draw_resource_hint(sys: StarSystem, live: bool) -> void:
+func _draw_resource_hint(sys: StarSystem, live: bool, drop: float = 26.0) -> void:
 	var snap_planets: Dictionary = _stale.get(sys.id, {}).get("planets", {})
 	for pid in sys.planet_ids:
 		var p: Planet = sim.planets[pid]
@@ -1989,7 +2020,7 @@ func _draw_resource_hint(sys: StarSystem, live: bool) -> void:
 		var has_mine: bool = p.has_mine() if live else pinfo.get("mine", false)
 		var mine_owner: int = p.mine_empire_id if live else pinfo.get("mine_owner", -1)
 		var mined: bool = has_mine and mine_owner != -1
-		var c: Vector2 = sys.map_pos + Vector2(0.0, 26.0)
+		var c: Vector2 = sys.map_pos + Vector2(0.0, drop)
 		if p.deposit_type == SimConstants.Deposit.WATER:
 			_draw_water_drop(c, mined)
 		else:
@@ -2461,7 +2492,10 @@ func _build_ship_panel(layer: CanvasLayer) -> void:
 	sp.anchor_right = 1.0
 	sp.offset_left = -232.0
 	sp.offset_right = -12.0
-	sp.offset_top = 40.0
+	# Sit below the top stats bar's REAL bottom — a hard 40px overlapped a taller bar.
+	# _dock_top_labels re-syncs this once the bar's true height settles (and on resize).
+	sp.offset_top = (top_bar.size.y + 6.0) if (top_bar != null and top_bar.size.y > 0.0) \
+		else 48.0
 	# Dock the selection panel just under the shipyard's ACTUAL bottom, and keep it there
 	# if the shipyard ever re-lays-out (font/DPI change) — no brittle hard-coded height.
 	sp.resized.connect(_dock_selection_panel)
@@ -2555,6 +2589,11 @@ func _dock_top_labels() -> void:
 		hint_label.position = Vector2(16.0, y)
 	if event_label != null:
 		event_label.position = Vector2(16.0, y + 24.0)
+	# Same for the top-right shipyard: keep its top under the bar's real bottom, then
+	# re-dock the selection panel beneath it (its top is derived from the shipyard's).
+	if ship_panel != null:
+		ship_panel.offset_top = y
+		_dock_selection_panel()
 
 
 func _on_colonize() -> void:
