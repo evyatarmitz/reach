@@ -843,7 +843,8 @@ func _vr_at(p: Vector2, ids: Array, pos: Array, infl: Array, reach: Array,
 
 func _player_vr_at(p: Vector2, ids: Array, pos: Array, infl: Array, reach: Array,
 		reach_vr: Array, pk: int) -> bool:
-	return _vr_at(p, ids, pos, infl, reach, reach_vr, pk) > 0.0
+	# God-view (screenshot/debug): show every empire's border regardless of player sight.
+	return _fog_disabled or _vr_at(p, ids, pos, infl, reach, reach_vr, pk) > 0.0
 
 
 func _best_other(claims: Array, k: int, pi: int) -> float:
@@ -1294,7 +1295,7 @@ func _draw_galaxy() -> void:
 	# linear filtering (see _ready) so the feathered lit region hugs the player's
 	# actual influence with a smooth edge — no blocks, no hard reach disc. Lit fades
 	# to grey explored-memory to never-seen black. Baked in the border refresh.
-	if _fog_tex != null:
+	if _fog_tex != null and not _fog_disabled:
 		draw_texture_rect(_fog_tex, _fog_rect, false)
 	# Cosmic anomalies ("storms"): a magenta nebula haze snaking along a spine. They
 	# block influence and sight (not movement), so they're always visible — a blind
@@ -3209,5 +3210,39 @@ func _autoshot() -> void:
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://autoshot_drag_select.png")
 	_dragging = false
+	# Eleventh shot: GOD VIEW of the whole galaxy — fog off, every empire's border drawn
+	# (not just the player's-sight-gated ones), zoomed to fit. This is the true multi-empire
+	# "red/yellow/green" contest shot: the one that shows border curves, seam contests and
+	# storm placement across ALL empires at once, which the fogged galaxy pose can't. Advance
+	# further first so the borders mature and rivals actually clash.
+	for i in 2400:   # +240 days of expansion so the contest is well-developed
+		sim.tick(SimConstants.TICK_DAYS)
+	_fog_disabled = true
+	selected_fleet_id = -1
+	view_system_id = -1
+	selected_planet_id = -1
+	_hover_hold = false
+	var g_span: Vector2 = (_map_hi - _map_lo) + Vector2(240, 240)
+	var g_vp: Vector2 = get_viewport_rect().size
+	_galaxy_cam_pos = (_map_lo + _map_hi) * 0.5
+	_galaxy_cam_zoom = clampf(minf(g_vp.x / g_span.x, g_vp.y / g_span.y), ZOOM_MIN, ZOOM_MAX)
+	_apply_camera()
+	_recompute_borders()
+	# Hide the right-column UI (shipyard + selection panel) so nothing occludes the map —
+	# this pose exists purely to review the whole-galaxy border/storm contest.
+	if ship_panel != null:
+		ship_panel.visible = false
+	if panel != null:
+		panel.visible = false
+	_refresh_ui()
+	if ship_panel != null:
+		ship_panel.visible = false   # _refresh_ui may re-show it; force hidden for the shot
+	if panel != null:
+		panel.visible = false
+	queue_redraw()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://autoshot_god.png")
+	_fog_disabled = false
 	print("autoshots saved: ", ProjectSettings.globalize_path("user://"))
 	get_tree().quit()

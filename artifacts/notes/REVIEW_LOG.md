@@ -436,3 +436,31 @@ Follow-up on the Cycle 12 storms. Three issues from a screenshot:
 ### Coverage status
 Eleven poses, no open reds. Storms soft (no clip), border hugs storms smoothly, and
 storm layout can't wall off the map.
+
+## Cycle 14 — 2026-09-24 — god-view pose for the multi-empire contest ("red/yellow/green")
+
+Request: "again red yellow green / if u need expand the autoshot option to test more
+parts." The existing `autoshot_galaxy` pose is fogged and player+one-rival only, so it
+can't show the whole-map multi-empire border/storm contest. Added a 12th pose,
+`autoshot_god.png`:
+
+- **New capability, screenshot/debug only.** Sets `_fog_disabled = true` (already an
+  existing debug flag) for the shot; two guards make it actually reveal the map:
+  `_player_vr_at()` now returns `true` when `_fog_disabled` (so EVERY empire's border
+  bakes, not just the player-sight-gated ones), and `_draw_galaxy` skips the dark fog
+  overlay when `_fog_disabled`. Both are no-ops in normal play.
+- **Unobstructed framing.** Advances +240 more days so the contest matures, fits the
+  whole galaxy (reuses `_init_camera`'s fit math), and hides the shipyard + selection
+  panels so nothing occludes the map.
+- **Result.** Shows all four empires by color (blue player, amber, red, green), smooth
+  seam borders, both storms (soft, no clip), and capital stars. Determinism + all sim
+  tests green (border/fog changes are render-only; the bake stays deterministic).
+
+### Known limitation (noted, not fixed — see TODO)
+In god view, empires far from the player show only their strongest mutual SEAM, not a
+full territory outline. The border sampler is player-centric on a map-scaled grid; the
+thin outer-fringe edge (empire vs empty space, at the `BORDER_EPS` level) falls below
+the coarse grid resolution on a wide map, so only robust seam crossings trace. This is
+correct in fogged play (the player always sees their own border fine) — it only makes
+the god-view review shot read a little sparse. Reworking the sampler for full outlines
+is border-system work, out of scope for "expand the autoshot."

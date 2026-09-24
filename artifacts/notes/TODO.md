@@ -680,6 +680,16 @@ reach, lower pop ceiling, bigger map, or a reach cap — a design call, deferred
 "tune after testing". Also: mine richness >> city conversion capacity, so raw T0
 stockpiles balloon (another tuning knob).
 
+**POLISH (god-view review shot, `autoshot_god.png`, added Cycle 14):** the pose reveals
+the whole-map multi-empire contest with fog off, but empires far from the player show
+only their strongest mutual seam, not a full territory outline. The border sampler is
+player-centric on a map-scaled grid, so the thin outer-fringe edge (empire vs empty
+space at the `BORDER_EPS` level) falls below the coarse grid resolution on a wide map.
+Correct in fogged play; only makes the review shot read sparse. If we want full
+per-empire outlines in god view, options: a finer border grid gated to `_fog_disabled`,
+or raise the outer-fringe floor so the bubble edge sits on a robust crossing. Tied to
+the reach-linearity issue above (coarse fog/borders share that root cause).
+
 ## Status — through 0.12.0 (2026-07-02, Godot 4.7)
 
 The economic + spatial foundation is built, tested, and playable. Both core design
