@@ -184,8 +184,9 @@ var _panel_system := -1        # which system the planet list was built for
 
 
 func _ready() -> void:
-	# Black space so fogged (unseen) area reads as truly dark, not grey.
-	RenderingServer.set_default_clear_color(Color(0.02, 0.02, 0.03))
+	# Deep-navy space so unseen area reads as dark DEEP SPACE, not a flat black void
+	# (was near-pure black at 0.02, which made the map feel like a big empty hole).
+	RenderingServer.set_default_clear_color(Color(0.045, 0.05, 0.07))
 	# Linear-filter the baked fog texture so its low-res samples interpolate into a
 	# smooth influence-shaped gradient instead of visible cells. (Only the fog is a
 	# texture here; lines/text/arcs are vector-drawn and unaffected.)
@@ -607,8 +608,8 @@ func _bake_field(job: Dictionary) -> Dictionary:
 			var fa: float = v + base_a * (1.0 - v)
 			var col := Color(0, 0, 0, 0)
 			if fa > 0.0001:
-				var lit := Vector3(0.13, 0.13, 0.15) * v
-				var mem := Vector3(0.07, 0.07, 0.08) * (base_a * (1.0 - v))
+				var lit := Vector3(0.17, 0.17, 0.20) * v
+				var mem := Vector3(0.10, 0.10, 0.12) * (base_a * (1.0 - v))
 				var rgb: Vector3 = (lit + mem) / fa
 				col = Color(rgb.x, rgb.y, rgb.z, fa)
 			img.set_pixel(gx, gy, col)
@@ -1966,10 +1967,6 @@ func _draw_system_symbols(sys: StarSystem) -> void:
 				_draw_water_drop(c, mined)
 			else:
 				_draw_gem(c, mined)
-			if mined:
-				# A small owner-colour pip above the glyph keeps WHO works it legible,
-				# without drawing a frame around the deposit shape.
-				draw_circle(c + Vector2(0.0, -8.0), 1.7, sim.empires[mine_owner].color)
 		else:
 			draw_circle(c, 2.5, Color(0.5, 0.5, 0.55))
 		i += 1
@@ -1997,8 +1994,6 @@ func _draw_resource_hint(sys: StarSystem, live: bool) -> void:
 			_draw_water_drop(c, mined)
 		else:
 			_draw_gem(c, mined)
-		if mined:
-			draw_circle(c + Vector2(0.0, -8.0), 1.7, sim.empires[mine_owner].color)
 
 
 # --- generated tier icons (the fallback font has no dice/numeral glyphs) -------------
