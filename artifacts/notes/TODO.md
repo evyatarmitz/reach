@@ -4,6 +4,31 @@ New project, split from To Infinity (2026-07-02). This game is genuinely novel �
 nothing from the old codebase transfers directly, because the old build assumed an
 embodied player and direct entity control, and Reach has neither.
 
+## Shipped 2026-09-24 — capitals + supply lines + overrun colonies (`4015d92`)
+
+Six-part request, one commit, full suite + determinism green.
+1. **0-pop colonies vanish** — a removal pass drops any colony at/below MIN_POP that
+   is abandoning or disconnected; abandon now actually finishes (no MIN_POP floor).
+2. **Explicit capital** — `Empire.capital_planet_id`, set to the first colony, moved
+   only by the new `move_capital` command (side-panel "Make capital" button). The
+   star/shipyard renders on the capital, not the largest colony.
+3. **Supply lines** — every tick a one-tick-lagged connectivity snapshot BFSes from
+   each empire's capital across own+neutral systems (never enemy); a colony is active
+   only if its system is reached. Disconnected colonies leave influence, refining, the
+   water pool, and can't be construction/capital targets. Civilian journeys can't
+   cross enemy territory.
+4. **Overrun colonies** — `claim_strength`'s self-claim is now finite
+   (`src.inf / SELF_CLAIM_DIST`, 40.0) instead of `INF`, so overwhelming enemy
+   influence flips a colonied system. The colony survives as a cut-off bubble: no
+   external water → dies at IMMIGRATION_RATE unless it sits on a water deposit, in
+   which case it grows but produces nothing.
+5. **Capital fall = elimination** — `_eliminate_empire` wipes ALL of a bombed-out
+   empire's colonies, even thriving disconnected ones.
+6. **Player picks empire color** in the start menu; AI empires take the rest.
+
+Open tuning knob: `SELF_CLAIM_DIST` (40.0) sets how hard an interior colony resists
+being overrun — playtest whether frontier colonies flip too easily / too rarely.
+
 ## Shipped 2026-09-10 — 7-feature batch (one commit each, all green)
 
 1. **Water-gate on founding** — panel shows the new colony's water cost and blocks the
