@@ -39,6 +39,15 @@ var _src_cache_day: float = -1.0
 var _blocked_pair: Dictionary = {} # (src_id,dst_id) -> bool anomaly-blocked. Anomalies
                                    # and system positions are immutable after map-gen, so
                                    # this is a permanent constant — never invalidated.
+# Supply-line connectivity: planet_id -> is this colony connected to its capital by a
+# friendly/neutral lane path. Recomputed once per tick (recompute_connectivity), read
+# by _is_colony_active. A disconnected colony drops out of influence, refining and the
+# water pool — it's cut off (see the tick). One-tick-lagged snapshot: the pass that
+# builds it needs ownership, and ownership needs influence, so it evaluates over an
+# ALL-active view (guarded by _computing_connectivity) to break the cycle.
+var _connected: Dictionary = {}
+var _conn_computed: bool = false
+var _computing_connectivity: bool = false
 
 
 # Name syllables — combined by index for readable, unique system names.
@@ -147,7 +156,8 @@ static func generate_map(cfg_in: Dictionary) -> Sim:
 	_connect_systems(sim, sys_ids, positions, float(cfg.lane_density))
 	_place_anomalies(sim, positions, size, rng)
 	_place_empires(sim, sys_ids, positions, int(cfg.empire_count),
-		float(cfg.ai_efficiency))
+		float(cfg.ai_efficiency), int(cfg.get("player_color_idx", 0)))
+	sim.recompute_connectivity()   # prime the supply-line snapshot before the first tick
 	return sim
 
 
@@ -302,7 +312,7 @@ static func _uf_find(parent: Array, x: int) -> int:
 # has both resource streams from tick 1 (one planet per node, so the two mines can't
 # share a node like they used to).
 static func _place_empires(sim: Sim, sys_ids: Array, positions: Array,
-		count: int, ai_efficiency: float) -> void:
+		count: int, ai_efficiency: float, player_color_idx: int = 0) -> void:
 	var n := sys_ids.size()
 	var chosen: Array = [0]
 	while chosen.size() < count and chosen.size() < n:
@@ -321,11 +331,21 @@ static func _place_empires(sim: Sim, sys_ids: Array, positions: Array,
 			break
 		chosen.append(best)
 
+	# Colour assignment: the player (empire 0) takes their chosen hue; the AI empires
+	# take the remaining palette entries in order, skipping the player's pick so no two
+	# share a colour.
+	var pc := posmod(player_color_idx, _EMPIRE_COLORS.size())
+	var ai_colors: Array = []
+	for i in _EMPIRE_COLORS.size():
+		if i != pc:
+			ai_colors.append(_EMPIRE_COLORS[i])
 	for e_i in chosen.size():
 		var sid: int = sys_ids[chosen[e_i]]
 		var ename := "%s %s" % [sim.systems[sid].name,
 			_EMPIRE_SUFFIX[e_i % _EMPIRE_SUFFIX.size()]]
-		var emp := sim.add_empire(ename, _EMPIRE_COLORS[e_i % _EMPIRE_COLORS.size()])
+		var col: Color = _EMPIRE_COLORS[pc] if e_i == 0 \
+			else ai_colors[(e_i - 1) % ai_colors.size()]
+		var emp := sim.add_empire(ename, col)
 		if e_i > 0:   # AI empires scale with difficulty; the player stays at 1.0
 			emp.efficiency = ai_efficiency
 		# Home planet: water world + water mine + the seed colony.
@@ -365,7 +385,8 @@ func serialize() -> Dictionary:
 	for e in empires.values():
 		es.append({"id": e.id, "name": e.name,
 			"color": [e.color.r, e.color.g, e.color.b, e.color.a],
-			"minerals": e.minerals, "nat": e.nat.duplicate(), "eff": e.efficiency})
+			"minerals": e.minerals, "nat": e.nat.duplicate(), "eff": e.efficiency,
+			"cap": e.capital_planet_id})
 	var ss: Array = []
 	for s in systems.values():
 		ss.append({"id": s.id, "name": s.name, "x": s.map_pos.x, "y": s.map_pos.y,
@@ -426,6 +447,7 @@ static func deserialize(d: Dictionary) -> Sim:
 		for v in e.nat:
 			nat.append(float(v))
 		emp.nat = nat
+		emp.capital_planet_id = int(e.get("cap", -1))
 		sim.empires[emp.id] = emp
 	for s in d.systems:
 		var sys := StarSystem.new()
@@ -508,6 +530,13 @@ static func deserialize(d: Dictionary) -> Sim:
 		ai._build_count = int(a.bc)
 		ai._next_action_day = a.nad
 		sim.ais.append(ai)
+	# Back-compat: a save from before explicit capitals has none — seat each empire at
+	# its largest colony. Then prime the connectivity snapshot so nothing reads stale.
+	for e in sim.empires.values():
+		if e.capital_planet_id == -1 or sim.planets.get(e.capital_planet_id) == null \
+				or sim.planets[e.capital_planet_id].colony == null:
+			e.capital_planet_id = sim._largest_colony_planet(e.id)
+	sim.recompute_connectivity()
 	return sim
 
 
@@ -561,6 +590,10 @@ func inject_colony(empire_id: int, planet_id: int, pop: float,
 	c.established = established
 	planets[planet_id].colony = c
 	colonies.append(c)
+	# The empire's first colony becomes its capital (the seat everything supplies from).
+	var e: Empire = empires.get(empire_id)
+	if e != null and e.capital_planet_id == -1:
+		e.capital_planet_id = planet_id
 	_invalidate_influence_caches()
 	return c
 
@@ -571,6 +604,124 @@ func inject_colony(empire_id: int, planet_id: int, pop: float,
 func _invalidate_influence_caches() -> void:
 	_owner_cache_day = -1.0
 	_src_cache_day = -1.0
+
+
+# --- capital & supply-line connectivity --------------------------------------
+
+# The system the empire's capital sits in, or -1 (no capital, or its colony is gone).
+func capital_system(empire_id: int) -> int:
+	var e: Empire = empires.get(empire_id)
+	if e == null or e.capital_planet_id == -1:
+		return -1
+	var p: Planet = planets.get(e.capital_planet_id)
+	if p == null or p.colony == null or p.colony.empire_id != empire_id:
+		return -1
+	return p.system_id
+
+
+# Is this colony connected to its capital (and thus alive economically)? A
+# disconnected colony projects no influence, refines nothing and is off the water
+# pool. Defaults to true before the first connectivity pass and for brand-new
+# colonies (not yet in the snapshot), so nothing dies on the tick it's founded.
+func _is_colony_active(c: Colony) -> bool:
+	if _computing_connectivity:
+		return true   # the pass itself evaluates over an all-active view
+	if not _conn_computed:
+		return true
+	return _connected.get(c.planet_id, true)
+
+
+# Rebuild the connected snapshot: from each empire's capital, BFS across lanes
+# through systems it owns or that are neutral (never through enemy territory), over
+# an ALL-active influence view. A colony is connected iff its system is reached.
+# This is what disconnects an overrun colony (its own system flipped to the enemy)
+# AND a colony an enemy salient has cut off from the capital. Called once per tick.
+func recompute_connectivity() -> void:
+	_computing_connectivity = true
+	_invalidate_influence_caches()   # rebuild caches under the all-active view
+	var raw_owner := {}
+	for sid in systems:
+		raw_owner[sid] = system_owner(sid)
+	_computing_connectivity = false
+	_invalidate_influence_caches()   # and back to the active-only view for the tick
+	var nc := {}
+	for e in empires.values():
+		var cap_sys := capital_system(e.id)
+		var reached := {}
+		if cap_sys != -1:
+			reached[cap_sys] = true
+			var q: Array[int] = [cap_sys]
+			while not q.is_empty():
+				var s: int = q.pop_front()
+				for nb in lane_neighbors(s):
+					if reached.has(nb):
+						continue
+					var o: int = raw_owner.get(nb, -1)
+					if o == -1 or o == e.id:
+						reached[nb] = true
+						q.append(nb)
+		for c in colonies:
+			if c.empire_id == e.id:
+				nc[c.planet_id] = reached.has(planets[c.planet_id].system_id)
+	_connected = nc
+	_conn_computed = true
+
+
+# Move the empire's capital to one of its own colonies. Only a CONNECTED (supplied)
+# colony is a valid seat — you cannot relocate to a colony cut off from the current
+# capital, nor to a disconnected/overrun one. Returns false if the move is illegal.
+func move_capital(empire_id: int, planet_id: int) -> bool:
+	var e: Empire = empires.get(empire_id)
+	if e == null:
+		return false
+	var p: Planet = planets.get(planet_id)
+	if p == null or p.colony == null or p.colony.empire_id != empire_id:
+		return false
+	if not _is_colony_active(p.colony):
+		return false   # not connected to the current capital
+	e.capital_planet_id = planet_id
+	return true
+
+
+# Remove a colony from the map (0-pop, abandoned-out, or wiped). If it was the
+# empire's capital and other colonies remain, the seat falls back to the largest;
+# combat destruction of a capital is handled separately (it eliminates the empire).
+func _remove_colony(c: Colony) -> void:
+	var eid := c.empire_id
+	planets[c.planet_id].colony = null
+	colonies.erase(c)
+	var e: Empire = empires.get(eid)
+	if e != null and e.capital_planet_id == c.planet_id:
+		e.capital_planet_id = _largest_colony_planet(eid)
+	_invalidate_influence_caches()
+
+
+# The planet of an empire's most-populated colony, or -1 if it has none.
+func _largest_colony_planet(empire_id: int) -> int:
+	var best := -1
+	var best_pop := -1.0
+	for c in colonies:
+		if c.empire_id == empire_id and c.population > best_pop:
+			best_pop = c.population
+			best = c.planet_id
+	return best
+
+
+# The capital fell: the empire collapses. Every one of its colonies is deleted at
+# once (even ones with enough local water to survive) — a split-off remnant does not
+# carry on without its seat. Structures revert on the next border pass.
+func _eliminate_empire(empire_id: int) -> void:
+	var doomed: Array[Colony] = []
+	for c in colonies:
+		if c.empire_id == empire_id:
+			doomed.append(c)
+	for c in doomed:
+		planets[c.planet_id].colony = null
+		colonies.erase(c)
+	var e: Empire = empires.get(empire_id)
+	if e != null:
+		e.capital_planet_id = -1
+	_invalidate_influence_caches()
 
 
 # --- topology ----------------------------------------------------------------
@@ -611,7 +762,7 @@ func system_influence(system_id: int, empire_id: int) -> float:
 	var best := 0.0
 	for pid in systems[system_id].planet_ids:
 		var c: Colony = planets[pid].colony
-		if c != null and c.empire_id == empire_id:
+		if c != null and c.empire_id == empire_id and _is_colony_active(c):
 			best = maxf(best, SimConstants.INFLUENCE_A1 * c.population)
 	# An imperial center here amplifies the influence its colony projects (for extra water,
 	# charged in the demand loop). Bigger borders/reach/VR — influence you buy, not grow.
@@ -784,7 +935,12 @@ func claim_strength(target_system_id: int, empire_id: int) -> float:
 	var tpos: Vector2 = systems[target_system_id].map_pos
 	for src in _influence_sources(empire_id):
 		if src.id == target_system_id:
-			return INF
+			# A colony's claim on its own system is strong but FINITE, so overwhelming
+			# enemy influence can overrun it (the system flips; the colony survives
+			# inside a tiny bubble and goes disconnected). Take the max — an enemy needs
+			# to beat this, not merely tie it.
+			best = maxf(best, src.inf / SimConstants.SELF_CLAIM_DIST)
+			continue
 		var d: float = src.pos.distance_to(tpos)
 		if d <= src.reach and not _pair_blocked(src.id, target_system_id, src.pos, tpos):
 			best = maxf(best, src.inf / d)
@@ -1065,7 +1221,7 @@ func can_order_construction(empire_id: int, build_type: int, target_id: int) -> 
 		return false
 	if not _construction_target_ok(empire_id, build_type, target_id):
 		return false
-	var cap := most_populated_system(empire_id)
+	var cap := capital_system(empire_id)
 	var tsys := _target_system_of(build_type, target_id)
 	if cap == -1 or tsys == -1:
 		return false
@@ -1077,7 +1233,7 @@ func can_order_construction(empire_id: int, build_type: int, target_id: int) -> 
 func order_construction(empire_id: int, build_type: int, target_id: int) -> bool:
 	if not can_order_construction(empire_id, build_type, target_id):
 		return false
-	var cap := most_populated_system(empire_id)
+	var cap := capital_system(empire_id)
 	var tsys := _target_system_of(build_type, target_id)
 	_pay(empire_id, 0, _construction_cost(build_type))
 	builders.append({"id": _next_id, "eid": empire_id, "sys": cap,
@@ -1376,7 +1532,7 @@ func can_build_ship(empire_id: int, tier: int) -> bool:   # tier 1-5
 	var e: Empire = empires.get(empire_id)
 	return e != null and tier >= 1 and tier <= 5 \
 		and e.nat[tier - 1] >= SimConstants.SHIP_NAT_COST \
-		and most_populated_system(empire_id) != -1
+		and capital_system(empire_id) != -1
 
 
 # Build one ship (role, tier) above the empire's most-populated city, paid in the
@@ -1384,7 +1540,7 @@ func can_build_ship(empire_id: int, tier: int) -> bool:   # tier 1-5
 func build_ship(empire_id: int, role: int, tier: int) -> bool:
 	if not can_build_ship(empire_id, tier):
 		return false
-	var sys := most_populated_system(empire_id)
+	var sys := capital_system(empire_id)
 	_pay(empire_id, tier - 1, SimConstants.SHIP_NAT_COST)
 	var f := _fleet_at(empire_id, sys)
 	if role == SimConstants.Role.FIGHTER:
@@ -1540,9 +1696,20 @@ func _resolve_combat(dt_days: float) -> void:
 			if _has_enemy_colony(eid, sid):
 				combat_at[sid] = day
 				combat_kind[sid] = 1   # 1 = bombardment
+	# Destroying a colony that is an empire's CAPITAL ends that empire outright: all its
+	# colonies are wiped (a decapitated empire does not fight on from a remnant). Collect
+	# the fallen capitals first, so an empire is only eliminated once.
+	var fallen_capitals := {}
 	for c in destroyed_colonies:
-		planets[c.planet_id].colony = null
-		colonies.erase(c)
+		var e: Empire = empires.get(c.empire_id)
+		if e != null and e.capital_planet_id == c.planet_id:
+			fallen_capitals[c.empire_id] = true
+	for c in destroyed_colonies:
+		if planets[c.planet_id].colony == c:   # may already be gone via elimination
+			planets[c.planet_id].colony = null
+			colonies.erase(c)
+	for eid in fallen_capitals:
+		_eliminate_empire(eid)
 	if not destroyed_colonies.is_empty():
 		_invalidate_influence_caches()
 
@@ -1707,6 +1874,11 @@ func tick(dt_days: float) -> void:
 	for ai in ais:
 		ai.maybe_act(self)
 
+	# Supply lines: refresh which colonies can still trace a friendly path to their
+	# capital. Disconnected ones drop out of influence, refining and the water pool
+	# below. (One-tick-lagged; see recompute_connectivity.)
+	recompute_connectivity()
+
 	# 1. Mines. Water is a FLOW into per-tick water_income (never banked); minerals are
 	#    banked (they feed the alloy chain). Reset the water flow at the top of the tick.
 	for e in empires.values():
@@ -1726,7 +1898,7 @@ func tick(dt_days: float) -> void:
 	#     there's no giant buffer. Scales with refining budget so it never starves.
 	var refine_cap := {}   # empire -> total refining budget/day
 	for c in colonies:
-		if c.established:
+		if c.established and _is_colony_active(c):
 			refine_cap[c.empire_id] = refine_cap.get(c.empire_id, 0.0) \
 				+ c.refine_capacity()
 	for e in empires.values():
@@ -1754,8 +1926,8 @@ func tick(dt_days: float) -> void:
 	#    tiers are progressively harder (the pyramid); a tier whose input ran out passes
 	#    its unused budget UP to the next. Earlier colonies draw first (deterministic).
 	for c in colonies:
-		if not c.established:
-			continue
+		if not c.established or not _is_colony_active(c):
+			continue   # disconnected colonies produce nothing (no refining contribution)
 		var e: Empire = empires[c.empire_id]
 		if c.spec != SimConstants.Spec.NONE and c.spec_strength < 1.0:
 			c.spec_strength = minf(1.0,
@@ -1798,8 +1970,8 @@ func tick(dt_days: float) -> void:
 		# with water), so it raises demand rather than lowering it.
 		var demand := 0.0
 		for c in colonies:
-			if c.empire_id != e.id:
-				continue
+			if c.empire_id != e.id or not _is_colony_active(c):
+				continue   # disconnected colonies are off the shared water pool
 			var sysid: int = planets[c.planet_id].system_id
 			var pop_draw: float = c.population * SimConstants.WATER_PER_POP
 			# An imperial center surcharges this colony's per-pop draw by the same fraction
@@ -1815,6 +1987,18 @@ func tick(dt_days: float) -> void:
 	# 4. Apply population change. Surplus -> grow by the diminishing-returns curve
 	#    × neighbor bonus (off by default); deficit -> shrink; zero -> hold.
 	for c in colonies:
+		if not _is_colony_active(c):
+			# Disconnected: cut off from the empire's water pool, it survives ONLY on
+			# water underneath it. Over a water deposit it keeps growing (self-supplied,
+			# though it still produces nothing); otherwise its people die off at the
+			# immigration rate until it empties out (removed in the pass after step 5).
+			if planets[c.planet_id].deposit_type == SimConstants.Deposit.WATER:
+				c.population += Colony.growth_per_day(c.population) * dt_days
+				if not c.established and c.population >= SimConstants.ACTIVATION_POP:
+					c.established = true
+			else:
+				c.population -= SimConstants.IMMIGRATION_RATE * c.population * dt_days
+			continue
 		var sign: int = grow_sign.get(c.empire_id, 0)
 		if sign > 0:
 			c.population += Colony.growth_per_day(c.population) \
@@ -1830,6 +2014,8 @@ func tick(dt_days: float) -> void:
 	#    abandoned colony sheds at DOUBLE rate and is barred from being a recipient
 	#    (0x in-immigration), so it drains toward MIN_POP fast.
 	for c in colonies:
+		if not _is_colony_active(c):
+			continue   # cut off from the empire — can't ship people in or out
 		var rate := 0.0
 		if c.abandoning:
 			rate = SimConstants.IMMIGRATION_RATE * SimConstants.ABANDON_RATE_MULT
@@ -1839,7 +2025,8 @@ func tick(dt_days: float) -> void:
 			continue
 		var others: Array[Colony] = []
 		for o in colonies:
-			if o != c and o.empire_id == c.empire_id and not o.abandoning:
+			if o != c and o.empire_id == c.empire_id and not o.abandoning \
+					and _is_colony_active(o):
 				others.append(o)
 		if others.is_empty():
 			continue
@@ -1852,6 +2039,17 @@ func tick(dt_days: float) -> void:
 		var each := shed / others.size()
 		for o in others:
 			o.population += each
+
+	# 5b. Remove emptied colonies. An abandoned colony (drained to MIN_POP) or a
+	#     disconnected one that died off (no water underneath) vanishes from the map —
+	#     it disappears rather than lingering at a floor. A normally-shrinking connected
+	#     colony holds at MIN_POP and is NOT removed.
+	var emptied: Array[Colony] = []
+	for c in colonies:
+		if c.population <= SimConstants.MIN_POP and (c.abandoning or not _is_colony_active(c)):
+			emptied.append(c)
+	for c in emptied:
+		_remove_colony(c)
 
 	# 6. Fleets move along lanes (one hop per tick at most).
 	for f in fleets:

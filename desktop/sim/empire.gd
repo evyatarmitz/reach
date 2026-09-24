@@ -12,6 +12,11 @@ extends RefCounted
 var id: int = -1
 var name: String = ""
 var color: Color = Color.WHITE
+# The empire's seat. Everything (supply, immigration, construction, ship-building)
+# flows from here, and every asset must trace a friendly lane path back to it or it
+# gets nothing. Set to the first colony founded; moved only by the move_capital
+# command. When it FALLS (bombed out of existence), the whole empire is eliminated.
+var capital_planet_id: int = -1
 
 var minerals: float = SimConstants.START_MINERALS
 # Alloy tiers 1-5 (index 0-4), refined in cities. nat[0] (T1) also pays for building.

@@ -25,6 +25,8 @@ var _empire_opt: OptionButton
 var _diff_opt: OptionButton
 var _lane_slider: HSlider
 var _lane_val_label: Label
+var _player_color_idx: int = 0
+var _color_swatches: Array = []   # the clickable Buttons, for the selection highlight
 var _stars: Array = []   # backdrop starfield [pos, radius, Color]
 var _controls_page: Control
 var _updater: Node
@@ -135,6 +137,7 @@ func _ready() -> void:
 	_settings_box.add_child(_size_slider_row)
 	_empire_opt = _labeled_option("Empires", EMPIRES.map(func(n): return str(n)), 2)
 	_diff_opt = _labeled_option("Difficulty", DIFFS.map(func(d): return d[0]), 1)
+	_build_color_row()
 	# Lane density: how many hyperlanes connect the stars. 0% = a single spanning tree
 	# (one connected wire, no islands); 100% = every planar near-neighbour lane. The map
 	# stays a single connected mesh at every setting.
@@ -274,6 +277,43 @@ func _labeled_option(label: String, items: Array, default_idx: int) -> OptionBut
 	return opt
 
 
+# A "Your colour" row: one swatch per empire hue (kept in sync with the sim's palette).
+# Clicking one picks the player's colour; the picked swatch gets a bright outline.
+func _build_color_row() -> void:
+	var row := HBoxContainer.new()
+	var l := Label.new()
+	l.text = "Your colour"
+	l.custom_minimum_size = Vector2(120, 0)
+	row.add_child(l)
+	var swatches := HBoxContainer.new()
+	swatches.add_theme_constant_override("separation", 6)
+	swatches.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(swatches)
+	_color_swatches.clear()
+	for i in Sim._EMPIRE_COLORS.size():
+		var b := Button.new()
+		b.custom_minimum_size = Vector2(30, 26)
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Sim._EMPIRE_COLORS[i]
+		b.add_theme_stylebox_override("normal", sb)
+		b.add_theme_stylebox_override("hover", sb)
+		b.add_theme_stylebox_override("pressed", sb)
+		b.pressed.connect(func() -> void: _select_color(i))
+		swatches.add_child(b)
+		_color_swatches.append(b)
+	_settings_box.add_child(row)
+	_select_color(0)
+
+
+func _select_color(idx: int) -> void:
+	_player_color_idx = idx
+	for i in _color_swatches.size():
+		var b: Button = _color_swatches[i]
+		var sb: StyleBoxFlat = b.get_theme_stylebox("normal")
+		sb.border_color = Color.WHITE if i == idx else Color(0, 0, 0, 0)
+		sb.set_border_width_all(3 if i == idx else 0)
+
+
 func _show_settings() -> void:
 	_main_box.visible = false
 	_settings_box.visible = true
@@ -293,6 +333,7 @@ func _on_start() -> void:
 		"empire_count": EMPIRES[_empire_opt.selected],
 		"ai_efficiency": DIFFS[_diff_opt.selected][1],
 		"lane_density": _lane_slider.value / 100.0,
+		"player_color_idx": _player_color_idx,
 		"seed": randi(),
 	}
 	get_tree().change_scene_to_file("res://game/main.tscn")

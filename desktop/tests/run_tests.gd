@@ -65,6 +65,12 @@ func _init() -> void:
 	_test_emigration()
 	_test_abandon()
 	_test_abandon_no_immigration()
+	_test_zero_pop_colony_removed()
+	_test_overrun_disconnects_colony()
+	_test_disconnected_dies_without_water()
+	_test_disconnected_survives_over_water()
+	_test_capital_move_and_connectivity()
+	_test_capital_fall_elimination()
 	_test_fleets()
 	_test_military_resources()
 	_test_specialization()
@@ -622,6 +628,136 @@ func _test_abandon_no_immigration() -> void:
 		"an abandoned colony only loses pop even while a sibling emigrates (0x in)")
 
 
+func _test_zero_pop_colony_removed() -> void:
+	# A colony drained to empty disappears entirely — no floor at MIN_POP.
+	var sim := Sim.new()
+	var e := sim.add_empire("E", Color.WHITE)
+	var s := sim.add_system("S")
+	s.map_pos = Vector2.ZERO
+	var cap := sim.inject_colony(e.id, sim.add_planet(s.id, "cap").id, 100000.0, true)
+	var doomed := sim.inject_colony(e.id, sim.add_planet(s.id, "d").id, 500.0, true)
+	sim.toggle_abandon(e.id, doomed.planet_id)
+	run_days(sim, 500.0)
+	check(sim.planets[doomed.planet_id].colony == null,
+		"an abandoned colony drained to empty is removed, not floored at MIN_POP")
+	check(e.capital_planet_id == cap.planet_id, "the capital is untouched by the removal")
+
+
+# Overrun geometry: V's forward colony at M (x=100), between V's far capital at Y
+# (x=1000) and E's crushing capital at A (origin). E's influence swamps M, so M
+# turns E-owned and the forward colony is cut off from its own capital. fwd_deposit
+# sets what the forward planet sits on (WATER lets a cut-off colony keep growing).
+func _overrun_scenario(fwd_deposit: int) -> Dictionary:
+	var sim := Sim.new()
+	var v := sim.add_empire("V", Color.YELLOW)
+	var e := sim.add_empire("E", Color.BLUE)
+	var y := sim.add_system("Y")
+	y.map_pos = Vector2(1000, 0)
+	var m := sim.add_system("M")
+	m.map_pos = Vector2(100, 0)
+	var a := sim.add_system("A")
+	a.map_pos = Vector2.ZERO
+	sim.add_lane(y.id, m.id)
+	sim.add_lane(a.id, m.id)
+	var cap := sim.inject_colony(v.id, sim.add_planet(y.id, "y").id, 1000.0, true)
+	var mp := sim.add_planet(m.id, "m")
+	mp.deposit_type = fwd_deposit
+	var fwd := sim.inject_colony(v.id, mp.id, 100.0, true)
+	sim.inject_colony(e.id, sim.add_planet(a.id, "a").id, 5000.0, true)
+	return {"sim": sim, "v": v, "e": e, "m": m, "cap": cap, "fwd": fwd}
+
+
+func _test_overrun_disconnects_colony() -> void:
+	var d := _overrun_scenario(SimConstants.Deposit.NONE)
+	var sim: Sim = d.sim
+	var fwd: Colony = d.fwd
+	sim.recompute_connectivity()
+	check(sim.system_owner(d.m.id) == d.e.id,
+		"overwhelming enemy influence overruns even a colonied system")
+	check(not sim._is_colony_active(fwd),
+		"the overrun forward colony is cut off from its capital")
+	check(sim._is_colony_active(sim.planets[d.cap.planet_id].colony),
+		"the capital colony itself stays connected")
+
+
+func _test_disconnected_dies_without_water() -> void:
+	var d := _overrun_scenario(SimConstants.Deposit.NONE)
+	var sim: Sim = d.sim
+	var fwd: Colony = d.fwd
+	var pop0: float = fwd.population
+	sim.tick(SimConstants.TICK_DAYS)
+	check(not sim._is_colony_active(fwd), "the overrun colony is disconnected after a tick")
+	check(fwd.population < pop0, "a cut-off colony with no water dies at the immigration rate")
+
+
+func _test_disconnected_survives_over_water() -> void:
+	var d := _overrun_scenario(SimConstants.Deposit.WATER)
+	var sim: Sim = d.sim
+	var fwd: Colony = d.fwd
+	var pop0: float = fwd.population
+	run_days(sim, 30.0)
+	check(not sim._is_colony_active(fwd), "the colony is still cut off")
+	check(fwd.population >= pop0, "a cut-off colony sitting on water keeps growing instead of dying")
+
+
+func _test_capital_move_and_connectivity() -> void:
+	# V holds a far capital (Y), a rear colony (Z, connected) and a forward colony
+	# (M) that E overruns and cuts off. The capital can move to the connected rear
+	# colony but not onto the disconnected forward one.
+	var sim := Sim.new()
+	var v := sim.add_empire("V", Color.YELLOW)
+	var e := sim.add_empire("E", Color.BLUE)
+	var y := sim.add_system("Y")
+	y.map_pos = Vector2(1000, 0)
+	var z := sim.add_system("Z")
+	z.map_pos = Vector2(1120, 0)
+	var m := sim.add_system("M")
+	m.map_pos = Vector2(100, 0)
+	var a := sim.add_system("A")
+	a.map_pos = Vector2.ZERO
+	sim.add_lane(y.id, z.id)
+	sim.add_lane(y.id, m.id)
+	sim.add_lane(a.id, m.id)
+	var cap := sim.inject_colony(v.id, sim.add_planet(y.id, "y").id, 1000.0, true)
+	var rear := sim.inject_colony(v.id, sim.add_planet(z.id, "z").id, 400.0, true)
+	var fwd := sim.inject_colony(v.id, sim.add_planet(m.id, "m").id, 100.0, true)
+	sim.inject_colony(e.id, sim.add_planet(a.id, "a").id, 5000.0, true)
+	check(v.capital_planet_id == cap.planet_id, "the capital defaults to the first colony")
+	sim.recompute_connectivity()
+	check(not sim._is_colony_active(fwd), "the forward colony is cut off")
+	check(sim._is_colony_active(rear), "the rear colony stays connected")
+	check(not sim.move_capital(v.id, fwd.planet_id),
+		"the capital cannot move onto a disconnected colony")
+	check(v.capital_planet_id == cap.planet_id, "a rejected move leaves the capital in place")
+	check(sim.move_capital(v.id, rear.planet_id),
+		"the capital can move to a connected colony")
+	check(v.capital_planet_id == rear.planet_id, "the capital moved to the rear colony")
+
+
+func _test_capital_fall_elimination() -> void:
+	# Bomb an empire's capital out of existence and the whole empire falls with it,
+	# including a colony that was thriving somewhere else.
+	var sim := Sim.new()
+	var victim := sim.add_empire("V", Color.YELLOW)
+	var attacker := sim.add_empire("A", Color.RED)
+	var cap_sys := sim.add_system("Cap")
+	cap_sys.map_pos = Vector2.ZERO
+	var out_sys := sim.add_system("Out")
+	out_sys.map_pos = Vector2(120, 0)
+	sim.add_lane(cap_sys.id, out_sys.id)
+	var cap := sim.inject_colony(victim.id, sim.add_planet(cap_sys.id, "cap").id, 500.0, true)
+	var out := sim.inject_colony(victim.id, sim.add_planet(out_sys.id, "out").id, 500.0, true)
+	check(victim.capital_planet_id == cap.planet_id, "the first colony is the capital")
+	# A crushing bomber fleet parks over the capital and grinds it out.
+	sim._fleet_at(attacker.id, cap_sys.id).bombers[2] = 80
+	run_days(sim, 300.0)
+	check(sim.planets[cap.planet_id].colony == null, "the bombed-out capital is destroyed")
+	check(sim.planets[out.planet_id].colony == null,
+		"losing the capital eliminates the empire's other colonies too")
+	check(victim.capital_planet_id == -1, "the fallen empire has no capital left")
+	check(sim.colonies.is_empty(), "no colony of the fallen empire survives")
+
+
 func _test_fleets() -> void:
 	# Three systems in a line A-B-C; empire has a big city at B (its shipyard).
 	var sim := Sim.new()
@@ -895,7 +1031,11 @@ func _test_construction_vessel() -> void:
 	s2.add_lane(sa.id, sm.id)
 	s2.add_lane(sm.id, sb.id)
 	s2.inject_colony(me.id, s2.add_planet(sa.id, "cap").id, 2000.0, true)
-	s2.inject_colony(foe.id, s2.add_planet(sm.id, "foe").id, 100.0, true)
+	# Foe needs a colony big enough to HOLD its own middle system against my adjacent
+	# capital now that a colony's self-claim is finite (an overwhelming neighbour can
+	# overrun a tiny one). 900 keeps M foe's while my 2000 still out-reaches to own the
+	# far target B — the point of the test (routing, not overrun).
+	s2.inject_colony(foe.id, s2.add_planet(sm.id, "foe").id, 900.0, true)
 	var tb := s2.add_planet(sb.id, "tb").id
 	check(s2.system_owner(sm.id) == foe.id, "test setup: rival owns the middle system")
 	check(s2.is_under_influence(sb.id, me.id), "test setup: target is under my influence")
@@ -1270,6 +1410,11 @@ func _test_save_load() -> void:
 				and is_equal_approx(ea.efficiency, eb.efficiency)):
 			same_res = false
 	check(same_res, "save/load preserves empire resources + efficiency")
+	var same_cap := true
+	for id in a.empires:
+		if a.empires[id].capital_planet_id != b.empires[id].capital_planet_id:
+			same_cap = false
+	check(same_cap, "save/load preserves each empire's capital")
 	var same_pop := true
 	for i in a.colonies.size():
 		if not is_equal_approx(a.colonies[i].population, b.colonies[i].population):

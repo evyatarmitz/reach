@@ -260,6 +260,13 @@ const SIGHT_MINE_RANGE := 260.0
 # contested border sits where influence1/influence2 = r1/r2.
 const INFLUENCE_A1 := 1.0
 const BORDER_A2 := 1.8
+# A colony's claim on its OWN system: its influence divided by this small effective
+# distance (was an absolute/infinite claim). Finite so overwhelming enemy influence
+# can OVERRUN a colonied system — the system's broad territory flips, but the colony
+# structure survives inside a tiny bubble and becomes disconnected (see recompute_
+# connectivity). Small enough that a colony normally holds its own system against a
+# same-size neighbour; an enemy needs several times the population nearby to overrun.
+const SELF_CLAIM_DIST := 40.0
 
 # Flat planet-mesh map sizing. The map area scales with the planet count at this
 # fixed density, so more planets = a bigger map (not a denser one). Separation is

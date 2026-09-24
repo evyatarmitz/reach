@@ -150,6 +150,7 @@ var colonize_btn: Button
 var mine_btn: Button
 var emigrate_btn: Button
 var abandon_btn: Button
+var move_capital_btn: Button
 var merge_btn: Button
 var split_btn: Button
 var spec_food_btn: Button
@@ -1420,7 +1421,7 @@ func _draw_galaxy() -> void:
 	# distinctive star glyph. Resolved once per frame so the per-system loop is a lookup.
 	var capitals := {}
 	for e in sim.empires.values():
-		var cap: int = sim.most_populated_system(e.id)
+		var cap: int = sim.capital_system(e.id)
 		if cap != -1:
 			capitals[cap] = e.color
 	for sys in sim.systems.values():
@@ -1459,6 +1460,16 @@ func _draw_galaxy() -> void:
 				else:
 					draw_arc(sys.map_pos, ring_r, 0.0, TAU, 40,
 						sim.empires[owner].color, 2.0, true)
+			# A disconnected (overrun/cut-off) colony still holds a TINY bubble around its
+			# own star in its owner's colour, even though the broad territory has flipped to
+			# whoever now surrounds it — a besieged holdout, smaller than any structure badge.
+			for pid in sys.planet_ids:
+				var dcol: Colony = sim.planets[pid].colony
+				if dcol != null and not sim._is_colony_active(dcol):
+					var bc: Color = sim.empires[dcol.empire_id].color
+					draw_circle(sys.map_pos, 5.0 * sscale, Color(bc.r, bc.g, bc.b, 0.85))
+					draw_arc(sys.map_pos, 5.0 * sscale, 0.0, TAU, 20,
+						Color(1, 1, 1, 0.6), 1.0, true)
 			if _galaxy_cam_zoom >= LABEL_ZOOM:
 				if cc > 0:   # colony count sits just OUTSIDE the ring, upper-right
 					draw_string(font, sys.map_pos + Vector2(ring_r + 4.0, -ring_r * 0.35),
@@ -2267,6 +2278,10 @@ func _build_ui() -> void:
 	abandon_btn = Button.new()
 	abandon_btn.pressed.connect(_on_abandon)
 	abandon_btn.tooltip_text = "Abandon colony — sheds population at double the emigration rate and takes in no new settlers, draining the colony toward empty. Use it to pull off a doomed or unwanted world."
+	move_capital_btn = Button.new()
+	move_capital_btn.text = "Make capital"
+	move_capital_btn.pressed.connect(_on_move_capital)
+	move_capital_btn.tooltip_text = "Move your capital here — the seat everything is supplied from (ships spawn here, and every colony must trace a friendly lane path back to it). Only a colony still connected to your current capital can become the new seat. If your capital ever falls, your empire is lost."
 	merge_btn = Button.new()
 	merge_btn.text = "Merge fleets here"
 	merge_btn.pressed.connect(_on_merge)
@@ -2299,6 +2314,7 @@ func _build_ui() -> void:
 	vbox.add_child(upgrade_btn)
 	vbox.add_child(emigrate_btn)
 	vbox.add_child(abandon_btn)
+	vbox.add_child(move_capital_btn)
 	vbox.add_child(spec_food_btn)
 	vbox.add_child(spec_alloy_btn)
 	vbox.add_child(depot_btn)
@@ -2656,6 +2672,11 @@ func _on_abandon() -> void:
 		sim.toggle_abandon(player_empire_id, selected_planet_id)
 
 
+func _on_move_capital() -> void:
+	if selected_planet_id != -1:
+		sim.move_capital(player_empire_id, selected_planet_id)
+
+
 func _on_spec(kind: int) -> void:
 	if selected_planet_id != -1:
 		var c: Colony = sim.planets[selected_planet_id].colony
@@ -2741,8 +2762,8 @@ func _planet_row_text(planet: Planet, live: bool, pinfo: Dictionary) -> String:
 # Read-only detail for a planet in an explored-but-out-of-sight system: static
 # deposit plus the frozen last-seen colony/mine — no population, no live changes.
 func _show_planet_frozen(planet: Planet, pinfo: Dictionary) -> void:
-	for b in [colonize_btn, mine_btn, emigrate_btn, abandon_btn, upgrade_btn, spec_food_btn,
-			spec_alloy_btn]:
+	for b in [colonize_btn, mine_btn, emigrate_btn, abandon_btn, move_capital_btn, upgrade_btn,
+			spec_food_btn, spec_alloy_btn]:
 		b.visible = false
 	var dep_name: String = ["none", "water", "minerals"][planet.deposit_type]
 	var lines := "Deposit: %s" % dep_name
@@ -2890,8 +2911,8 @@ func _show_fleet_panel(fleet: Fleet) -> void:
 	panel_body.text = "At: %s%s\nCombat %.0f · Bomb %.0f\n%s%s" % [loc,
 		"  → moving" if fleet.is_moving() else "",
 		fleet.combat_power(), fleet.bomb_power(), comp, combat_line]
-	for b in [colonize_btn, mine_btn, emigrate_btn, abandon_btn, upgrade_btn, spec_food_btn,
-			spec_alloy_btn, depot_btn, obs_post_btn, imperial_btn, citadel_btn]:
+	for b in [colonize_btn, mine_btn, emigrate_btn, abandon_btn, move_capital_btn, upgrade_btn,
+			spec_food_btn, spec_alloy_btn, depot_btn, obs_post_btn, imperial_btn, citadel_btn]:
 		b.visible = false
 	merge_btn.visible = true
 	merge_btn.disabled = fleet.is_moving() or not _another_fleet_here(fleet)
@@ -2998,8 +3019,8 @@ func _show_system_panel(sys_id: int) -> void:
 	var planet: Planet = sim.planets.get(selected_planet_id)
 	if planet == null or planet.system_id != sys_id:
 		panel_body.text = "Select a planet."
-		for b in [colonize_btn, mine_btn, emigrate_btn, abandon_btn, upgrade_btn, spec_food_btn,
-				spec_alloy_btn]:
+		for b in [colonize_btn, mine_btn, emigrate_btn, abandon_btn, move_capital_btn, upgrade_btn,
+				spec_food_btn, spec_alloy_btn]:
 			b.visible = false
 		return
 
@@ -3048,8 +3069,16 @@ func _show_system_panel(sys_id: int) -> void:
 					mt = t + 1
 			refine = "\nRefines ≈%.1f/day, up to alloy T%d (T%d+ needs both mine types)" \
 				% [c.refine_capacity(), mt, SimConstants.VARIETY_MIN_TIER + 1]
-		panel_body.text = "Owner: %s\n%s\nPop: %.1f%s\n%s" \
-			% [sim.empires[c.empire_id].name, status, c.population, refine, deposit_line]
+		var tags := ""
+		if sim.empires[c.empire_id].capital_planet_id == planet.id:
+			tags += "  ★ CAPITAL"
+		elif not sim._is_colony_active(c):
+			# Cut off from its capital: no outside supply. Over water it clings on (but
+			# produces nothing); otherwise its people are dying off.
+			tags += "  ⚠ DISCONNECTED (%s)" % ("clinging on — produces nothing" \
+				if planet.deposit_type == SimConstants.Deposit.WATER else "dying off")
+		panel_body.text = "Owner: %s%s\n%s\nPop: %.1f%s\n%s" \
+			% [sim.empires[c.empire_id].name, tags, status, c.population, refine, deposit_line]
 		colonize_btn.visible = false
 	mine_btn.visible = planet.has_deposit() and not planet.has_mine()
 	mine_btn.text = "Send mine vessel (%d alloys)" % int(SimConstants.MINE_COST_ALLOYS)
@@ -3064,6 +3093,16 @@ func _show_system_panel(sys_id: int) -> void:
 			else "Immigration: off"
 		abandon_btn.text = "Abandoning colony" if planet.colony.abandoning \
 			else "Abandon colony"
+	# Make-capital: only for one of your own colonies that isn't already the capital.
+	# Disabled (can't be a seat) if it's cut off from the current capital.
+	var is_capital: bool = own_colony \
+		and sim.empires[player_empire_id].capital_planet_id == planet.id
+	move_capital_btn.visible = own_colony and not is_capital
+	if move_capital_btn.visible:
+		var connected: bool = sim._is_colony_active(planet.colony)
+		move_capital_btn.disabled = not connected
+		move_capital_btn.text = "Make capital" if connected \
+			else "Make capital (disconnected)"
 	# Mine upgrade (own mine on this planet).
 	upgrade_btn.visible = planet.has_mine() \
 		and planet.mine_empire_id == player_empire_id
