@@ -50,8 +50,10 @@ const LABEL_ZOOM := 0.85     # only draw per-system name/count labels at/above t
                              # zoom — when zoomed out they overlap into unreadable
                              # mush AND draw_string dominates frame cost.
 const BORDER_EPS := 0.01     # tiny rival-claim floor so bubble-vs-empty edges draw
-const FOG_CELL := 22.0       # sample cell for the fog texture (linearly filtered). Finer
-                             # again (30→22) for a crisper lit edge; bake is off-thread.
+const FOG_CELL := 16.0       # sample cell for the fog texture (linearly filtered). Finer
+                             # again (30→22→16); the baked image is then box-blurred so the
+                             # fog + storm-shadow edges read as smooth CURVES, not a
+                             # grid staircase. Bake + blur both run off the main thread.
 # VR fill. The fog must reach PAST the border (the border is your influence edge;
 # the fog is your SIGHT, which sees further). VR_SIGHT_REACH is how far sight
 # extends beyond influence reach — the player's fog claim is sampled with reach
@@ -613,6 +615,11 @@ func _bake_field(job: Dictionary) -> Dictionary:
 				var rgb: Vector3 = (lit + mem) / fa
 				col = Color(rgb.x, rgb.y, rgb.z, fa)
 			img.set_pixel(gx, gy, col)
+	# The storm punches VR=0 and the lit edge lands on cell boundaries, so the raw grid
+	# staircases. Two box-blur passes round every edge into a smooth curve (the whole map
+	# reads curvier) — cheap CPU work on this small image, still off the main thread.
+	_box_blur_image(img)
+	_box_blur_image(img)
 	var fog_rect := Rect2(flo, fhi - flo)
 
 	# Sample each empire's claim on a grid of POINTS (cell corners), then trace a
@@ -1903,6 +1910,30 @@ func _draw_structure_badges(center: Vector2, depot_id: int, obs_id: int,
 				draw_rect(Rect2(p + Vector2(-3.5, -1.0), Vector2(7.0, 4.0)), col, false, 1.3)
 				for mx in [-3.5, -1.0, 1.5]:
 					draw_rect(Rect2(p + Vector2(mx, -3.0), Vector2(2.0, 2.0)), col)
+
+
+# One separable 1-2-1 box-blur pass over an RGBA image, in place. Used on the baked fog
+# so its grid-quantised edges become smooth curves. Small image (<=FIELD_MAX_CELLS/axis),
+# pure CPU (no rendering call), so it's safe to run on the off-thread bake worker.
+func _box_blur_image(img: Image) -> void:
+	var w := img.get_width()
+	var h := img.get_height()
+	if w < 3 or h < 3:
+		return
+	var src := img.duplicate()
+	for y in h:      # horizontal pass
+		for x in w:
+			var c0: Color = src.get_pixel(maxi(0, x - 1), y)
+			var c1: Color = src.get_pixel(x, y)
+			var c2: Color = src.get_pixel(mini(w - 1, x + 1), y)
+			img.set_pixel(x, y, (c0 + c1 * 2.0 + c2) / 4.0)
+	src = img.duplicate()
+	for y in h:      # vertical pass
+		for x in w:
+			var c0: Color = src.get_pixel(x, maxi(0, y - 1))
+			var c1: Color = src.get_pixel(x, y)
+			var c2: Color = src.get_pixel(x, mini(h - 1, y + 1))
+			img.set_pixel(x, y, (c0 + c1 * 2.0 + c2) / 4.0)
 
 
 # A soft white radial disc: alpha falls off from the centre so, linear-filtered, it
