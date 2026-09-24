@@ -10,6 +10,7 @@ var empire_id: int = -1
 var population: float = 0.0
 var established: bool = false
 var emigrating: bool = false   # while on, sheds pop to the empire's other colonies
+var abandoning: bool = false   # while on, sheds at DOUBLE rate and receives 0 immigration
 var spec: int = SimConstants.Spec.NONE   # FOOD / ALLOY specialization target
 var spec_strength: float = 0.0           # 0..1 ramp toward the current spec's bonus
 

@@ -63,6 +63,8 @@ func _init() -> void:
 	_test_water_growth()
 	_test_diminishing_returns()
 	_test_emigration()
+	_test_abandon()
+	_test_abandon_no_immigration()
 	_test_fleets()
 	_test_military_resources()
 	_test_specialization()
@@ -573,6 +575,51 @@ func _test_emigration() -> void:
 		"shed population is split equally among the empire's other colonies")
 	sim.toggle_emigration(e.id, src.planet_id)
 	check(not src.emigrating, "toggling again turns emigration off")
+
+
+func _test_abandon() -> void:
+	# Abandon sheds at 2x the emigration rate and the abandoned colony takes in 0.
+	var sim := Sim.new()
+	var e := sim.add_empire("E", Color.WHITE)
+	var s := sim.add_system("S")
+	s.map_pos = Vector2.ZERO
+	var src := sim.inject_colony(e.id, sim.add_planet(s.id, "a").id, 100000.0, true)
+	var dst := sim.inject_colony(e.id, sim.add_planet(s.id, "b").id, 100.0, true)
+	# Reference: same setup shedding at the normal emigration rate.
+	var ref_sim := Sim.new()
+	var re := ref_sim.add_empire("E", Color.WHITE)
+	var rs := ref_sim.add_system("S")
+	rs.map_pos = Vector2.ZERO
+	var rsrc := ref_sim.inject_colony(re.id, ref_sim.add_planet(rs.id, "a").id, 100000.0, true)
+	ref_sim.inject_colony(re.id, ref_sim.add_planet(rs.id, "b").id, 100000.0, true)
+	ref_sim.toggle_emigration(re.id, rsrc.planet_id)
+	var dst0: float = dst.population
+	sim.toggle_abandon(e.id, src.planet_id)
+	check(src.abandoning, "toggle turns abandoning on")
+	sim.tick(SimConstants.TICK_DAYS)
+	ref_sim.tick(SimConstants.TICK_DAYS)
+	# Identical setups; abandon sheds 2x, so it ends strictly lower than emigration.
+	check(src.population < rsrc.population,
+		"abandoning drains faster than plain emigration")
+	check(dst.population > dst0, "the destination colony receives the abandoned pop")
+	sim.toggle_abandon(e.id, src.planet_id)
+	check(not src.abandoning, "toggling again turns abandoning off")
+
+
+func _test_abandon_no_immigration() -> void:
+	# An abandoned colony is barred as a recipient: an emigrating sibling skips it.
+	var sim := Sim.new()
+	var e := sim.add_empire("E", Color.WHITE)
+	var s := sim.add_system("S")
+	s.map_pos = Vector2.ZERO
+	var giver := sim.inject_colony(e.id, sim.add_planet(s.id, "a").id, 100000.0, true)
+	var aband := sim.inject_colony(e.id, sim.add_planet(s.id, "b").id, 1000.0, true)
+	sim.toggle_emigration(e.id, giver.planet_id)
+	sim.toggle_abandon(e.id, aband.planet_id)
+	var aband0: float = aband.population
+	sim.tick(SimConstants.TICK_DAYS)
+	check(aband.population < aband0,
+		"an abandoned colony only loses pop even while a sibling emigrates (0x in)")
 
 
 func _test_fleets() -> void:

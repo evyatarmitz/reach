@@ -98,6 +98,9 @@ const IN_SYSTEM_DIST := 80.0
 # per day to the empire's other colonies (0.1% per 0.1-day tick), letting you
 # shift population — and thus influence — toward where it matters.
 const IMMIGRATION_RATE := 0.01
+# Abandoning a colony sheds population at this multiple of the normal emigration
+# rate AND bars the colony from receiving any immigration (0x in), so it empties.
+const ABANDON_RATE_MULT := 2.0
 
 # Mining: one structure, but each DEPOSIT has its own fixed richness (output/day,
 # constant over time, varies by deposit) so later mine upgrades have a reason to

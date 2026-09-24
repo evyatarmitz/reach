@@ -381,7 +381,7 @@ func serialize() -> Dictionary:
 	var cs: Array = []
 	for c in colonies:
 		cs.append({"pid": c.planet_id, "eid": c.empire_id, "pop": c.population,
-			"est": c.established, "emi": c.emigrating, "spec": c.spec,
+			"est": c.established, "emi": c.emigrating, "aban": c.abandoning, "spec": c.spec,
 			"sstr": c.spec_strength})
 	var fs: Array = []
 	for f in fleets:
@@ -461,6 +461,7 @@ static func deserialize(d: Dictionary) -> Sim:
 		col2.population = c.pop
 		col2.established = c.est
 		col2.emigrating = c.emi
+		col2.abandoning = c.get("aban", false)
 		col2.spec = int(c.spec)
 		col2.spec_strength = c.sstr
 		sim.planets[col2.planet_id].colony = col2
@@ -1121,6 +1122,12 @@ func toggle_emigration(empire_id: int, planet_id: int) -> void:
 	var p: Planet = planets.get(planet_id)
 	if p != null and p.colony != null and p.colony.empire_id == empire_id:
 		p.colony.emigrating = not p.colony.emigrating
+
+
+func toggle_abandon(empire_id: int, planet_id: int) -> void:
+	var p: Planet = planets.get(planet_id)
+	if p != null and p.colony != null and p.colony.empire_id == empire_id:
+		p.colony.abandoning = not p.colony.abandoning
 
 
 # Set a colony's specialization target. Switching resets its ramp (inertia).
@@ -1819,18 +1826,25 @@ func tick(dt_days: float) -> void:
 				c.population - SimConstants.SHRINK_RATE * c.population * dt_days)
 
 	# 5. Emigration: colonies with the toggle shed population to the empire's
-	#    other colonies, letting the player shift population (and influence).
+	#    other colonies, letting the player shift population (and influence). An
+	#    abandoned colony sheds at DOUBLE rate and is barred from being a recipient
+	#    (0x in-immigration), so it drains toward MIN_POP fast.
 	for c in colonies:
-		if not c.emigrating:
+		var rate := 0.0
+		if c.abandoning:
+			rate = SimConstants.IMMIGRATION_RATE * SimConstants.ABANDON_RATE_MULT
+		elif c.emigrating:
+			rate = SimConstants.IMMIGRATION_RATE
+		if rate <= 0.0:
 			continue
 		var others: Array[Colony] = []
 		for o in colonies:
-			if o != c and o.empire_id == c.empire_id:
+			if o != c and o.empire_id == c.empire_id and not o.abandoning:
 				others.append(o)
 		if others.is_empty():
 			continue
 		var shed: float = minf(
-			c.population * SimConstants.IMMIGRATION_RATE * dt_days,
+			c.population * rate * dt_days,
 			c.population - SimConstants.MIN_POP)
 		if shed <= 0.0:
 			continue

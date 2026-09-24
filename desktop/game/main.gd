@@ -149,6 +149,7 @@ var panel_body: Label
 var colonize_btn: Button
 var mine_btn: Button
 var emigrate_btn: Button
+var abandon_btn: Button
 var merge_btn: Button
 var split_btn: Button
 var spec_food_btn: Button
@@ -2263,6 +2264,9 @@ func _build_ui() -> void:
 	mine_btn.pressed.connect(_on_build_mine)
 	emigrate_btn = Button.new()
 	emigrate_btn.pressed.connect(_on_emigrate)
+	abandon_btn = Button.new()
+	abandon_btn.pressed.connect(_on_abandon)
+	abandon_btn.tooltip_text = "Abandon colony — sheds population at double the emigration rate and takes in no new settlers, draining the colony toward empty. Use it to pull off a doomed or unwanted world."
 	merge_btn = Button.new()
 	merge_btn.text = "Merge fleets here"
 	merge_btn.pressed.connect(_on_merge)
@@ -2294,6 +2298,7 @@ func _build_ui() -> void:
 	vbox.add_child(mine_btn)
 	vbox.add_child(upgrade_btn)
 	vbox.add_child(emigrate_btn)
+	vbox.add_child(abandon_btn)
 	vbox.add_child(spec_food_btn)
 	vbox.add_child(spec_alloy_btn)
 	vbox.add_child(depot_btn)
@@ -2646,6 +2651,11 @@ func _on_emigrate() -> void:
 		sim.toggle_emigration(player_empire_id, selected_planet_id)
 
 
+func _on_abandon() -> void:
+	if selected_planet_id != -1:
+		sim.toggle_abandon(player_empire_id, selected_planet_id)
+
+
 func _on_spec(kind: int) -> void:
 	if selected_planet_id != -1:
 		var c: Colony = sim.planets[selected_planet_id].colony
@@ -2731,7 +2741,7 @@ func _planet_row_text(planet: Planet, live: bool, pinfo: Dictionary) -> String:
 # Read-only detail for a planet in an explored-but-out-of-sight system: static
 # deposit plus the frozen last-seen colony/mine — no population, no live changes.
 func _show_planet_frozen(planet: Planet, pinfo: Dictionary) -> void:
-	for b in [colonize_btn, mine_btn, emigrate_btn, upgrade_btn, spec_food_btn,
+	for b in [colonize_btn, mine_btn, emigrate_btn, abandon_btn, upgrade_btn, spec_food_btn,
 			spec_alloy_btn]:
 		b.visible = false
 	var dep_name: String = ["none", "water", "minerals"][planet.deposit_type]
@@ -2880,7 +2890,7 @@ func _show_fleet_panel(fleet: Fleet) -> void:
 	panel_body.text = "At: %s%s\nCombat %.0f · Bomb %.0f\n%s%s" % [loc,
 		"  → moving" if fleet.is_moving() else "",
 		fleet.combat_power(), fleet.bomb_power(), comp, combat_line]
-	for b in [colonize_btn, mine_btn, emigrate_btn, upgrade_btn, spec_food_btn,
+	for b in [colonize_btn, mine_btn, emigrate_btn, abandon_btn, upgrade_btn, spec_food_btn,
 			spec_alloy_btn, depot_btn, obs_post_btn, imperial_btn, citadel_btn]:
 		b.visible = false
 	merge_btn.visible = true
@@ -2988,7 +2998,7 @@ func _show_system_panel(sys_id: int) -> void:
 	var planet: Planet = sim.planets.get(selected_planet_id)
 	if planet == null or planet.system_id != sys_id:
 		panel_body.text = "Select a planet."
-		for b in [colonize_btn, mine_btn, emigrate_btn, upgrade_btn, spec_food_btn,
+		for b in [colonize_btn, mine_btn, emigrate_btn, abandon_btn, upgrade_btn, spec_food_btn,
 				spec_alloy_btn]:
 			b.visible = false
 		return
@@ -3048,9 +3058,12 @@ func _show_system_panel(sys_id: int) -> void:
 	var own_colony: bool = planet.colony != null \
 		and planet.colony.empire_id == player_empire_id
 	emigrate_btn.visible = own_colony
+	abandon_btn.visible = own_colony
 	if own_colony:
 		emigrate_btn.text = "Immigration: ON" if planet.colony.emigrating \
 			else "Immigration: off"
+		abandon_btn.text = "Abandoning colony" if planet.colony.abandoning \
+			else "Abandon colony"
 	# Mine upgrade (own mine on this planet).
 	upgrade_btn.visible = planet.has_mine() \
 		and planet.mine_empire_id == player_empire_id
