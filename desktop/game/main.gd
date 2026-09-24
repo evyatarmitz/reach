@@ -77,6 +77,10 @@ const SAVE_PATH := "user://reach_save.json"
 const FLEET_ICON_OFF := Vector2(0, -17)   # drawn above the system so it stays clickable
 const FLEET_CLICK_R := 24.0   # screen-space click radius for fleets (÷ zoom in _select_at)
 const BORDER_INSET := 3.5    # push each empire's border curve into its own territory
+const BORDER_HOLE_BRIDGE := 2   # grow the sight-visible border set this many contour hops
+                                # so a short dip in VR (a storm's shadow, a feather notch)
+                                # mid-border doesn't punch a hole; whole fogged borders,
+                                # seeded by nothing, still never appear
 const COMBAT_FLASH_DAYS := 5.0   # how long a clash starburst lingers on the map
 
 var cam: Camera2D
@@ -96,6 +100,8 @@ var _explored := {}         # system_id -> true, ever seen (gray once out of VR)
 var _stale := {}            # system_id -> {owner, colonies}, last-seen snapshot
 var _hover_system := -1     # known system currently under the cursor (symbols shown)
 var _hover_hold := false    # autoshot: freeze the hovered system for the screenshot
+var _always_show_resources := false   # setting: draw every known system's deposit glyph,
+                                       # not just the hovered one (toggled in the menu)
 var _fog_tex: ImageTexture  # baked fog: feathered lit / grey memory / transparent
 var _fog_rect := Rect2()    # world-space rect the fog texture covers
 var _fog_seen := {}         # "gx,gy" -> true, cells ever in VR (explored memory)
@@ -647,7 +653,8 @@ func _bake_field(job: Dictionary) -> Dictionary:
 		# Collect this empire's raw contour segments (un-nudged), each carrying the
 		# unit direction toward its cell's interior. Chained into polylines and
 		# smoothed below so the border reads as a flowing curve, not faceted twigs.
-		var esegs: Array = []
+		var raw: Array = []       # every contour segment [a, b, dir] this empire has
+		var raw_vis: Array = []   # parallel: is that segment's midpoint in player VR?
 		for cy in prows - 1:
 			for cx in pcols - 1:
 				var i_tl := cy * pcols + cx
@@ -694,8 +701,40 @@ func _bake_field(job: Dictionary) -> Dictionary:
 					# in rival space where the player's VR is marginal, so the line flickered
 					# in and out between rebakes as the border drifted — despite the seam
 					# plainly being inside VR.)
-					if _player_vr_at(mid, ids, pos, infl, reach, reach_vr, pk):
-						esegs.append([seg[0], seg[1], idir])
+					raw.append([seg[0], seg[1], idir])
+					raw_vis.append(_player_vr_at(mid, ids, pos, infl, reach, reach_vr, pk))
+		# Keep every VR-visible segment, then grow that set a couple of contour hops so a
+		# short sight-dip inside an otherwise-visible border (a storm's shadow, a feather
+		# notch) is bridged instead of leaving a hole. A border lying wholly in fog is
+		# seeded by no visible segment, so it still never appears.
+		var badj := {}   # endpoint key -> segment indices touching it
+		for i in raw.size():
+			for kk in [_bq(raw[i][0]), _bq(raw[i][1])]:
+				if not badj.has(kk):
+					badj[kk] = []
+				badj[kk].append(i)
+		var keep: Array = raw_vis.duplicate()
+		for _pass in BORDER_HOLE_BRIDGE:
+			var to_add: Array = []
+			for i in raw.size():
+				if keep[i]:
+					continue
+				var touches := false
+				for kk in [_bq(raw[i][0]), _bq(raw[i][1])]:
+					for j in badj[kk]:
+						if keep[j]:
+							touches = true
+							break
+					if touches:
+						break
+				if touches:
+					to_add.append(i)
+			for i in to_add:
+				keep[i] = true
+		var esegs: Array = []
+		for i in raw.size():
+			if keep[i]:
+				esegs.append(raw[i])
 		# Chain the visible segments into connected polylines, inset each toward the
 		# empire's interior (so a shared seam shows both colours side by side), then
 		# Chaikin-smooth so the grid faceting rounds off into a curve.
@@ -1312,11 +1351,14 @@ func _draw_galaxy() -> void:
 		# Nebula body: layered soft discs down the spine, from a wide cool indigo breath
 		# inward to a warm magenta core. Overlapping glows accumulate toward the centre,
 		# so the storm reads as a turbulent charged cloud with depth — not a flat sausage.
+		# Alphas are up from the old whisper-faint set: the storm blocks sight, so the fog
+		# under it is black, and a too-thin haze read as a dark void with a purple fringe.
+		# A fuller cloud paints over that footprint so the storm reads as a glowing nebula.
 		var haze := [
-			[1.18, Color(0.22, 0.15, 0.38, 0.045)],   # cool indigo outer breath
-			[0.94, Color(0.33, 0.19, 0.47, 0.065)],
-			[0.68, Color(0.47, 0.24, 0.56, 0.085)],
-			[0.44, Color(0.63, 0.31, 0.62, 0.11)],    # warm magenta core
+			[1.15, Color(0.26, 0.17, 0.42, 0.11)],    # cool indigo outer breath
+			[0.90, Color(0.39, 0.21, 0.52, 0.16)],
+			[0.62, Color(0.54, 0.27, 0.60, 0.21)],
+			[0.40, Color(0.72, 0.36, 0.66, 0.27)],    # warm magenta core
 		]
 		for h in haze:
 			var hr: float = ar * (h[0] as float)
@@ -1387,10 +1429,13 @@ func _draw_galaxy() -> void:
 				sys.citadel_empire_id)
 			var owner: int = _system_owner.get(sys.id, -1)
 			if owner != -1:
-				draw_arc(sys.map_pos, 13.0 * sscale, 0.0, TAU, 40,
-					sim.empires[owner].color, 2.0, true)
-			if capitals.has(sys.id):
-				_draw_capital_mark(sys.map_pos, capitals[sys.id], sscale)
+				# A capital's owner ring is drawn as a 5-point STAR outline instead of a
+				# circle — the seat of the empire reads at a glance, no floating glyph.
+				if capitals.has(sys.id):
+					_draw_capital_ring(sys.map_pos, sim.empires[owner].color, 15.0 * sscale)
+				else:
+					draw_arc(sys.map_pos, 13.0 * sscale, 0.0, TAU, 40,
+						sim.empires[owner].color, 2.0, true)
 			if _galaxy_cam_zoom >= LABEL_ZOOM:
 				if cc > 0:
 					draw_string(font, sys.map_pos + Vector2(14.0, -12.0), str(cc),
@@ -1417,6 +1462,10 @@ func _draw_galaxy() -> void:
 						HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.5, 0.7, 0.55, 0.6))
 				_draw_name(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
 					Color(1, 1, 1, 0.5))
+		# Setting: draw this system's deposit glyph always (not just on hover). The
+		# hovered system already shows the full symbol row, so skip it here.
+		if _always_show_resources and sys.id != _hover_system:
+			_draw_resource_hint(sys, live)
 
 	# Combat indicators (for systems the player can see): a LIVE battle or bombardment
 	# pulses persistently and distinctly; recently-ended combat leaves a fading
@@ -1745,8 +1794,12 @@ func _draw_name(font: Font, pos: Vector2, text: String, col: Color) -> void:
 
 
 # Water deposit — a teardrop (pointed top, round bulb) with a rim and a highlight glint.
-func _draw_water_drop(c: Vector2) -> void:
-	var body := Color(0.35, 0.72, 1.0)
+# mined = worked, drawn in full blue; unworked deposits are drawn greyscale so a glance
+# tells tapped-vs-untapped without a frame.
+func _draw_water_drop(c: Vector2, mined := true) -> void:
+	var body := Color(0.35, 0.72, 1.0) if mined else Color(0.52, 0.55, 0.60)
+	var rim := Color(0.85, 0.95, 1.0, 0.7) if mined else Color(0.78, 0.80, 0.84, 0.6)
+	var glint := Color(1, 1, 1, 0.8) if mined else Color(1, 1, 1, 0.45)
 	var drop := PackedVector2Array([
 		c + Vector2(0.0, -6.0),
 		c + Vector2(2.1, -2.4), c + Vector2(3.7, 1.1), c + Vector2(3.0, 3.6),
@@ -1754,25 +1807,26 @@ func _draw_water_drop(c: Vector2) -> void:
 		c + Vector2(-3.0, 3.6), c + Vector2(-3.7, 1.1), c + Vector2(-2.1, -2.4)])
 	draw_colored_polygon(drop, body)
 	draw_polyline(PackedVector2Array([drop[0], drop[1], drop[2], drop[3], drop[4],
-		drop[5], drop[6], drop[7], drop[0]]), Color(0.85, 0.95, 1.0, 0.7), 1.0)
-	draw_circle(c + Vector2(-1.1, 1.4), 1.1, Color(1, 1, 1, 0.8))   # glint
+		drop[5], drop[6], drop[7], drop[0]]), rim, 1.0)
+	draw_circle(c + Vector2(-1.1, 1.4), 1.1, glint)   # glint
 
 
 # Mineral deposit — an upright faceted gem (diamond with a lighter top facet + rim).
-func _draw_gem(c: Vector2) -> void:
+# mined = worked, drawn in full amber; unworked is greyscale (see _draw_water_drop).
+func _draw_gem(c: Vector2, mined := true) -> void:
+	var body := Color(0.9, 0.58, 0.28) if mined else Color(0.54, 0.55, 0.58)
+	var facet := Color(1.0, 0.78, 0.42) if mined else Color(0.74, 0.76, 0.80)
+	var rim := Color(1.0, 0.85, 0.55, 0.7) if mined else Color(0.82, 0.84, 0.88, 0.6)
 	var top := c + Vector2(0.0, -5.2)
 	var rgt := c + Vector2(4.6, -0.6)
 	var bot := c + Vector2(0.0, 5.2)
 	var lft := c + Vector2(-4.6, -0.6)
 	var mrgt := c + Vector2(2.3, -0.6)
 	var mlft := c + Vector2(-2.3, -0.6)
-	draw_colored_polygon(PackedVector2Array([top, rgt, bot, lft]),
-		Color(0.9, 0.58, 0.28))                                    # gem body
-	draw_colored_polygon(PackedVector2Array([top, rgt, mrgt, mlft]),
-		Color(1.0, 0.78, 0.42))                                    # brighter top-right facet
-	draw_polyline(PackedVector2Array([top, rgt, bot, lft, top]),
-		Color(1.0, 0.85, 0.55, 0.7), 1.0)
-	draw_line(lft, rgt, Color(1.0, 0.85, 0.55, 0.5), 1.0)          # girdle line
+	draw_colored_polygon(PackedVector2Array([top, rgt, bot, lft]), body)   # gem body
+	draw_colored_polygon(PackedVector2Array([top, rgt, mrgt, mlft]), facet) # top-right facet
+	draw_polyline(PackedVector2Array([top, rgt, bot, lft, top]), rim, 1.0)
+	draw_line(lft, rgt, Color(rim.r, rim.g, rim.b, 0.5), 1.0)              # girdle line
 
 
 # Structure badges: a system's built structures shown as a tidy centred row of
@@ -1821,18 +1875,6 @@ func _draw_structure_badges(center: Vector2, depot_id: int, obs_id: int,
 					draw_rect(Rect2(p + Vector2(mx, -3.0), Vector2(2.0, 2.0)), col)
 
 
-# A mine: four owner-colour corner brackets framing the planet glyph (a "claimed and
-# worked" tag) instead of a square over it, so the deposit shape stays readable.
-func _draw_mine_mark(c: Vector2, col: Color) -> void:
-	var r := 6.0    # half-size of the frame (glyphs span ~5px, so this clears them)
-	var t := 2.2    # tick length of each corner L
-	for sx in [-1.0, 1.0]:
-		for sy in [-1.0, 1.0]:
-			var corner := c + Vector2(sx * r, sy * r)
-			draw_line(corner, corner + Vector2(-sx * t, 0.0), col, 1.5)
-			draw_line(corner, corner + Vector2(0.0, -sy * t), col, 1.5)
-
-
 # A soft white radial disc: alpha falls off from the centre so, linear-filtered, it
 # has no hard edge to alias. Tinted at draw time, it's every star's glow and core.
 func _make_glow_texture(size: int = 64) -> ImageTexture:
@@ -1867,24 +1909,19 @@ func _draw_star(pos: Vector2, col: Color, intensity: float, scale := 1.0) -> voi
 	_draw_glow(pos, (2.4 + 0.6 * intensity) * scale, Color(1, 1, 1, 0.9 * intensity))
 
 
-# A five-pointed star badge marking an empire's CAPITAL (its most-populated system —
-# where its ships are built). Floated above the system so it never hides the star or
-# clashes with structure badges; filled bright with a soft halo and a dark rim so it
-# reads instantly as the seat of the empire — a proper star, not a ring.
-func _draw_capital_mark(pos: Vector2, col: Color, scale := 1.0) -> void:
-	var center := pos + Vector2(0.0, -22.0 - 12.0 * scale)   # crown, clear of the badges
-	var ro := 9.0                    # fixed size → an even, legible star at any zoom
-	var ri := ro * 0.4               # deep valleys so it always reads as a 5-point star
+# An empire's CAPITAL (its most-populated system — where its ships are built) gets its
+# owner ring drawn as a 5-point STAR outline instead of a circle, so the seat of the
+# empire reads instantly without a separate glyph floated above the star body.
+func _draw_capital_ring(pos: Vector2, col: Color, radius: float) -> void:
+	var ro: float = radius           # star tips
+	var ri: float = radius * 0.46    # valleys — deep enough to read as a 5-point star
 	var star := PackedVector2Array()
-	for i in 10:   # 5 tips + 5 valleys, first point straight up
+	for i in 11:   # 5 tips + 5 valleys, first point straight up, +1 to close the outline
 		var ang: float = -PI / 2.0 + float(i) * PI / 5.0
 		var r: float = ro if i % 2 == 0 else ri
-		star.append(center + Vector2(cos(ang), sin(ang)) * r)
-	_draw_glow(center, ro * 1.8, Color(col.r, col.g, col.b, 0.35))   # soft halo
-	draw_colored_polygon(star, col.lerp(Color.WHITE, 0.5))           # bright filled star
-	var rim := star.duplicate()
-	rim.append(star[0])
-	draw_polyline(rim, col.darkened(0.45), 1.2, true)                # crisp dark rim
+		star.append(pos + Vector2(cos(ang), sin(ang)) * r)
+	draw_polyline(star, col.darkened(0.4), 3.0, true)   # dark backing for contrast
+	draw_polyline(star, col, 2.0, true)                 # crisp owner-colour star ring
 
 
 func _draw_system_symbols(sys: StarSystem) -> void:
@@ -1921,25 +1958,47 @@ func _draw_system_symbols(sys: StarSystem) -> void:
 				draw_arc(c, 5.0, 0.0, TAU, 16, Color(1, 1, 1, 0.7), 1.0)
 		elif p.has_deposit():
 			# Shape-coded so each reads without relying on colour: water = a teardrop,
-			# minerals = a faceted gem.
+			# minerals = a faceted gem. Full colour when the deposit is WORKED (a mine),
+			# greyscale when untapped — so tapped-vs-untapped reads at a glance without
+			# the old corner-bracket frame that mashed the glyph.
+			var mined: bool = has_mine and mine_owner != -1
 			if p.deposit_type == SimConstants.Deposit.WATER:
-				_draw_water_drop(c)
+				_draw_water_drop(c, mined)
 			else:
-				_draw_gem(c)
+				_draw_gem(c, mined)
+			if mined:
+				# A small owner-colour pip above the glyph keeps WHO works it legible,
+				# without drawing a frame around the deposit shape.
+				draw_circle(c + Vector2(0.0, -8.0), 1.7, sim.empires[mine_owner].color)
 		else:
 			draw_circle(c, 2.5, Color(0.5, 0.5, 0.55))
-		if has_mine and mine_owner != -1:
-			# Mine: owner-colour corner brackets that FRAME the deposit/colony glyph
-			# rather than a square drawn on top of it. The old centred 7x7 square cut
-			# straight through the teardrop/gem, mashing the deposit mark into an
-			# unreadable clump once a mine was built; brackets say "this deposit is
-			# worked, by empire X" while leaving the shape underneath intact.
-			_draw_mine_mark(c, sim.empires[mine_owner].color)
 		i += 1
 	if depot_owner != -1:
 		var dcpos := start + Vector2(i * step, 0)
 		draw_rect(Rect2(dcpos + Vector2(-4, -4), Vector2(8, 8)),
 			sim.empires[depot_owner].color)
+
+
+# Compact per-system deposit glyph for the "always show resources" setting: just the
+# water/gem shape (mined = colour, untapped = greyscale) centred below the star, no
+# colony/depot row. Uses live mine state in VR, else the last-seen snapshot.
+func _draw_resource_hint(sys: StarSystem, live: bool) -> void:
+	var snap_planets: Dictionary = _stale.get(sys.id, {}).get("planets", {})
+	for pid in sys.planet_ids:
+		var p: Planet = sim.planets[pid]
+		if not p.has_deposit():
+			continue
+		var pinfo: Dictionary = snap_planets.get(pid, {})
+		var has_mine: bool = p.has_mine() if live else pinfo.get("mine", false)
+		var mine_owner: int = p.mine_empire_id if live else pinfo.get("mine_owner", -1)
+		var mined: bool = has_mine and mine_owner != -1
+		var c: Vector2 = sys.map_pos + Vector2(0.0, 26.0)
+		if p.deposit_type == SimConstants.Deposit.WATER:
+			_draw_water_drop(c, mined)
+		else:
+			_draw_gem(c, mined)
+		if mined:
+			draw_circle(c + Vector2(0.0, -8.0), 1.7, sim.empires[mine_owner].color)
 
 
 # --- generated tier icons (the fallback font has no dice/numeral glyphs) -------------
@@ -2334,6 +2393,13 @@ func _build_menu_overlay(layer: CanvasLayer) -> void:
 		if controls_page != null:
 			controls_page.open())
 	v.add_child(controls_btn)
+	var res_toggle := CheckButton.new()
+	res_toggle.text = "Always show resources"
+	res_toggle.button_pressed = _always_show_resources
+	res_toggle.toggled.connect(func(on: bool) -> void:
+		_always_show_resources = on
+		queue_redraw())
+	v.add_child(res_toggle)
 	var quit := Button.new()
 	quit.text = "Quit to menu"
 	quit.pressed.connect(func() -> void:
@@ -2989,6 +3055,7 @@ func _autoshot() -> void:
 	# density and node legibility up close (the full-galaxy shot is too far out for that).
 	view_system_id = -1
 	selected_planet_id = -1
+	_always_show_resources = true   # verify the always-on deposit glyphs + mined/untapped scheme
 	_galaxy_cam_pos = home.map_pos
 	_galaxy_cam_zoom = 2.5
 	_apply_camera()
@@ -2997,6 +3064,7 @@ func _autoshot() -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://autoshot_zoom.png")
+	_always_show_resources = false
 	# Fourth shot: a content-heavy OWN-city panel — the worst case for panel overflow
 	# (established city + own mine + specialization + all three system structures still
 	# buildable = the most action buttons at once). This is what the panel ScrollContainer

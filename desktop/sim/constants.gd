@@ -271,8 +271,8 @@ const MAP_MIN_SEPARATION := 90.0
 # points, thickened by ANOMALY_RADIUS. Count scales a little with map size.
 const ANOMALY_MIN := 2
 const ANOMALY_MAX := 6
-const ANOMALY_RADIUS_MIN := 42.0         # band half-width (thinner than the old blobs)
-const ANOMALY_RADIUS_MAX := 78.0
+const ANOMALY_RADIUS_MIN := 30.0         # band half-width — tighter so the sight-block
+const ANOMALY_RADIUS_MAX := 54.0         # footprint (the dark halo) stays a slim corridor
 const ANOMALY_STEPS_MIN := 5             # spine points — more = longer snake
 const ANOMALY_STEPS_MAX := 7             # was 9 — shorter snakes so one storm can't span the map
 const ANOMALY_STEP_LEN := 130.0          # spine segment length
