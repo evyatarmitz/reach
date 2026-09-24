@@ -1249,11 +1249,54 @@ func builder_position(b: Dictionary) -> Vector2:
 	return systems[b.sys].map_pos.lerp(systems[b.path[0]].map_pos, b.prog)
 
 
+# True if a construction vessel can no longer legally reach its target. Mutates
+# b.path to reroute around freshly-hostile intermediate systems when a friendly
+# path still exists (so a vessel bends around an advancing border instead of
+# ploughing through it). Enemy = a system owned by any empire other than eid.
+func _builder_route_blocked(b: Dictionary, eid: int, tsys: int) -> bool:
+	# Stranded: the player (or another rival) overran the system the vessel is in.
+	var here := owner_cached(b.sys)
+	if here != -1 and here != eid:
+		return true
+	# The target system itself turned hostile — can't deliver without invading.
+	var to := owner_cached(tsys)
+	if tsys != b.sys and to != -1 and to != eid:
+		return true
+	# Any hop still ahead (bar the target) that turned hostile forces a reroute.
+	var needs_reroute := false
+	for sid in b.path:
+		if sid == tsys:
+			continue
+		var o := owner_cached(sid)
+		if o != -1 and o != eid:
+			needs_reroute = true
+			break
+	if needs_reroute:
+		if b.sys == tsys:
+			b.path = []   # already home; let the arrival branch place it
+			return false
+		var route := lane_path_friendly(b.sys, tsys, eid)
+		if route.is_empty():
+			return true   # no friendly way through — scrap it
+		b.path = route
+	return false
+
+
 # Move vessels a tick; when one reaches its target system, place the structure (or
 # refund if the target is no longer valid). Called from tick().
 func _advance_builders(dt_days: float) -> void:
 	var done: Array = []
+	var scrapped: Array = []
 	for b in builders:
+		var eid: int = b.eid
+		var tsys := _target_system_of(b.type, b.target)
+		# A civilian vessel can't cross enemy territory, and borders MOVE while it's
+		# in flight — the route computed at dispatch goes stale the moment an empire's
+		# influence advances across it. Re-check every tick: reroute around new enemy
+		# ground if a friendly path still exists, else scrap the vessel and refund.
+		if tsys == -1 or _builder_route_blocked(b, eid, tsys):
+			scrapped.append(b)
+			continue
 		if not b.path.is_empty():
 			var length: float = maxf(system_distance(b.sys, b.path[0]), 1.0)
 			b.prog += SimConstants.BUILDER_SPEED * dt_days / length
@@ -1262,6 +1305,9 @@ func _advance_builders(dt_days: float) -> void:
 				b.prog = 0.0
 		if b.path.is_empty():   # arrived at the target system
 			done.append(b)
+	for b in scrapped:
+		builders.erase(b)
+		_pay(b.eid, 0, -_construction_cost(b.type))   # nothing built — refund dispatch
 	for b in done:
 		builders.erase(b)
 		var eid: int = b.eid

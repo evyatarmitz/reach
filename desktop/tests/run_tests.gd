@@ -1042,6 +1042,41 @@ func _test_construction_vessel() -> void:
 	check(not s2.can_order_construction(me.id, SimConstants.Build.COLONY, tb),
 		"a vessel can't be dispatched through enemy territory")
 
+	# A vessel legally dispatched must NOT sail on through a corridor an enemy seizes
+	# AFTER it launched — the dispatch-time path goes stale as borders move. With no
+	# friendly detour it scraps in flight and refunds, rather than crossing.
+	var s3 := Sim.new()
+	var m3 := s3.add_empire("Me", Color.BLUE)
+	m3.nat[0] = 100000.0
+	m3.minerals = 0.0   # no raw input → no refining, so the refund is the only nat[0] change
+	m3.water_income = 100000.0
+	var f3 := s3.add_empire("Foe", Color.RED)
+	var a3 := s3.add_system("A")   # my capital
+	a3.map_pos = Vector2.ZERO
+	var b3 := s3.add_system("B")   # corridor (mine at dispatch, foe-seized mid-flight)
+	b3.map_pos = Vector2(100, 0)
+	var c3 := s3.add_system("C")   # my outpost + the ore I'm sending a mine vessel to
+	c3.map_pos = Vector2(200, 0)
+	s3.add_lane(a3.id, b3.id)
+	s3.add_lane(b3.id, c3.id)
+	# Unestablished so they still project influence but never refine — refining would
+	# drain nat[0] upward into T2 and hide the exact refund.
+	s3.inject_colony(m3.id, s3.add_planet(a3.id, "a").id, 1000.0, false)
+	s3.inject_colony(m3.id, s3.add_planet(c3.id, "c").id, 300.0, false)
+	var ore := s3.add_planet(c3.id, "ore")
+	ore.deposit_type = SimConstants.Deposit.MINERAL
+	check(s3.order_construction(m3.id, SimConstants.Build.MINE, ore.id),
+		"a mine vessel dispatches to a target reachable at launch")
+	var nat_after: float = m3.nat[0]
+	# Foe pop 600: self-claim 15 seizes B (my best claim there is 10) but stays under
+	# my hold on A (25) and C (7.5), so ONLY the corridor flips — no detour exists.
+	s3.inject_colony(f3.id, s3.add_planet(b3.id, "fb").id, 600.0, true)
+	run_days(s3, 40.0)
+	check(s3.builders.is_empty(), "the vessel does not sail on through the seized corridor")
+	check(s3.planets[ore.id].mine_empire_id == -1, "the blocked mine is never delivered")
+	check(is_equal_approx(m3.nat[0], nat_after + SimConstants.MINE_COST_ALLOYS),
+		"a vessel scrapped in flight refunds its dispatch cost")
+
 
 func _test_anomalies() -> void:
 	var sim := Sim.new()
