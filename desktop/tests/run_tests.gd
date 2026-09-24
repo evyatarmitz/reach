@@ -146,6 +146,39 @@ func _test_procedural() -> void:
 	cfg2.seed = 999
 	var c := Sim.generate_map(cfg2)
 	check(_is_connected(c), "a different seed is also fully connected")
+	# Lane density: min (0) = a spanning tree (connected, exactly n-1 lanes); max (1) =
+	# more lanes, still connected, and NEVER any crossing pair (planar Delaunay set).
+	var sparse_cfg: Dictionary = Sim.default_map_config()
+	sparse_cfg.lane_density = 0.0
+	var sparse := Sim.generate_map(sparse_cfg)
+	check(_is_connected(sparse), "min lane density is still one connected mesh (no islands)")
+	check(sparse.lanes.size() == sparse.systems.size() - 1,
+		"min lane density is a spanning tree (n-1 lanes)")
+	var dense_cfg: Dictionary = Sim.default_map_config()
+	dense_cfg.lane_density = 1.0
+	var dense := Sim.generate_map(dense_cfg)
+	check(_is_connected(dense), "max lane density is still connected")
+	check(dense.lanes.size() > sparse.lanes.size(),
+		"more density means more lanes")
+	check(_no_lane_crossings(dense), "lanes never cross (planar lane graph)")
+
+
+# True if no two lanes cross (share no endpoint yet their segments intersect). The lane
+# graph must stay planar at every density — the "no crossover" map rule.
+func _no_lane_crossings(sim: Sim) -> bool:
+	for a in sim.lanes.size():
+		var la: Array = sim.lanes[a]
+		var p1: Vector2 = sim.systems[la[0]].map_pos
+		var p2: Vector2 = sim.systems[la[1]].map_pos
+		for b in range(a + 1, sim.lanes.size()):
+			var lb: Array = sim.lanes[b]
+			if la[0] == lb[0] or la[0] == lb[1] or la[1] == lb[0] or la[1] == lb[1]:
+				continue   # shared endpoint: touching is not crossing
+			var p3: Vector2 = sim.systems[lb[0]].map_pos
+			var p4: Vector2 = sim.systems[lb[1]].map_pos
+			if Geometry2D.segment_intersects_segment(p1, p2, p3, p4) != null:
+				return false
+	return true
 
 
 func _test_founding() -> void:

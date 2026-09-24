@@ -66,7 +66,8 @@ static func default_map_config() -> Dictionary:
 		"seed": 20260702,
 		"system_count": 120,      # planets now (one per node); size derives from this
 		"empire_count": 4,
-		"extra_lane_neighbors": 2,# lanes beyond the spanning tree (loops/chokepoints)
+		"lane_density": 0.35,     # 0 = spanning tree only (one connected wire); 1 = every
+		                          # planar near-neighbour lane (Delaunay), no crossings
 		"ai_efficiency": 1.0,     # difficulty: AI production multiplier
 	}
 
@@ -85,9 +86,10 @@ static func _merged_config(cfg: Dictionary) -> Dictionary:
 
 
 # Procedural map: systems scattered by a variable-density heatmap, connected by a
-# minimum spanning tree (guarantees NO disconnected parts) plus a few nearest-
-# neighbor lanes for loops/chokepoints, then N empires placed far apart. Seeded
-# RNG only — same config -> identical map, so the sim stays deterministic.
+# Delaunay lane graph (planar — NO crossing lanes) whose density the player sets: a
+# spanning tree at minimum (one connected wire, guaranteeing NO islands) up to every
+# near-neighbour lane at maximum. Then N empires placed far apart. Seeded RNG only —
+# same config -> identical map, so the sim stays deterministic.
 static func generate_map(cfg_in: Dictionary) -> Sim:
 	var cfg := _merged_config(cfg_in)
 	var sim := Sim.new()
@@ -142,7 +144,7 @@ static func generate_map(cfg_in: Dictionary) -> Sim:
 			pl.deposit_type = SimConstants.Deposit.WATER if rng.randf() < 0.5 \
 				else SimConstants.Deposit.MINERAL
 
-	_connect_systems(sim, sys_ids, positions, int(cfg.extra_lane_neighbors))
+	_connect_systems(sim, sys_ids, positions, float(cfg.lane_density))
 	_place_anomalies(sim, positions, size, rng)
 	_place_empires(sim, sys_ids, positions, int(cfg.empire_count),
 		float(cfg.ai_efficiency))
@@ -206,45 +208,92 @@ static func _place_anomalies(sim: Sim, positions: Array, size: Vector2,
 
 # Minimum spanning tree (Prim) so the whole map is one connected component, plus
 # each system's nearest few extra lanes for loops and chokepoints.
+# Lanes from a Delaunay triangulation of the node positions: its edges are exactly the
+# near-neighbour connections, and being a triangulation they NEVER cross. Kruskal picks a
+# minimum spanning tree out of those edges (always kept — one connected mesh, no islands).
+# `density` in [0,1] then fills in the remaining Delaunay edges shortest-first, up to a
+# radius cap, so min = a single wire and max = every planar near-neighbour lane.
 static func _connect_systems(sim: Sim, sys_ids: Array, positions: Array,
-		extra: int) -> void:
+		density: float) -> void:
 	var n := sys_ids.size()
 	if n < 2:
 		return
-	var added := {0: true}
-	while added.size() < n:
-		var best_i := -1
-		var best_j := -1
-		var best_d := INF
-		for i in added:
-			for j in n:
-				if added.has(j):
-					continue
-				var d: float = positions[i].distance_to(positions[j])
-				if d < best_d:
-					best_d = d
-					best_i = i
-					best_j = j
-		sim.add_lane(sys_ids[best_i], sys_ids[best_j])
-		added[best_j] = true
+	if n == 2:
+		sim.add_lane(sys_ids[0], sys_ids[1])
+		return
+	var pts := PackedVector2Array()
+	for p in positions:
+		pts.append(p)
+	# Unique undirected Delaunay edges as [dist, i, j], shortest first. Degenerate inputs
+	# (all-collinear) yield no triangles — fall back to a nearest-neighbour candidate set.
+	var tris := Geometry2D.triangulate_delaunay(pts)
+	var seen := {}
+	var edges: Array = []
+	if tris.size() >= 3:
+		for t in range(0, tris.size(), 3):
+			var tri: Array = [tris[t], tris[t + 1], tris[t + 2]]
+			for e in [[tri[0], tri[1]], [tri[1], tri[2]], [tri[2], tri[0]]]:
+				var i: int = mini(e[0], e[1])
+				var j: int = maxi(e[0], e[1])
+				var key: int = i * n + j
+				if not seen.has(key):
+					seen[key] = true
+					edges.append([positions[i].distance_to(positions[j]), i, j])
+	else:
+		for i in n:
+			for j in range(i + 1, n):
+				edges.append([positions[i].distance_to(positions[j]), i, j])
+	edges.sort()   # by distance, then i, then j -> deterministic
 
-	var laneset := {}
-	for l in sim.lanes:
-		var ia: int = sys_ids.find(l[0])
-		var ib: int = sys_ids.find(l[1])
-		laneset["%d-%d" % [mini(ia, ib), maxi(ia, ib)]] = true
+	# Kruskal MST over the candidate edges: always connects the whole map (no islands).
+	var parent: Array = []
 	for i in n:
-		var order: Array = []
-		for j in n:
-			if j != i:
-				order.append([positions[i].distance_to(positions[j]), j])
-		order.sort()
-		for k in mini(extra, order.size()):
-			var j: int = order[k][1]
-			var key := "%d-%d" % [mini(i, j), maxi(i, j)]
-			if not laneset.has(key):
-				laneset[key] = true
-				sim.add_lane(sys_ids[i], sys_ids[j])
+		parent.append(i)
+	var in_mst := {}
+	var mst_edges := 0
+	for e in edges:
+		if mst_edges >= n - 1:
+			break
+		var ri: int = _uf_find(parent, e[1])
+		var rj: int = _uf_find(parent, e[2])
+		if ri != rj:
+			parent[ri] = rj
+			in_mst[e[1] * n + e[2]] = true
+			mst_edges += 1
+
+	# Non-MST candidates, shortest first, capped to a "not too big" radius (a multiple of
+	# the median candidate length) so max density is dense-but-local, never map-spanning.
+	var extras: Array = []
+	for e in edges:
+		if not in_mst.has(e[1] * n + e[2]):
+			extras.append(e)
+	var cap := INF
+	if not edges.is_empty():
+		cap = float(edges[edges.size() / 2][0]) * 2.2
+	var eligible: Array = []
+	for e in extras:
+		if e[0] <= cap:
+			eligible.append(e)
+	var take: int = int(round(clampf(density, 0.0, 1.0) * float(eligible.size())))
+
+	for key in in_mst:
+		# key = i*n + j -> recover endpoints
+		sim.add_lane(sys_ids[key / n], sys_ids[key % n])
+	for k in take:
+		var e: Array = eligible[k]
+		sim.add_lane(sys_ids[e[1]], sys_ids[e[2]])
+
+
+# Union-find with path compression (iterative — GDScript has no tail-call).
+static func _uf_find(parent: Array, x: int) -> int:
+	var root := x
+	while parent[root] != root:
+		root = parent[root]
+	while parent[x] != root:
+		var nxt: int = parent[x]
+		parent[x] = root
+		x = nxt
+	return root
 
 
 # Place empires at maximally-separated planets (greedy farthest-point). First

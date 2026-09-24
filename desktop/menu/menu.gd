@@ -23,6 +23,8 @@ var _size_slider_row: HBoxContainer
 var _size_val_label: Label
 var _empire_opt: OptionButton
 var _diff_opt: OptionButton
+var _lane_slider: HSlider
+var _lane_val_label: Label
 var _stars: Array = []   # backdrop starfield [pos, radius, Color]
 var _controls_page: Control
 var _updater: Node
@@ -133,6 +135,28 @@ func _ready() -> void:
 	_settings_box.add_child(_size_slider_row)
 	_empire_opt = _labeled_option("Empires", EMPIRES.map(func(n): return str(n)), 2)
 	_diff_opt = _labeled_option("Difficulty", DIFFS.map(func(d): return d[0]), 1)
+	# Lane density: how many hyperlanes connect the stars. 0% = a single spanning tree
+	# (one connected wire, no islands); 100% = every planar near-neighbour lane. The map
+	# stays a single connected mesh at every setting.
+	var lane_row := HBoxContainer.new()
+	var llabel := Label.new()
+	llabel.text = "Lane density"
+	llabel.custom_minimum_size = Vector2(120, 0)
+	lane_row.add_child(llabel)
+	_lane_slider = HSlider.new()
+	_lane_slider.min_value = 0
+	_lane_slider.max_value = 100
+	_lane_slider.step = 5
+	_lane_slider.value = 35
+	_lane_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lane_row.add_child(_lane_slider)
+	_lane_val_label = Label.new()
+	_lane_val_label.text = "35%"
+	_lane_val_label.custom_minimum_size = Vector2(44, 0)
+	_lane_slider.value_changed.connect(func(v: float) -> void:
+		_lane_val_label.text = "%d%%" % int(v))
+	lane_row.add_child(_lane_val_label)
+	_settings_box.add_child(lane_row)
 	var start := _big_button("Start")
 	start.pressed.connect(_on_start)
 	_settings_box.add_child(start)
@@ -268,6 +292,7 @@ func _on_start() -> void:
 		"system_count": count,
 		"empire_count": EMPIRES[_empire_opt.selected],
 		"ai_efficiency": DIFFS[_diff_opt.selected][1],
+		"lane_density": _lane_slider.value / 100.0,
 		"seed": randi(),
 	}
 	get_tree().change_scene_to_file("res://game/main.tscn")
