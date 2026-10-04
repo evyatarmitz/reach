@@ -139,6 +139,14 @@ var event_label: Label          # top-left feed of recent autonomous events
 var _events: Array = []         # [day, text] recent events, newest last
 var _prev_pcolonies: Dictionary = {}  # planet_id -> system_id, player's colonies
 var _seen_combat: Dictionary = {}     # system_id -> last combat day already logged
+var _prev_pstructs: Dictionary = {}   # "sid:kind" -> system_id, player-owned structures last scan
+# Location-anchored alerts (lost building/colony, colony under siege) for the bottom
+# jump bar. Separate from _events: these carry a system to fly the camera to, and are
+# windowed by wall-clock seconds (what the player actually experiences), not sim days.
+var _alerts: Array = []               # [{"t": ms, "text": String, "sid": int}], oldest first
+var _alert_idx := 0                   # next alert the jump button will fly to (oldest->newest)
+var alert_btn: Button                 # bottom-center "N alerts — jump" button
+const ALERT_WINDOW_MS := 18000.0      # keep alerts from the last ~18s
 var speed_buttons: Array[Button] = []
 var panel: PanelContainer
 var ship_panel: PanelContainer   # top-right shipyard; the selection panel docks below it
@@ -384,7 +392,27 @@ func _scan_events() -> void:
 				var sid: int = _prev_pcolonies[pid]
 				var nm: String = sim.systems[sid].name if sim.systems.has(sid) else "?"
 				_log_event("✖ Colony lost at %s" % nm)
+				_push_alert("✖ Colony lost at %s" % nm, sid)
 	_prev_pcolonies = now
+	# Player buildings lost (razed on border loss, or transferred away). One alert per
+	# structure that was ours last scan and isn't now.
+	var pstructs := {}
+	for sid2 in sim.systems:
+		var s2 = sim.systems[sid2]
+		if s2.depot_empire_id == player_empire_id:    pstructs["%d:depot" % sid2] = sid2
+		if s2.obs_post_empire_id == player_empire_id: pstructs["%d:obs" % sid2] = sid2
+		if s2.imperial_empire_id == player_empire_id: pstructs["%d:imperial" % sid2] = sid2
+		if s2.citadel_empire_id == player_empire_id:  pstructs["%d:citadel" % sid2] = sid2
+	if not _prev_pstructs.is_empty():
+		var kind_name := {"depot": "supply depot", "obs": "observatory",
+			"imperial": "imperial center", "citadel": "citadel"}
+		for key in _prev_pstructs:
+			if not pstructs.has(key):
+				var sid3: int = _prev_pstructs[key]
+				var nm2: String = sim.systems[sid3].name if sim.systems.has(sid3) else "?"
+				var kind: String = kind_name.get(String(key).split(":")[1], "building")
+				_push_alert("⌂ Lost %s at %s" % [kind, nm2], sid3)
+	_prev_pstructs = pstructs
 	# Combat at systems the player can currently see. Battle (enemy fleets clashing) and
 	# bombardment (a lone fleet grinding a colony) are distinct mechanics everywhere else in
 	# the UI, so the feed distinguishes them too — combat_kind is fresh from this tick's
@@ -395,9 +423,58 @@ func _scan_events() -> void:
 			_seen_combat[sid] = d
 			if sim.combat_kind.get(sid, 0) == 1:
 				_log_event("☄ Bombardment at %s" % sim.systems[sid].name)
+				# Bombardment of one of OUR systems = a colony under siege: worth a jump alert.
+				if _system_has_player_colony(sid):
+					_push_alert("☄ Colony under siege at %s" % sim.systems[sid].name, sid)
 			else:
 				_log_event("⚔ Battle at %s" % sim.systems[sid].name)
 	_refresh_events()
+	_refresh_alerts()
+
+
+func _system_has_player_colony(sid: int) -> bool:
+	for pid in sim.systems[sid].planet_ids:
+		var c = sim.planets[pid].colony
+		if c != null and c.empire_id == player_empire_id:
+			return true
+	return false
+
+
+# Append a camera-jumpable alert and keep the list inside the wall-clock window.
+func _push_alert(text: String, sid: int) -> void:
+	_alerts.append({"t": Time.get_ticks_msec(), "text": text, "sid": sid})
+
+
+# Drop stale alerts, reset the cycle when the list empties, refresh the button label.
+func _refresh_alerts() -> void:
+	var nowt := float(Time.get_ticks_msec())
+	var kept: Array = []
+	for a in _alerts:
+		if nowt - float(a["t"]) <= ALERT_WINDOW_MS:
+			kept.append(a)
+	_alerts = kept
+	if _alert_idx >= _alerts.size():
+		_alert_idx = 0
+	if alert_btn != null:
+		if _alerts.is_empty():
+			alert_btn.visible = false
+		else:
+			alert_btn.visible = true
+			var cur: Dictionary = _alerts[_alert_idx]
+			alert_btn.text = "  ▸ %s   (%d/%d — click to fly)  " % [
+				cur["text"], _alert_idx + 1, _alerts.size()]
+
+
+# Fly the camera to the current alert's system, then advance to the next (oldest->newest).
+func _on_alert_pressed() -> void:
+	if _alerts.is_empty():
+		return
+	_alert_idx = clampi(_alert_idx, 0, _alerts.size() - 1)
+	var sid: int = _alerts[_alert_idx]["sid"]
+	if sim.systems.has(sid):
+		_galaxy_cam_pos = sim.systems[sid].map_pos
+	_alert_idx = (_alert_idx + 1) % _alerts.size()
+	_refresh_alerts()
 
 
 func _log_event(text: String) -> void:
@@ -2286,6 +2363,32 @@ func _build_ui() -> void:
 	event_label.modulate = Color(1, 0.9, 0.7, 0.85)
 	layer.add_child(event_label)
 
+	# Bottom-center alert bar: one button listing recent camera-jumpable alerts (lost
+	# building/colony, colony under siege). Each click flies to the next, oldest->newest.
+	alert_btn = Button.new()
+	alert_btn.visible = false
+	alert_btn.focus_mode = Control.FOCUS_NONE
+	alert_btn.add_theme_font_size_override("font_size", 14)
+	alert_btn.add_theme_color_override("font_color", Color(1.0, 0.86, 0.55))
+	var asb := StyleBoxFlat.new()
+	asb.bg_color = Color(0.14, 0.10, 0.06, 0.95)
+	asb.border_color = Color(0.85, 0.55, 0.2, 0.9)
+	asb.set_border_width_all(1)
+	asb.set_corner_radius_all(5)
+	asb.set_content_margin_all(7)
+	alert_btn.add_theme_stylebox_override("normal", asb)
+	alert_btn.add_theme_stylebox_override("hover", asb)
+	alert_btn.add_theme_stylebox_override("pressed", asb)
+	alert_btn.anchor_left = 0.5
+	alert_btn.anchor_right = 0.5
+	alert_btn.anchor_top = 1.0
+	alert_btn.anchor_bottom = 1.0
+	alert_btn.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	alert_btn.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	alert_btn.offset_bottom = -22.0
+	alert_btn.pressed.connect(_on_alert_pressed)
+	layer.add_child(alert_btn)
+
 	# Floating hover tooltip (Paradox-style). Raised above the HUD via z_index; never
 	# eats mouse input so it can't block clicks or its own hover target.
 	_tooltip_panel = PanelContainer.new()
@@ -3556,6 +3659,8 @@ func _autoshot() -> void:
 	_events.clear()            # drop the carried-over feed from the earlier poses
 	_prev_pcolonies = {}       # re-seed loss detection against the new sim (no false losses)
 	_seen_combat = {}
+	_prev_pstructs = {}
+	_alerts.clear(); _alert_idx = 0
 	selected_fleet_id = -1
 	selected_fleets.clear()
 	view_system_id = -1
@@ -3628,6 +3733,8 @@ func _autoshot() -> void:
 	_events.clear()
 	_prev_pcolonies = {}
 	_seen_combat = {}
+	_prev_pstructs = {}
+	_alerts.clear(); _alert_idx = 0
 	_hover_hold = false
 	_hover_system = -1
 	view_system_id = -1
