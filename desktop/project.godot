@@ -9,8 +9,15 @@ config/features=PackedStringArray("4.7")
 
 [display]
 
+; Base/min design size. The window opens MAXIMIZED (mode=2) so the 2D canvas renders at
+; the monitor's full native resolution instead of a fixed 1280x720 that the OS then
+; upscales — that upscaling was what made the map read "extremely pixelated" on big or
+; high-DPI screens. allow_hidpi keeps it rendering at true device pixels (no bitmap
+; stretch) on scaled displays. Stretch stays "disabled" (1:1), so it's always crisp.
 window/size/viewport_width=1280
 window/size/viewport_height=720
+window/size/mode=2
+window/dpi/allow_hidpi=true
 
 [rendering]
 

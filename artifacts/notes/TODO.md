@@ -4,6 +4,47 @@ New project, split from To Infinity (2026-07-02). This game is genuinely novel �
 nothing from the old codebase transfers directly, because the old build assumed an
 embodied player and direct entity control, and Reach has neither.
 
+## Shipped 2026-10-04 — imperial dial + fleet supply oxygen + speed dial + native-res
+
+Four-area feedback batch, one commit each, full suite + determinism green throughout.
+
+1. **Imperial center rework** (`c20dba2`) — single "dial" MenuButton (radio levels +
+   Demolish) replacing the up/down buttons; verbose text moved into the popup; the
+   flicker bug fixed (popup no longer rebuilt while open). Bonus now **winds up AND
+   down** gradually and symmetrically (`StarSystem.imperial_charge` 0..1 ramps over
+   `IMPERIAL_RAMP_DAYS`=10; effective bonus = level·10%·charge). The tier's alloy
+   stock is pushed genuinely **negative and rendered red** when starved. Selectable
+   level is **gated by colony size** (`max_imperial_level` vs MIL_CUTOFF), so it can't
+   be a cheap frontline weapon.
+2. **Fleet supply: free +1-hop grace + "oxygen" reserve** (`c6637e5`) — a fleet one lane
+   hop beyond its own border is now attrition-free with no depot (border skirmishes
+   stay free). `Fleet.foreign_days` (an out-of-supply timer) → `supply_reserve`
+   (`SUPPLY_RESERVE_DAYS`=18 days of endurance): it drains in unsafe space and attrition
+   only bites once it hits 0, refilling at `SUPPLY_REFILL_MULT`=3× in safe space. Sized
+   for a couple of jumps + a short battle before the clock. HUD: the old red "unsupplied
+   Nd" timer → amber "supply N%" that flips to red "OUT OF SUPPLY" when the reserve dries.
+3. **Speed control → 5-level chevron dial** (`fb25c6f`) — `SPEEDS`=[pause,1,2,4,7,10];
+   top bar is `[◀] ››››› [▶] readout`, chevrons lighting toward "+" by level (none lit =
+   paused), click a chevron to jump, arrows step and disable at the ends. +/- step the
+   dial on the main row (KEY_EQUAL/KEY_MINUS) as well as the numpad; Space still pauses.
+4. **Pixelation → native-resolution rendering** (this commit) — the game opened as a
+   fixed **1280×720** window that the OS upscaled on big/high-DPI screens (that's what
+   read as "extremely pixelated"). Now opens **maximized** (`window/size/mode=2`) with
+   explicit `allow_hidpi`, so the 2D canvas renders at the monitor's true resolution
+   (verified: autoshot went 1280×720 → 2560×1377, the whole map reads crisp). Stretch
+   stays "disabled" (1:1), so no UI scaling surprises.
+
+**Pixelation — remaining follow-ups (non-urgent, for a polish pass):**
+- The small vector bits are the last soft spots even at native res: the tiny fleet-arrow
+  glyph above a parked fleet, the ship-count stripes/stars, and the **emoji-style HUD
+  resource icons** (the little dice squares) which are glyph-rendered and read blocky.
+  Fixing the HUD icons = draw them as vector/procedural textures like the tier badges
+  already are (`_build_tier_icons`), medium effort; enlarging the fleet arrow a touch is
+  trivial. None are blockers now that the whole canvas is native-res.
+- At wide (2560) res the top-right **shipyard panel clips the "Bomber" column label** at
+  the screen edge — it was width-tuned for 1280. Give that panel a bit more min-width or
+  let the grid shrink its columns. Minor, polish-pass.
+
 ## Shipped 2026-10-04 — flicker fix + fleet crown + alert bar + imperial redesign
 
 Five-item batch, one commit each, full suite + determinism green throughout.
