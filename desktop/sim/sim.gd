@@ -1498,6 +1498,43 @@ func _fleet_supplied(f: Fleet) -> bool:
 	return false
 
 
+# Public wrapper: is this fleet currently within friendly supply range? (Renderer uses it
+# to flag an unsupplied fleet that's bleeding attrition in foreign space.)
+func fleet_supplied(f: Fleet) -> bool:
+	return _fleet_supplied(f)
+
+
+# The set of systems that are SAFE for an empire's fleets — no border attrition there.
+# A system is safe if the empire owns its border OR a friendly supply depot sits within
+# DEPOT_SUPPLY_JUMPS lane hops (multi-source BFS from every friendly depot). Returned as
+# {system_id: true} so the renderer can tint the supplied reach when a fleet is selected.
+func supply_safe_systems(empire_id: int) -> Dictionary:
+	var safe := {}
+	for sid in systems:
+		if owner_cached(sid) == empire_id:
+			safe[sid] = true
+	var dist := {}
+	var queue: Array = []
+	for sid in systems:
+		if systems[sid].depot_empire_id == empire_id:
+			dist[sid] = 0
+			safe[sid] = true
+			queue.append(sid)
+	while not queue.is_empty():
+		var cur: int = queue.pop_front()
+		var d: int = dist[cur]
+		if d >= SimConstants.DEPOT_SUPPLY_JUMPS:
+			continue
+		var nbs: Array = lane_neighbors(cur)
+		nbs.sort()
+		for nb in nbs:
+			if not dist.has(nb):
+				dist[nb] = d + 1
+				safe[nb] = true
+				queue.append(nb)
+	return safe
+
+
 # --- fleets -------------------------------------------------------------------
 
 func _empire_has_colony_in(empire_id: int, system_id: int) -> bool:
@@ -2114,15 +2151,16 @@ func tick(dt_days: float) -> void:
 	# 7. Combat: fleets auto-fight where enemies meet, else bombard (see 0.25.0).
 	_resolve_combat(dt_days)
 
-	# 8. Structures follow the border — but a colony ANCHORS them. "Whoever has the
-	#    planet" owns its structures: a benefit structure (mine, supply depot, observation
-	#    post, imperial centre) changes hands to whoever now controls the system, UNLESS
-	#    its original owner still holds a colony there — a disconnected holdout keeps its
-	#    own structures even while an enemy border washes over the bubble. A citadel is a
-	#    FORT: it can never be handed to the enemy. If an enemy border takes its system and
-	#    no friendly colony shelters under it, the fort is destroyed (scorched, not
-	#    captured); with a colony under it, it stands and defends until it — or the colony —
-	#    is bombarded down. Colonies themselves never flip (they must be bombarded to fall).
+	# 8. Structures follow the border — but a colony ANCHORS them, and MILITARY structures
+	#    are razed rather than captured. "Whoever has the planet" owns its CIVILIAN structures
+	#    (the mine and the imperial centre): they change hands to whoever now controls the
+	#    system, UNLESS the original owner still holds a colony there — a disconnected holdout
+	#    keeps its own structures even while an enemy border washes over the bubble. The
+	#    MILITARY structures — supply depot, observation post, citadel — can never be handed
+	#    to the enemy: if an enemy border takes their system and no friendly colony shelters
+	#    them, they are destroyed (scorched, not captured). A sheltering colony keeps them
+	#    standing, and the citadel then defends until it — or the colony — is bombarded down.
+	#    Colonies themselves never flip (they must be bombarded to fall).
 	var struct_systems := {}
 	for p in planets.values():
 		if p.has_mine():
@@ -2146,10 +2184,10 @@ func tick(dt_days: float) -> void:
 			continue
 		if sys.depot_empire_id != -1 and o != sys.depot_empire_id \
 				and not _empire_has_colony_in(sys.depot_empire_id, sys.id):
-			sys.depot_empire_id = o
+			sys.depot_empire_id = -1   # supply depot is military — razed, never captured
 		if sys.obs_post_empire_id != -1 and o != sys.obs_post_empire_id \
 				and not _empire_has_colony_in(sys.obs_post_empire_id, sys.id):
-			sys.obs_post_empire_id = o
+			sys.obs_post_empire_id = -1   # observation post is military — razed, never captured
 		if sys.imperial_empire_id != -1 and o != sys.imperial_empire_id \
 				and not _empire_has_colony_in(sys.imperial_empire_id, sys.id):
 			sys.imperial_empire_id = o

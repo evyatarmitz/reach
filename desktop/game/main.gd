@@ -1548,6 +1548,21 @@ func _draw_galaxy() -> void:
 		draw_rect(Rect2(bp - Vector2(3.5, 3.5), Vector2(7, 7)), bc, false, 1.5)
 		draw_line(bp - Vector2(2, 0), bp + Vector2(2, 0), bc, 1.0)
 
+	# Supply overlay: press a fleet and every SAFE system lights up green — your own border
+	# plus every system within a friendly depot's supply reach. That green field IS the
+	# fleet's supply range; any selected fleet sitting OUTSIDE it is stranded and bleeding
+	# border attrition (flagged red in the fleet pass below). Function-scoped so that pass
+	# can reuse it.
+	var supply_safe := {}
+	if selected_fleet_id != -1 or not selected_fleets.is_empty():
+		supply_safe = sim.supply_safe_systems(player_empire_id)
+		for sid in supply_safe:
+			var sp: Vector2 = sim.systems[sid].map_pos
+			if sp.x < view_lo.x or sp.x > view_hi.x or sp.y < view_lo.y or sp.y > view_hi.y:
+				continue
+			draw_circle(sp, 15.0, Color(0.40, 1.0, 0.65, 0.07))
+			draw_arc(sp, 15.0, 0.0, TAU, 32, Color(0.40, 1.0, 0.65, 0.5), 1.5, true)
+
 	# Fleets: your own always visible; a rival's only while it sits in your VR.
 	# Drawn as an arrowhead in the empire's colour, pointed along its heading; a
 	# selected fleet gets a ring and a dashed line to its destination.
@@ -1591,6 +1606,14 @@ func _draw_galaxy() -> void:
 			if f.is_moving():
 				draw_line(fp, sim.systems[f.path[f.path.size() - 1]].map_pos,
 					Color(1, 1, 1, 0.4), 1.0, true)
+			# Stranded outside the green supply field -> bleeding border attrition: a red
+			# warning ring and the days it's been losing ships to lack of supply.
+			if own and not supply_safe.has(f.system_id):
+				draw_arc(fp, 13.0, 0.0, TAU, 32, Color(1.0, 0.30, 0.25, 0.9), 2.0, true)
+				var warn := "unsupplied"
+				if f.foreign_days >= 1.0:
+					warn = "unsupplied %dd" % int(f.foreign_days)
+				_draw_name(font, fp + Vector2(0, -22), warn, Color(1.0, 0.5, 0.42))
 
 	# Live box-select rectangle while the player is dragging.
 	if _dragging:
@@ -2059,6 +2082,11 @@ func _draw_system_symbols(sys: StarSystem) -> void:
 				_draw_water_drop(c, mined)
 			else:
 				_draw_gem(c, mined)
+			# A mine is a structure that can change hands, so a worked deposit carries a thin
+			# owner-colour halo — the only cue on the map of WHO owns the mine (and of it
+			# flipping to a new owner when a border sweeps over it).
+			if mined:
+				draw_arc(c, 7.5, 0.0, TAU, 20, sim.empires[mine_owner].color, 1.5, true)
 		else:
 			draw_circle(c, 2.5, Color(0.5, 0.5, 0.55))
 		i += 1
@@ -2086,6 +2114,8 @@ func _draw_resource_hint(sys: StarSystem, live: bool, drop: float = 26.0) -> voi
 			_draw_water_drop(c, mined)
 		else:
 			_draw_gem(c, mined)
+		if mined:
+			draw_arc(c, 7.5, 0.0, TAU, 20, sim.empires[mine_owner].color, 1.5, true)
 
 
 # --- generated tier icons (the fallback font has no dice/numeral glyphs) -------------
@@ -3446,6 +3476,133 @@ func _autoshot() -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png("user://autoshot_god.png")
+	# Freeze per-frame processing for the staged poses below: no stray hover/tooltip, no
+	# win/lose overlay firing on these tiny hand-built sims. We drive camera/redraw by hand.
+	set_process(false)
+	set_process_unhandled_input(false)
+	if _tooltip_panel != null:
+		_tooltip_panel.visible = false
+	# --- Hand-switching verification: a contested CROSSING whose rival structures change
+	#     hands the moment the player's border sweeps over it. Two poses, BEFORE and AFTER
+	#     one tick, on a clean two-system scenario so it reads unambiguously:
+	#       mine (CIVILIAN) flips to the player's colour; depot + obs post (MILITARY) are RAZED.
+	_fog_disabled = true
+	var cap_sim := Sim.new()
+	var pA := cap_sim.add_empire("You", Color(0.35, 0.85, 0.45))   # player — green
+	var pB := cap_sim.add_empire("Rival", Color(0.90, 0.32, 0.30)) # rival — red
+	var sys_home := cap_sim.add_system("Core")
+	sys_home.map_pos = Vector2(-80, 0)
+	var sys_x := cap_sim.add_system("Crossing")
+	sys_x.map_pos = Vector2(60, 0)
+	cap_sim.add_lane(sys_home.id, sys_x.id)
+	cap_sim.inject_colony(pA.id, cap_sim.add_planet(sys_home.id, "Core I").id, 5000.0, true)
+	var xp := cap_sim.add_planet(sys_x.id, "Crossing I")
+	xp.deposit_type = SimConstants.Deposit.MINERAL
+	xp.mine_empire_id = pB.id            # rival mine (civilian) — will FLIP to green
+	sys_x.depot_empire_id = pB.id        # rival depot (military) — will be RAZED
+	sys_x.obs_post_empire_id = pB.id     # rival obs post (military) — will be RAZED
+	# A far-off rival homeworld keeps both empires "alive" so the win/lose overlay never
+	# fires over the pose (it's off-camera and its influence never reaches the Crossing).
+	var sys_far := cap_sim.add_system("Rival Core")
+	sys_far.map_pos = Vector2(3000, 0)
+	cap_sim.inject_colony(pB.id, cap_sim.add_planet(sys_far.id, "Rival I").id, 2000.0, true)
+	sim = cap_sim
+	player_empire_id = pA.id
+	_storm_bands.clear()
+	_events.clear()            # drop the carried-over feed from the earlier poses
+	_prev_pcolonies = {}       # re-seed loss detection against the new sim (no false losses)
+	_seen_combat = {}
+	selected_fleet_id = -1
+	selected_fleets.clear()
+	view_system_id = -1
+	selected_planet_id = -1
+	_hover_hold = true
+	_hover_system = sys_x.id
+	_galaxy_cam_pos = (sys_home.map_pos + sys_x.map_pos) * 0.5
+	_galaxy_cam_zoom = 2.6
+	_apply_camera()
+	_recompute_borders()
+	_refresh_ui()
+	if ship_panel != null:
+		ship_panel.visible = false
+	if panel != null:
+		panel.visible = false
+	queue_redraw()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://autoshot_capture_before.png")
+	print("capture BEFORE: mine=%d depot=%d obs=%d (rival id=%d)" % [
+		xp.mine_empire_id, sys_x.depot_empire_id, sys_x.obs_post_empire_id, pB.id])
+	# One tick: Crossing is already under the player's influence, so step 8 flips the mine
+	# to the player and razes the two military structures.
+	sim.tick(SimConstants.TICK_DAYS)
+	_recompute_borders()
+	_refresh_ui()
+	if ship_panel != null:
+		ship_panel.visible = false
+	if panel != null:
+		panel.visible = false
+	queue_redraw()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://autoshot_capture_after.png")
+	print("capture AFTER:  mine=%d depot=%d obs=%d (player id=%d)" % [
+		xp.mine_empire_id, sys_x.depot_empire_id, sys_x.obs_post_empire_id, pA.id])
+	# --- Supply-range visualization: press a fleet and the SAFE systems light up green (own
+	#     border + every system within a depot's supply reach). A fleet pushed outside that
+	#     field is flagged red "unsupplied" — the attrition it's taking for lack of supply.
+	var sup_sim := Sim.new()
+	var sA := sup_sim.add_empire("You", Color(0.35, 0.85, 0.45))
+	var sB := sup_sim.add_empire("Rival", Color(0.90, 0.32, 0.30))
+	var home_sys := sup_sim.add_system("Home")
+	home_sys.map_pos = Vector2(-200, 0)
+	var front_sys := sup_sim.add_system("Front")
+	front_sys.map_pos = Vector2(-120, 0)
+	var mid1_sys := sup_sim.add_system("Edge")
+	mid1_sys.map_pos = Vector2(-40, 0)
+	var mid2_sys := sup_sim.add_system("Verge")
+	mid2_sys.map_pos = Vector2(45, 0)
+	var deep_sys := sup_sim.add_system("Deep")
+	deep_sys.map_pos = Vector2(140, 0)
+	# Home(depot) - Front - Edge - Verge - Deep : Deep is 4 hops out, past the depot's
+	# 3-hop supply reach, so the green field runs out before it and the fleet there strands.
+	sup_sim.add_lane(home_sys.id, front_sys.id)
+	sup_sim.add_lane(front_sys.id, mid1_sys.id)
+	sup_sim.add_lane(mid1_sys.id, mid2_sys.id)
+	sup_sim.add_lane(mid2_sys.id, deep_sys.id)
+	sup_sim.inject_colony(sA.id, sup_sim.add_planet(home_sys.id, "Home I").id, 3000.0, true)
+	sup_sim.inject_colony(sB.id, sup_sim.add_planet(deep_sys.id, "Deep I").id, 6000.0, true)
+	home_sys.depot_empire_id = sA.id     # a supply depot projects the safe (green) field
+	var f_safe := sup_sim._fleet_at(sA.id, home_sys.id)
+	f_safe.fighters[0] = 20
+	var f_stranded := sup_sim._fleet_at(sA.id, deep_sys.id)   # parked in rival deep space
+	f_stranded.fighters[0] = 20
+	f_stranded.foreign_days = 6.0
+	sim = sup_sim
+	player_empire_id = sA.id
+	_storm_bands.clear()
+	_events.clear()
+	_prev_pcolonies = {}
+	_seen_combat = {}
+	_hover_hold = false
+	_hover_system = -1
+	view_system_id = -1
+	selected_planet_id = -1
+	selected_fleet_id = -1
+	selected_fleets = [f_safe.id, f_stranded.id]   # both selected -> supply overlay shows
+	_galaxy_cam_pos = Vector2(-30, 0)
+	_galaxy_cam_zoom = 2.0
+	_apply_camera()
+	_recompute_borders()
+	_refresh_ui()
+	if ship_panel != null:
+		ship_panel.visible = false
+	if panel != null:
+		panel.visible = false
+	queue_redraw()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://autoshot_supply.png")
 	_fog_disabled = false
 	print("autoshots saved: ", ProjectSettings.globalize_path("user://"))
 	get_tree().quit()

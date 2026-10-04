@@ -84,6 +84,8 @@ func _init() -> void:
 	_test_fort_razed_on_border_loss()
 	_test_fort_defends_colony_under_it()
 	_test_structure_anchored_by_colony()
+	_test_military_structures_razed()
+	_test_captured_mine_benefits_new_owner()
 	_test_support_structures()
 	_test_resource_variety()
 	_test_construction_vessel()
@@ -1436,24 +1438,75 @@ func _test_fort_defends_colony_under_it() -> void:
 
 
 func _test_structure_anchored_by_colony() -> void:
-	# "Whoever has the planet owns its structures." A benefit structure (a supply depot)
-	# stays with its owner while that owner still holds a colony in the system, even under
-	# an enemy border — then changes hands once the colony is gone.
+	# "Whoever has the planet owns its structures." A CIVILIAN structure (the mine) stays
+	# with its owner while that owner still holds a colony in the system, even under an enemy
+	# border — then changes hands to the border owner once the colony is gone.
 	var d := _overrun_scenario(SimConstants.Deposit.NONE)
 	var sim: Sim = d.sim
 	var m: StarSystem = d.m
-	sim.systems[m.id].depot_empire_id = d.v.id
+	sim.planets[d.fwd.planet_id].mine_empire_id = d.v.id
 	sim.tick(SimConstants.TICK_DAYS)
 	check(sim.owner_cached(m.id) == d.e.id, "the enemy border holds the overrun system")
-	check(sim.systems[m.id].depot_empire_id == d.v.id,
-		"a structure stays with its owner while a friendly colony anchors it")
-	# Remove the sheltering colony; now nothing anchors the depot and it flips.
+	check(sim.planets[d.fwd.planet_id].mine_empire_id == d.v.id,
+		"a civilian mine stays with its owner while a friendly colony anchors it")
+	# Remove the sheltering colony; now nothing anchors the mine and it flips.
 	sim.planets[d.fwd.planet_id].colony = null
 	sim.colonies.erase(d.fwd)
 	sim._invalidate_influence_caches()
 	sim.tick(SimConstants.TICK_DAYS)
-	check(sim.systems[m.id].depot_empire_id == d.e.id,
-		"with no colony to anchor it, the structure changes hands to the border owner")
+	check(sim.planets[d.fwd.planet_id].mine_empire_id == d.e.id,
+		"with no colony to anchor it, the civilian mine changes hands to the border owner")
+
+
+func _test_military_structures_razed() -> void:
+	# Military structures (supply depot, observation post) are RAZED, never captured. While a
+	# friendly colony anchors them they stand; once it's gone and the enemy border holds the
+	# system, they are scorched (owner -> -1) rather than handed to the enemy like the mine.
+	var d := _overrun_scenario(SimConstants.Deposit.NONE)
+	var sim: Sim = d.sim
+	var m: StarSystem = d.m
+	sim.systems[m.id].depot_empire_id = d.v.id
+	sim.systems[m.id].obs_post_empire_id = d.v.id
+	sim.tick(SimConstants.TICK_DAYS)
+	check(sim.systems[m.id].depot_empire_id == d.v.id,
+		"a military depot stands while a friendly colony anchors it")
+	check(sim.systems[m.id].obs_post_empire_id == d.v.id,
+		"a military observation post stands while a friendly colony anchors it")
+	# Remove the sheltering colony; nothing anchors them and the enemy border razes them.
+	sim.planets[d.fwd.planet_id].colony = null
+	sim.colonies.erase(d.fwd)
+	sim._invalidate_influence_caches()
+	sim.tick(SimConstants.TICK_DAYS)
+	check(sim.systems[m.id].depot_empire_id == -1,
+		"a military depot is razed, never handed to the enemy, when its colony is gone")
+	check(sim.systems[m.id].obs_post_empire_id == -1,
+		"a military observation post is razed, never handed to the enemy, when its colony is gone")
+
+
+func _test_captured_mine_benefits_new_owner() -> void:
+	# DATA proof that a captured structure's benefit transfers: a rival's WATER mine sits
+	# in an empty system inside a stronger empire's border. Mining (tick step 1) runs before
+	# the border-follow (step 8), so the tick that flips the mine still credits the OLD owner;
+	# from the NEXT tick on the water flows to the new owner and the old owner gets nothing.
+	var sim := Sim.new()
+	var strong := sim.add_empire("Strong", Color.RED)
+	var weak := sim.add_empire("Weak", Color.BLUE)
+	var base := sim.add_system("Base")
+	base.map_pos = Vector2.ZERO
+	sim.inject_colony(strong.id, sim.add_planet(base.id, "B").id, 400.0, true)
+	var mid := sim.add_system("Mid")
+	mid.map_pos = Vector2(150, 0)
+	var mp := sim.add_planet(mid.id, "M")
+	mp.deposit_type = SimConstants.Deposit.WATER
+	mp.mine_empire_id = weak.id            # rival water mine, no colony to anchor it
+	sim.tick(SimConstants.TICK_DAYS)       # step 1 credits weak; step 8 flips the mine
+	check(mp.mine_empire_id == strong.id, "the water mine is captured by the border owner")
+	check(weak.water_income > 0.0, "the old owner still banked the output the tick it flipped")
+	sim.tick(SimConstants.TICK_DAYS)       # now the mine is strong's at mining time
+	check(strong.water_income > 0.0,
+		"the new owner now reaps the captured mine's output")
+	check(is_equal_approx(weak.water_income, 0.0),
+		"the old owner gets nothing from the mine once it has changed hands")
 
 
 func _test_difficulty() -> void:
