@@ -48,9 +48,8 @@ func _build_support(sim: Sim) -> void:
 		if sim.can_upgrade_imperial(empire_id, cap):
 			var e: Empire = sim.empires[empire_id]
 			var next_tier: int = sim.systems[cap].imperial_level   # level L -> next tier index L
-			if next_tier < 5 and e.imperial_deficit[next_tier] <= 0.0 \
-					and e.nat[next_tier] >= SimConstants.IMPERIAL_ALLOY_DRAIN \
-						* SimConstants.AI_IMPERIAL_STOCK_DAYS:
+			if next_tier < 5 and e.nat[next_tier] >= SimConstants.IMPERIAL_ALLOY_DRAIN \
+					* SimConstants.AI_IMPERIAL_STOCK_DAYS:
 				sim.upgrade_imperial(empire_id, cap)
 				return
 	for sid in _owned_systems_sorted(sim):

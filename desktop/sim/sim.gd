@@ -393,12 +393,13 @@ func serialize() -> Dictionary:
 		es.append({"id": e.id, "name": e.name,
 			"color": [e.color.r, e.color.g, e.color.b, e.color.a],
 			"minerals": e.minerals, "nat": e.nat.duplicate(), "eff": e.efficiency,
-			"impdef": e.imperial_deficit.duplicate(), "cap": e.capital_planet_id})
+			"cap": e.capital_planet_id})
 	var ss: Array = []
 	for s in systems.values():
 		ss.append({"id": s.id, "name": s.name, "x": s.map_pos.x, "y": s.map_pos.y,
 			"depot": s.depot_empire_id, "obs": s.obs_post_empire_id,
 			"imp": s.imperial_empire_id, "implvl": s.imperial_level,
+			"impchg": s.imperial_charge,
 			"cit": s.citadel_empire_id, "cithp": s.citadel_hp,
 			"planets": s.planet_ids.duplicate()})
 	var ps: Array = []
@@ -454,9 +455,6 @@ static func deserialize(d: Dictionary) -> Sim:
 		for v in e.nat:
 			nat.append(float(v))
 		emp.nat = nat
-		var impdef: Array = e.get("impdef", [])
-		for i in 5:
-			emp.imperial_deficit[i] = float(impdef[i]) if i < impdef.size() else 0.0
 		emp.capital_planet_id = int(e.get("cap", -1))
 		sim.empires[emp.id] = emp
 	for s in d.systems:
@@ -468,6 +466,7 @@ static func deserialize(d: Dictionary) -> Sim:
 		sys.obs_post_empire_id = int(s.get("obs", -1))
 		sys.imperial_empire_id = int(s.get("imp", -1))
 		sys.imperial_level = int(s.get("implvl", 0))
+		sys.imperial_charge = float(s.get("impchg", 0.0))
 		sys.citadel_empire_id = int(s.get("cit", -1))
 		sys.citadel_hp = float(s.get("cithp", 0.0))
 		var pl: Array[int] = []
@@ -799,8 +798,9 @@ func system_influence(system_id: int, empire_id: int) -> float:
 
 
 # Influence bonus fraction of the imperial center in a system (0 if none). Level L gives
-# +L*10% at full feed; when the owning empire runs a deficit in the tier this center eats
-# (tier = level-1), the bonus fades linearly toward 0 (IMPERIAL_DEFICIT_MAX = fully faded).
+# +L*10% at full charge; the per-center imperial_charge (0..1) scales it, winding up when the
+# level's tier alloy is fed and down when starved — so a just-dialed or starved center's bonus
+# is partial, not instant (see StarSystem.imperial_charge, tick step 2b).
 func _imperial_bonus(system_id: int) -> float:
 	var s: StarSystem = systems[system_id]
 	var lvl: int = s.imperial_level
@@ -808,17 +808,27 @@ func _imperial_bonus(system_id: int) -> float:
 		return 0.0
 	lvl = mini(lvl, SimConstants.IMPERIAL_MAX_LEVEL)
 	var base: float = lvl * SimConstants.IMPERIAL_BONUS_PER_LEVEL
-	return base * _imperial_feed(s.imperial_empire_id, lvl - 1)
+	return base * clampf(s.imperial_charge, 0.0, 1.0)
 
 
-# How well-supplied an empire's centers of a given tier are: 1.0 fully fed, 0.0 fully
-# starved. Linear in the tier's accrued imperial deficit.
-func _imperial_feed(empire_id: int, tier: int) -> float:
-	var e: Empire = empires.get(empire_id)
-	if e == null:
-		return 1.0
-	return clampf(1.0 - e.imperial_deficit[tier] / SimConstants.IMPERIAL_DEFICIT_MAX,
-		0.0, 1.0)
+# Highest imperial level this system can host right now, gated by colony SIZE: level L needs
+# the owning empire's top colony here past MIL_CUTOFF[L-1] (the same pop that unlocks refining
+# tier L). 0 = no eligible colony, so nothing can be built/kept. Keeps a tiny border outpost
+# from mounting a high-level center as a cheap frontline influence weapon.
+func max_imperial_level(system_id: int) -> int:
+	var owner: int = systems[system_id].imperial_empire_id
+	var top := 0.0
+	for pid in systems[system_id].planet_ids:
+		var c: Colony = planets[pid].colony
+		if c != null and (owner == -1 or c.empire_id == owner):
+			top = maxf(top, c.population)
+	var lvl := 0
+	for t in SimConstants.IMPERIAL_MAX_LEVEL:
+		if top >= SimConstants.MIL_CUTOFF[t]:
+			lvl = t + 1
+		else:
+			break
+	return lvl
 
 
 # Public alias (UI reads this to show the current effective bonus).
@@ -826,13 +836,13 @@ func imperial_bonus_at(system_id: int) -> float:
 	return _imperial_bonus(system_id)
 
 
-# Feed fraction (1.0 full, <1.0 starved) of the center in a system — 1.0 if none. UI only.
+# Charge fraction (1.0 full, <1.0 spinning up / starved) of the center in a system — 1.0 if
+# none. UI only (shows how far wound-up the bonus is).
 func imperial_feed_at(system_id: int) -> float:
 	var s: StarSystem = systems[system_id]
 	if s.imperial_level <= 0 or s.imperial_empire_id == -1:
 		return 1.0
-	return _imperial_feed(s.imperial_empire_id,
-		mini(s.imperial_level, SimConstants.IMPERIAL_MAX_LEVEL) - 1)
+	return clampf(s.imperial_charge, 0.0, 1.0)
 
 
 # --- cosmic anomalies ---------------------------------------------------------
@@ -1471,10 +1481,11 @@ func build_citadel(empire_id: int, system_id: int) -> bool:
 	return true
 
 
-# Imperial center: one per system, on your influence, over one of your colonies. Building
-# it is level 1 (+10% influence, eats T1 alloy). You then DIAL the level 1..5 freely — no
-# pop gate, no per-step cost — each level raising the bonus and the alloy-tier drain (see
-# the imperial tick step). Amplifies system_influence; the alloy cost is charged per tick.
+# Imperial center: one per system, on your influence, over one of your colonies. Building it
+# is level 1 (+10% influence, eats T1 alloy). You then DIAL the level 1..max via a menu, where
+# max is gated by colony size (max_imperial_level). Each level raises the bonus and the alloy-
+# tier drain (see the imperial tick step), and the bonus winds up/down with charge rather than
+# snapping in. Amplifies system_influence; the alloy cost is charged per tick.
 func can_build_imperial(empire_id: int, system_id: int) -> bool:
 	var e: Empire = empires.get(empire_id)
 	return e != null and systems.has(system_id) \
@@ -1490,25 +1501,46 @@ func build_imperial(empire_id: int, system_id: int) -> bool:
 	_pay(empire_id, 0, SimConstants.IMPERIAL_COST_ALLOYS)
 	systems[system_id].imperial_empire_id = empire_id
 	systems[system_id].imperial_level = 1
+	systems[system_id].imperial_charge = 0.0   # winds up from cold — no instant bonus
 	_invalidate_influence_caches()
 	return true
 
 
-# Raise the center's level by one (up to the max). Free — the alloy drain is the cost.
+# The dial: set the center to an exact level. level 0 demolishes it. Clamped to the colony-
+# size gate so you can never pick above max_imperial_level. Charge carries across a level
+# change (it re-winds toward the new tier's affordability). The single UI command — upgrade/
+# lower below are thin wrappers kept for the AI and tests.
+func set_imperial_level(empire_id: int, system_id: int, level: int) -> bool:
+	if not systems.has(system_id):
+		return false
+	var s: StarSystem = systems[system_id]
+	if s.imperial_empire_id != empire_id or s.imperial_level < 1:
+		return false
+	level = clampi(level, 0, max_imperial_level(system_id))
+	if level == s.imperial_level:
+		return false
+	s.imperial_level = level
+	if level <= 0:
+		s.imperial_empire_id = -1
+		s.imperial_charge = 0.0
+	_invalidate_influence_caches()
+	return true
+
+
+# Raise the center's level by one (up to the colony-size gate). Free — the alloy drain is the
+# cost. Winds up with charge, not instantly.
 func can_upgrade_imperial(empire_id: int, system_id: int) -> bool:
 	if not systems.has(system_id):
 		return false
 	var s: StarSystem = systems[system_id]
 	return s.imperial_empire_id == empire_id and s.imperial_level >= 1 \
-		and s.imperial_level < SimConstants.IMPERIAL_MAX_LEVEL
+		and s.imperial_level < max_imperial_level(system_id)
 
 
 func upgrade_imperial(empire_id: int, system_id: int) -> bool:
 	if not can_upgrade_imperial(empire_id, system_id):
 		return false
-	systems[system_id].imperial_level += 1
-	_invalidate_influence_caches()
-	return true
+	return set_imperial_level(empire_id, system_id, systems[system_id].imperial_level + 1)
 
 
 # Lower the center's level by one; dropping below level 1 demolishes it entirely.
@@ -1522,13 +1554,7 @@ func can_lower_imperial(empire_id: int, system_id: int) -> bool:
 func lower_imperial(empire_id: int, system_id: int) -> bool:
 	if not can_lower_imperial(empire_id, system_id):
 		return false
-	var s: StarSystem = systems[system_id]
-	s.imperial_level -= 1
-	if s.imperial_level <= 0:
-		s.imperial_level = 0
-		s.imperial_empire_id = -1
-	_invalidate_influence_caches()
-	return true
+	return set_imperial_level(empire_id, system_id, systems[system_id].imperial_level - 1)
 
 
 # A fleet is in supply if a friendly depot sits in its system or a lane-neighbor.
@@ -2087,7 +2113,9 @@ func tick(dt_days: float) -> void:
 		for t in maxtier:
 			var cap_t: float = share + carry
 			var yld: float = pow(SimConstants.TIER_YIELD, t)
-			var input_avail: float = e.minerals if t == 0 else e.nat[t - 1]
+			# Clamp to >=0: imperial drain can push a tier's stock negative (a visible debt),
+			# and a negative input must not run refining backwards.
+			var input_avail: float = maxf(0.0, (e.minerals if t == 0 else e.nat[t - 1]))
 			var made: float = minf(cap_t * yld, input_avail)
 			if t == 0:
 				e.minerals -= made
@@ -2097,36 +2125,50 @@ func tick(dt_days: float) -> void:
 			carry = cap_t - (made / yld if yld > 0.0 else cap_t)
 
 	# 2b. Imperial centers burn alloy. Each running center drains a fixed amount of its
-	#     level's tier per day; sum per empire+tier, then settle against the stockpile.
-	#     Shortfall accrues as that tier's imperial_deficit (fading those centers' bonus);
-	#     a paid-up tier with surplus burns its debt back down. Capped so the bonus floors
-	#     at zero rather than racking up unpayable debt.
+	#     level's tier per day straight from the stockpile — which is ALLOWED TO GO NEGATIVE
+	#     (a visible debt the HUD shows red). Then every center's CHARGE winds toward 1 if its
+	#     tier's post-drain stock is non-negative (fed) or toward 0 if it went negative
+	#     (starved), at 1/IMPERIAL_RAMP_DAYS per day — symmetric wind-up/wind-down. A colony
+	#     that has shrunk below the level's pop gate is clamped down (and demolished at 0).
 	var imp_drain := {}   # empire_id -> [per-tier drain this tick]
 	for sid in systems:
 		var sysd: StarSystem = systems[sid]
-		var lvl: int = sysd.imperial_level
-		if lvl <= 0 or sysd.imperial_empire_id == -1:
+		if sysd.imperial_level <= 0 or sysd.imperial_empire_id == -1:
+			continue
+		# Shrinking colony loses levels it can no longer support (so you can't build big then
+		# starve the city to keep a high center on a now-tiny outpost).
+		var cap_lvl: int = max_imperial_level(sid)
+		if sysd.imperial_level > cap_lvl:
+			sysd.imperial_level = cap_lvl
+		if sysd.imperial_level <= 0:
+			sysd.imperial_empire_id = -1
+			sysd.imperial_charge = 0.0
 			continue
 		var eid: int = sysd.imperial_empire_id
 		if not imp_drain.has(eid):
 			imp_drain[eid] = [0.0, 0.0, 0.0, 0.0, 0.0]
-		imp_drain[eid][mini(lvl, SimConstants.IMPERIAL_MAX_LEVEL) - 1] += \
+		imp_drain[eid][sysd.imperial_level - 1] += \
 			SimConstants.IMPERIAL_ALLOY_DRAIN * dt_days
+	# Apply the per-tier drain (stock may go negative), then record which tiers are fed.
+	var tier_fed := {}   # empire_id -> [bool per tier]
 	for e in empires.values():
 		var drains = imp_drain.get(e.id, null)   # Array or null
+		var fed: Array = [true, true, true, true, true]
 		for tier in 5:
 			var want: float = (drains[tier] if drains != null else 0.0)
-			# First pay this tick's drain from stock; unpaid part grows the deficit.
-			var paid: float = minf(want, maxf(e.nat[tier], 0.0))
-			e.nat[tier] -= paid
-			e.imperial_deficit[tier] += (want - paid)
-			# Any stock left over (after drain) pays the standing deficit back down.
-			if e.imperial_deficit[tier] > 0.0 and e.nat[tier] > 0.0:
-				var heal: float = minf(e.imperial_deficit[tier], e.nat[tier])
-				e.nat[tier] -= heal
-				e.imperial_deficit[tier] -= heal
-			e.imperial_deficit[tier] = clampf(e.imperial_deficit[tier],
-				0.0, SimConstants.IMPERIAL_DEFICIT_MAX)
+			e.nat[tier] -= want
+			fed[tier] = e.nat[tier] >= 0.0
+		tier_fed[e.id] = fed
+	# Wind each center's charge up (fed) or down (starved) at the symmetric ramp rate.
+	var ramp: float = dt_days / SimConstants.IMPERIAL_RAMP_DAYS
+	for sid in systems:
+		var sysd: StarSystem = systems[sid]
+		if sysd.imperial_level <= 0 or sysd.imperial_empire_id == -1:
+			continue
+		var fed: Array = tier_fed.get(sysd.imperial_empire_id, null)
+		var ok: bool = fed == null or fed[sysd.imperial_level - 1]
+		sysd.imperial_charge = clampf(
+			sysd.imperial_charge + (ramp if ok else -ramp), 0.0, 1.0)
 
 	# 3. Population's need is WATER, as a FLOW. Compare this tick's water income to the
 	#    whole population's demand; the SIGN sets growth direction. No bank — so pop

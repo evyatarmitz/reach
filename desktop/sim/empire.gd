@@ -26,11 +26,9 @@ var nat: Array[float] = [SimConstants.START_NAT0, 0.0, 0.0, 0.0, 0.0]
 # PRODUCTION only (buying a ship must not read as negative income). Not serialized:
 # only differences over a few days matter, and the rate window rebuilds after load.
 var spent_nat: Array[float] = [0.0, 0.0, 0.0, 0.0, 0.0]
-# Imperial-center alloy debt, per tier (index 0-4). Accrues when the empire can't cover
-# its running centers' per-tier drain; each tier's debt fades the influence bonus of the
-# centers eating that tier (see IMPERIAL_DEFICIT_MAX) and is paid down by surplus alloy.
-# Serialized — it's slow-moving state the player feels (shrinking borders), not a cache.
-var imperial_deficit: Array[float] = [0.0, 0.0, 0.0, 0.0, 0.0]
+# Imperial-center alloy debt is no longer a separate counter: an unfed center drains its
+# tier's nat[] stock straight into the NEGATIVE (the player sees the stockpile go red), and
+# each center's own imperial_charge winds down while starved. See StarSystem.imperial_charge.
 # Water flow this tick (recomputed every tick — display/growth only, never banked).
 var water_income: float = 0.0    # water produced by this empire's mines this tick
 var water_demand: float = 0.0    # water its whole population needs this tick

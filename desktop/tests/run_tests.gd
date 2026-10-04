@@ -968,64 +968,102 @@ func _test_support_structures() -> void:
 		"observation post doubles influence reach")
 
 	# Imperial center: RAISES the system's colony influence (bigger borders) by BURNING
-	# tier-L alloy — no water cost now. Compare a baseline empire against an identical one
-	# that builds a center, and confirm the center's tier alloy drains while influence rises.
+	# tier-L alloy — no water cost. The bonus WINDS UP via charge, it is not instant. Compare a
+	# baseline empire against an identical one that builds a center.
 	var sim2 := Sim.new()
 	var e2 := sim2.add_empire("T", Color.WHITE)
-	e2.nat[0] = 100000.0
+	e2.nat = [100000.0, 100000.0, 100000.0, 100000.0, 100000.0]
+	e2.minerals = 100000.0
 	var a := sim2.add_system("A")
 	a.map_pos = Vector2.ZERO
-	sim2.inject_colony(e2.id, sim2.add_planet(a.id, "pa").id, 500.0, true)
+	sim2.inject_colony(e2.id, sim2.add_planet(a.id, "pa").id, 800.0, true)
 
 	var sim3 := Sim.new()
 	var e3 := sim3.add_empire("T", Color.WHITE)
-	e3.nat[0] = 100000.0
+	e3.nat = [100000.0, 100000.0, 100000.0, 100000.0, 100000.0]
+	e3.minerals = 100000.0
 	var a3 := sim3.add_system("A")
 	a3.map_pos = Vector2.ZERO
-	sim3.inject_colony(e3.id, sim3.add_planet(a3.id, "pa").id, 500.0, true)
+	sim3.inject_colony(e3.id, sim3.add_planet(a3.id, "pa").id, 800.0, true)
 	var infl_before := sim3.system_influence(a3.id, e3.id)
 	check(sim3.build_imperial(e3.id, a3.id), "imperial center builds in own influence")
 	check(sim3.systems[a3.id].imperial_empire_id == e3.id, "the center belongs to its empire")
 	check(sim3.systems[a3.id].imperial_level == 1, "a fresh imperial center is level 1")
-	check(sim3.system_influence(a3.id, e3.id) > infl_before,
-		"imperial center raises the system's colony influence")
+	check(is_equal_approx(sim3.imperial_feed_at(a3.id), 0.0),
+		"a fresh center starts at zero charge (no instant bonus)")
+	check(is_equal_approx(sim3.system_influence(a3.id, e3.id), infl_before),
+		"so the influence has NOT jumped the instant it was built")
 
+	# One tick: the center drains its tier alloy (level 1 eats T1), adds no water.
 	sim2.tick(SimConstants.TICK_DAYS)
 	sim3.tick(SimConstants.TICK_DAYS)
 	check(e3.nat[0] < e2.nat[0],
 		"an imperial center drains its tier's alloy (both refine equally; only e3 pays)")
 	check(e3.water_demand <= e2.water_demand + 0.001,
-		"the imperial center adds NO water demand anymore (alloy-fed)")
+		"the imperial center adds NO water demand (alloy-fed)")
 
-	# Dialing the level up raises both the influence bonus and the tier it eats.
-	var infl_l1 := sim3.system_influence(a3.id, e3.id)
+	# Wind-up: ~12 fed days and the charge reaches full. Compare to the identical no-center
+	# empire ticked in lockstep (both colonies drift the same way) — the center's is higher.
+	for _i in 120:
+		sim2.tick(SimConstants.TICK_DAYS)
+		sim3.tick(SimConstants.TICK_DAYS)
+	check(sim3.imperial_feed_at(a3.id) > 0.99, "a fed center winds its charge up to full")
+	check(sim3.system_influence(a3.id, e3.id) > sim2.system_influence(a.id, e2.id),
+		"a fully-wound center raises influence above the centerless twin")
+
+	# Dialing the level up raises the bonus FRACTION once charged (pop drift aside).
+	var bonus_l1 := sim3.imperial_bonus_at(a3.id)
 	check(sim3.upgrade_imperial(e3.id, a3.id), "the center dials up a level")
 	check(sim3.systems[a3.id].imperial_level == 2, "it is now level 2")
-	check(sim3.system_influence(a3.id, e3.id) > infl_l1, "a higher level is a bigger bonus")
+	for _i2 in 30:
+		sim3.tick(SimConstants.TICK_DAYS)
+	check(sim3.imperial_bonus_at(a3.id) > bonus_l1, "a higher level is a bigger bonus")
 
-	# Deficit falloff: starve the tier and the bonus fades linearly, not off a cliff.
+	# Pop gate: the max selectable level tracks colony size (MIL_CUTOFF), so a small outpost
+	# cannot mount a high-level center even with the alloy to feed it.
+	var simg := Sim.new()
+	var eg := simg.add_empire("G", Color.WHITE)
+	eg.nat = [100000.0, 100000.0, 100000.0, 100000.0, 100000.0]
+	var ag := simg.add_system("A")
+	ag.map_pos = Vector2.ZERO
+	simg.inject_colony(eg.id, simg.add_planet(ag.id, "pa").id, 120.0, true)  # >=50 (L1), <150 (no L2)
+	check(simg.max_imperial_level(ag.id) == 1, "a 120-pop outpost gates to level 1")
+	check(simg.build_imperial(eg.id, ag.id), "it can still build the level-1 center")
+	check(not simg.set_imperial_level(eg.id, ag.id, 5),
+		"dialing above the colony's gate is refused")
+	check(simg.systems[ag.id].imperial_level == 1, "the level stays clamped at the gate")
+
+	# Starvation shows as a NEGATIVE, red stockpile and a winding-DOWN charge (not a cliff),
+	# and re-feeding winds it back up — symmetric with wind-up.
 	var simd := Sim.new()
 	var ed := simd.add_empire("D", Color.WHITE)
-	ed.nat[0] = SimConstants.IMPERIAL_COST_ALLOYS   # just enough to build, nothing to feed it
+	ed.nat = [100000.0, 100000.0, 100000.0, 100000.0, 100000.0]
+	ed.minerals = 100000.0
 	var ad := simd.add_system("A")
 	ad.map_pos = Vector2.ZERO
-	simd.inject_colony(ed.id, simd.add_planet(ad.id, "pa").id, 40.0, true)  # too small to refine T1
-	check(simd.build_imperial(ed.id, ad.id), "a center builds with no spare alloy")
-	var full_bonus := simd.imperial_bonus_at(ad.id)
-	check(is_equal_approx(simd.imperial_feed_at(ad.id), 1.0), "it starts fully fed")
-	for _i in 60:
-		simd.tick(SimConstants.TICK_DAYS)   # ~6 days of unpaid drain
-	check(simd.imperial_feed_at(ad.id) < 1.0, "an unfed center's feed drops")
-	check(simd.imperial_bonus_at(ad.id) < full_bonus,
-		"and its influence bonus fades with the deficit")
-	check(simd.imperial_bonus_at(ad.id) > 0.0,
-		"the falloff is gradual, not an instant cutoff")
-	# Feeding it pays the debt down and restores the bonus.
-	ed.nat[0] = 100000.0
-	for _j in 30:
+	simd.inject_colony(ed.id, simd.add_planet(ad.id, "pa").id, 800.0, true)
+	check(simd.build_imperial(ed.id, ad.id), "a center builds to starve-test")
+	check(simd.upgrade_imperial(ed.id, ad.id), "and dials to level 2 (eats scarce T2)")
+	for _w in 120:
+		simd.tick(SimConstants.TICK_DAYS)   # wind up on plentiful T2 first
+	var wound := simd.imperial_feed_at(ad.id)
+	check(wound > 0.99, "it winds up to full while fed")
+	var bonus_full := simd.imperial_bonus_at(ad.id)
+	ed.nat[1] = 0.0                                  # cut off its tier; drain now outruns supply
+	for _s in 120:
 		simd.tick(SimConstants.TICK_DAYS)
-	check(is_equal_approx(simd.imperial_feed_at(ad.id), 1.0),
-		"surplus alloy heals the deficit back to full feed")
+	check(ed.nat[1] < 0.0, "a starved tier's stockpile goes NEGATIVE (shown red in the HUD)")
+	check(simd.imperial_feed_at(ad.id) < wound, "and the center's charge winds back down")
+	check(simd.imperial_bonus_at(ad.id) < bonus_full, "fading the influence bonus, not a cliff")
+	# Wind-down is the same rate as wind-up: one ramp step per tick either way.
+	var step_down := wound - simd.imperial_feed_at(ad.id)
+	check(step_down > 0.0, "it has actually wound down")
+	# Re-feed: charge climbs back toward full and the stock returns to positive.
+	ed.nat[1] = 100000.0
+	for _r in 120:
+		simd.tick(SimConstants.TICK_DAYS)
+	check(simd.imperial_feed_at(ad.id) > 0.99, "re-feeding winds the charge back up to full")
+	check(ed.nat[1] > 0.0, "and the stockpile is positive again")
 
 	# Sprawl penalty: many small colonies cost more water than the same total pop
 	# concentrated (per-colony overhead), but only marginally ("close, but not the same").
