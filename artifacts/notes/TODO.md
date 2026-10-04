@@ -4,6 +4,46 @@ New project, split from To Infinity (2026-07-02). This game is genuinely novel �
 nothing from the old codebase transfers directly, because the old build assumed an
 embodied player and direct entity control, and Reach has neither.
 
+## Shipped 2026-10-04 — flicker fix + fleet crown + alert bar + imperial redesign
+
+Five-item batch, one commit each, full suite + determinism green throughout.
+
+1. **Interior-colony border flicker** (`a6511c9`) — a connectivity *grace debounce*:
+   `recompute_connectivity` now accrues `_disc_days` per colony and only marks one
+   inactive after `CONNECT_GRACE_DAYS` (3.0) of continuous disconnection, so an enemy
+   fleet skimming a border no longer pops the "pocket" bubble on/off for one tick.
+   Reconnecting clears the timer instantly. Also damps the border oscillation feedback.
+2. **Fleet icon nests above the building crown** (`c1bdab2`) — `_fleet_icon_pos(f)`:
+   parked fleets sit just above the star ring and lift by `FLEET_CROWN_GAP` when the
+   system has any building/colony, so they clear the crown row instead of sitting on
+   the star apex. Draw + both hit-tests route through it.
+3. **Colony "1" → skyline glyph** (`c1bdab2`) — single-colony-per-system made the count
+   meaningless; the crown now leads with a little 3-building skyline glyph (drawn first,
+   so it's always the top of the bend), and the numeric count is gone (live + stale).
+4. **Bottom alert bar** (`486b914`) — a location-anchored strip for lost building / lost
+   colony / colony-under-siege events (windowed ~18s wall-clock). One button shows the
+   current alert + count; each click flies the camera to that system, oldest→newest,
+   wrapping; hides itself when the window empties. Structure losses detected by diffing
+   per-system depot/obs/imperial/citadel ownership scan-to-scan.
+5. **Imperial center redesign** (`f600c21`) — was a water surcharge identical to +10%
+   pop; now burns TIER-L alloy. Level 1-5 dialed freely (no pop gate/upgrade cost), L
+   gives +L*10% influence and drains `IMPERIAL_ALLOY_DRAIN`(2.0)/day of tier-L alloy.
+   The alloy pyramid self-limits high levels (a +50% center eats the same T5 as top
+   warships). Out-of-alloy = per-tier deficit counter, bonus fades linearly to 0 at
+   `IMPERIAL_DEFICIT_MAX`(40) then heals when fed. UI: up/down buttons (demolish at L1).
+
+**Design flags for next conversation (non-urgent):**
+- *Imperial level UI* was built as a paired up/down button (showing effective %, tier
+  eaten, ⚠ starved), not the full pop-up submenu you described — equivalent control,
+  far less UI. Say if you want the actual submenu.
+- *Numbers to playtest* (all placeholders, tune for feel): `IMPERIAL_ALLOY_DRAIN` 2.0/day,
+  `IMPERIAL_DEFICIT_MAX` 40 (~20 days of unpaid drain to fully fade), `CONNECT_GRACE_DAYS`
+  3.0, alert window 18s. The *shape* (alloy-fed, scarce high tiers, gradual falloff) is
+  the load-bearing part; the magnitudes are free.
+- Still open from the prior batch: whether the imperial center should *raze* on border
+  loss instead of *transfer* (it currently transfers — functions only for who holds the
+  ground).
+
 ## Shipped 2026-10-04 — civilian/military structure split + supply viz (`3746546`)
 
 Follow-up to the hand-switching batch (`d40561f`). Three-part request, one commit,
