@@ -210,7 +210,7 @@ func _ready() -> void:
 	# smooth influence-shaped gradient instead of visible cells. (Only the fog is a
 	# texture here; lines/text/arcs are vector-drawn and unaffected.)
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	_glow_tex = _make_glow_texture()
+	_glow_tex = _make_glow_texture(256)   # hi-res so zoomed-in glows stay smooth, not mushy
 	# New game from the menu's settings, or the default demo map. (A pending load
 	# replaces this after the UI/camera exist.)
 	if not Session.config.is_empty():
@@ -741,6 +741,9 @@ func _bake_field(job: Dictionary) -> Dictionary:
 		if ids[k] == player_empire_id:
 			order.append(k)
 	for k in order:
+		if not sim.empires.has(ids[k]):
+			continue   # sim was swapped under an in-flight off-thread bake (autoshot/teardown):
+			           # this job's empire ids no longer match the live sim, so skip the stale draw
 		var ck: PackedFloat32Array = claims[k]
 		var col: Color = sim.empires[ids[k]].color
 		var kpos: PackedVector2Array = pos[k]   # this empire's colony positions
@@ -1431,6 +1434,21 @@ func _draw_galaxy() -> void:
 	# to grey explored-memory to never-seen black. Baked in the border refresh.
 	if _fog_tex != null and not _fog_disabled:
 		draw_texture_rect(_fog_tex, _fog_rect, false)
+	# Observation-post range rings: for each of YOUR posts, a faint cyan inner ring at how
+	# far it pushes the border (influence reach) and an outer ring at how far it SEES (reach
+	# x sight) — so the post's effect is legible instead of invisible ("i dont know if its
+	# range"). Few posts, so the full-systems scan here is cheap.
+	for osys in sim.systems.values():
+		if osys.obs_post_empire_id != player_empire_id:
+			continue
+		var rr: float = sim.influence_reach(osys.id, player_empire_id)
+		if rr <= 0.0:
+			continue
+		var op: Vector2 = osys.map_pos
+		draw_arc(op, rr * VR_SIGHT_REACH, 0.0, TAU, 72,
+			Color(0.35, 0.85, 1.0, 0.16), 1.5, true)   # sight / early-warning radius
+		draw_arc(op, rr, 0.0, TAU, 64,
+			Color(0.35, 0.85, 1.0, 0.24), 1.5, true)   # border-push radius
 	# Cosmic anomalies ("storms"): a magenta nebula haze snaking along a spine. They
 	# block influence and sight (not movement), so they're always visible — a blind
 	# corridor to route sight around but fly fleets through. The band is a capsule
@@ -2154,18 +2172,21 @@ func _draw_glow(pos: Vector2, r: float, col: Color) -> void:
 
 
 func _draw_star(pos: Vector2, col: Color, intensity: float, scale := 1.0) -> void:
-	# A luminous body with depth, built from soft radial discs so every edge is smooth
-	# (no MSAA on GL-compat): a wide faint corona, a coloured glow, a bright near-white
-	# core and a hot pip. scale grows it with the system's population.
+	# A luminous body with depth: soft radial discs for the halo, then a CRISP vector core
+	# on top so the star reads as a sharp, defined point at any zoom. The glow texture alone
+	# (linear-filtered) magnified into mush when zoomed in — draw_circle is resolution-
+	# independent and MSAA-smoothed, so it stays a clean dot. scale grows it with population.
 	var c := col
 	c.a = 0.16 * intensity
-	_draw_glow(pos, 20.0 * scale, c)                 # outer haze — the "reach" of the light
-	c.a = 0.42 * intensity
-	_draw_glow(pos, 11.0 * scale, c)                 # coloured body glow
+	_draw_glow(pos, 16.0 * scale, c)                 # outer haze — the "reach" of the light
+	c.a = 0.40 * intensity
+	_draw_glow(pos, 9.0 * scale, c)                  # coloured body glow
 	var core := col.lerp(Color.WHITE, 0.55)
-	core.a = 0.85 + 0.15 * intensity
-	_draw_glow(pos, (5.2 + 1.0 * intensity) * scale, core)
-	_draw_glow(pos, (2.4 + 0.6 * intensity) * scale, Color(1, 1, 1, 0.9 * intensity))
+	core.a = 0.6 + 0.2 * intensity
+	_draw_glow(pos, (4.2 + 0.8 * intensity) * scale, core)   # soft bloom under the core
+	# Crisp focal core: solid coloured disc + bright white centre, sharp at every zoom.
+	draw_circle(pos, (3.0 + 0.6 * intensity) * scale, col.lerp(Color.WHITE, 0.35))
+	draw_circle(pos, (1.5 + 0.5 * intensity) * scale, Color(1, 1, 1, 0.92))
 
 
 # An empire's CAPITAL (its most-populated system — where its ships are built) gets its

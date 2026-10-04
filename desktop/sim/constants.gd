@@ -186,8 +186,10 @@ const OBS_POST_REACH_MULT := 2.0
 # any system lacking a colony, since reach = A2 * system_influence and that is 0 with no
 # colony. On a real colony the colony's influence dwarfs this floor, so nothing changes
 # there. Kept below ACTIVATION_POP-equivalent influence so it can't conjure territory
-# the way a grown colony does: border reach ≈ A2*30*2 ≈ 108, sight ≈ 108*1.8 ≈ 195.
-const OBS_POST_INFLUENCE := 30.0
+# the way a grown colony does, but large enough that a forward post VISIBLY pushes the
+# border and extends sight: border reach ~= A2*80*2 ~= 288, sight ~= 288*1.8 ~= 518 —
+# about one-to-two system hops, clearly readable, well under a mature colony's reach.
+const OBS_POST_INFLUENCE := 80.0
 # Citadel: an expensive fortress on one of your systems. It walls the system off — enemy
 # fleets cannot pass THROUGH it (they must make it their destination and bombard it down
 # to advance past). Its hull is enormous, so a citadel on a chokepoint lane buys many
