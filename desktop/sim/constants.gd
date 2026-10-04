@@ -268,6 +268,14 @@ const BORDER_A2 := 1.8
 # same-size neighbour; an enemy needs several times the population nearby to overrun.
 const SELF_CLAIM_DIST := 40.0
 
+# Supply-line disconnect grace: a colony must stay unreachable from its capital for this
+# many in-game days straight before it counts as disconnected (drops from influence/
+# refining/water and shows the cut-off pocket border). Absorbs single-tick frontier
+# wobble and storms briefly cutting an influence line — an interior colony shouldn't
+# flicker disconnected when the border twitches. Tunable; keep it a few days so a real
+# overrun/blockade still bites quickly, but a one-frame twitch never registers.
+const CONNECT_GRACE_DAYS := 3.0
+
 # Flat planet-mesh map sizing. The map area scales with the planet count at this
 # fixed density, so more planets = a bigger map (not a denser one). Separation is
 # the minimum gap between planets.

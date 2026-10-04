@@ -67,6 +67,7 @@ func _init() -> void:
 	_test_abandon_no_immigration()
 	_test_zero_pop_colony_removed()
 	_test_overrun_disconnects_colony()
+	_test_disconnect_grace_debounce()
 	_test_disconnected_dies_without_water()
 	_test_disconnected_survives_over_water()
 	_test_capital_move_and_connectivity()
@@ -676,7 +677,8 @@ func _test_overrun_disconnects_colony() -> void:
 	var d := _overrun_scenario(SimConstants.Deposit.NONE)
 	var sim: Sim = d.sim
 	var fwd: Colony = d.fwd
-	sim.recompute_connectivity()
+	# Past the disconnect grace in one pass, so the cut-off registers.
+	sim.recompute_connectivity(SimConstants.CONNECT_GRACE_DAYS)
 	check(sim.system_owner(d.m.id) == d.e.id,
 		"overwhelming enemy influence overruns even a colonied system")
 	check(not sim._is_colony_active(fwd),
@@ -685,13 +687,33 @@ func _test_overrun_disconnects_colony() -> void:
 		"the capital colony itself stays connected")
 
 
+func _test_disconnect_grace_debounce() -> void:
+	# A colony cut off from its capital stays active through the grace window, so a brief
+	# frontier wobble can't flicker it disconnected. It only drops once the grace elapses,
+	# and reconnecting restores it instantly (timer resets).
+	var d := _overrun_scenario(SimConstants.Deposit.NONE)
+	var sim: Sim = d.sim
+	var fwd: Colony = d.fwd
+	sim.recompute_connectivity(SimConstants.CONNECT_GRACE_DAYS - 1.0)
+	check(sim.system_owner(d.m.id) == d.e.id, "the forward system is overrun by the enemy")
+	check(sim._is_colony_active(fwd), "a just-cut-off colony stays active within the grace window")
+	sim.recompute_connectivity(2.0)   # now past the grace
+	check(not sim._is_colony_active(fwd), "it disconnects once the grace elapses")
+	# Reconnect: remove the enemy colony so the forward system is no longer overrun.
+	for c in sim.colonies.duplicate():
+		if c.empire_id == d.e.id:
+			sim._remove_colony(c)
+	sim.recompute_connectivity(1.0)
+	check(sim._is_colony_active(fwd), "reconnecting restores the colony immediately")
+
+
 func _test_disconnected_dies_without_water() -> void:
 	var d := _overrun_scenario(SimConstants.Deposit.NONE)
 	var sim: Sim = d.sim
 	var fwd: Colony = d.fwd
 	var pop0: float = fwd.population
-	sim.tick(SimConstants.TICK_DAYS)
-	check(not sim._is_colony_active(fwd), "the overrun colony is disconnected after a tick")
+	run_days(sim, 30.0)   # past the disconnect grace, then long enough to bleed pop
+	check(not sim._is_colony_active(fwd), "the overrun colony is disconnected once the grace elapses")
 	check(fwd.population < pop0, "a cut-off colony with no water dies at the immigration rate")
 
 
@@ -728,7 +750,7 @@ func _test_capital_move_and_connectivity() -> void:
 	var fwd := sim.inject_colony(v.id, sim.add_planet(m.id, "m").id, 100.0, true)
 	sim.inject_colony(e.id, sim.add_planet(a.id, "a").id, 5000.0, true)
 	check(v.capital_planet_id == cap.planet_id, "the capital defaults to the first colony")
-	sim.recompute_connectivity()
+	sim.recompute_connectivity(SimConstants.CONNECT_GRACE_DAYS)   # past the disconnect grace
 	check(not sim._is_colony_active(fwd), "the forward colony is cut off")
 	check(sim._is_colony_active(rear), "the rear colony stays connected")
 	check(not sim.move_capital(v.id, fwd.planet_id),

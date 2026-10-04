@@ -48,6 +48,13 @@ var _blocked_pair: Dictionary = {} # (src_id,dst_id) -> bool anomaly-blocked. An
 var _connected: Dictionary = {}
 var _conn_computed: bool = false
 var _computing_connectivity: bool = false
+# planet_id -> consecutive in-game days a colony has been unreachable. A colony only
+# counts as truly disconnected (dropped from influence/refining/water AND shown with the
+# cut-off pocket border) once this crosses CONNECT_GRACE_DAYS. This absorbs single-tick
+# border wobble at a claim threshold and storms briefly cutting an influence line, so an
+# interior colony doesn't flicker disconnected when the frontier twitches. Not
+# serialized: a reload just re-earns the (tiny) grace, which is harmless.
+var _disc_days: Dictionary = {}
 
 
 # Name syllables — combined by index for readable, unique system names.
@@ -636,7 +643,7 @@ func _is_colony_active(c: Colony) -> bool:
 # an ALL-active influence view. A colony is connected iff its system is reached.
 # This is what disconnects an overrun colony (its own system flipped to the enemy)
 # AND a colony an enemy salient has cut off from the capital. Called once per tick.
-func recompute_connectivity() -> void:
+func recompute_connectivity(dt_days: float = 0.0) -> void:
 	_computing_connectivity = true
 	_invalidate_influence_caches()   # rebuild caches under the all-active view
 	var raw_owner := {}
@@ -645,6 +652,7 @@ func recompute_connectivity() -> void:
 	_computing_connectivity = false
 	_invalidate_influence_caches()   # and back to the active-only view for the tick
 	var nc := {}
+	var live_pids := {}
 	for e in empires.values():
 		var cap_sys := capital_system(e.id)
 		var reached := {}
@@ -662,7 +670,23 @@ func recompute_connectivity() -> void:
 						q.append(nb)
 		for c in colonies:
 			if c.empire_id == e.id:
-				nc[c.planet_id] = reached.has(planets[c.planet_id].system_id)
+				var pid: int = c.planet_id
+				live_pids[pid] = true
+				# Grace debounce: a reachable colony is instantly active and its timer
+				# resets; an unreachable one is still treated as active until it has been
+				# cut off for CONNECT_GRACE_DAYS straight, so a one-tick frontier twitch
+				# doesn't disconnect it.
+				if reached.has(planets[pid].system_id):
+					_disc_days[pid] = 0.0
+					nc[pid] = true
+				else:
+					var d: float = _disc_days.get(pid, 0.0) + dt_days
+					_disc_days[pid] = d
+					nc[pid] = d < SimConstants.CONNECT_GRACE_DAYS
+	# Drop timers for colonies that no longer exist so the dict can't grow unbounded.
+	for pid in _disc_days.keys():
+		if not live_pids.has(pid):
+			_disc_days.erase(pid)
 	_connected = nc
 	_conn_computed = true
 
@@ -1960,7 +1984,7 @@ func tick(dt_days: float) -> void:
 	# Supply lines: refresh which colonies can still trace a friendly path to their
 	# capital. Disconnected ones drop out of influence, refining and the water pool
 	# below. (One-tick-lagged; see recompute_connectivity.)
-	recompute_connectivity()
+	recompute_connectivity(dt_days)
 
 	# 1. Mines. Water is a FLOW into per-tick water_income (never banked); minerals are
 	#    banked (they feed the alloy chain). Reset the water flow at the top of the tick.
