@@ -967,6 +967,18 @@ func _test_support_structures() -> void:
 		reach_before * SimConstants.OBS_POST_REACH_MULT),
 		"observation post doubles influence reach")
 
+	# A FORWARD post on a system with no colony still projects (sensor floor), so a
+	# bodyless watchtower isn't a no-op — reach = A2 * OBS_POST_INFLUENCE * mult.
+	var fwd := sim.add_system("Fwd")
+	fwd.map_pos = Vector2(400, 0)
+	check(is_zero_approx(sim.influence_reach(fwd.id, e.id)),
+		"empty system projects no influence before a post is placed")
+	fwd.obs_post_empire_id = e.id
+	check(is_equal_approx(sim.influence_reach(fwd.id, e.id),
+		SimConstants.BORDER_A2 * SimConstants.OBS_POST_INFLUENCE
+			* SimConstants.OBS_POST_REACH_MULT),
+		"a forward (no-colony) post still projects a sensor reach")
+
 	# Imperial center: RAISES the system's colony influence (bigger borders) by BURNING
 	# tier-L alloy — no water cost. The bonus WINDS UP via charge, it is not instant. Compare a
 	# baseline empire against an identical one that builds a center.

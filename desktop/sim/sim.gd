@@ -794,6 +794,11 @@ func system_influence(system_id: int, empire_id: int) -> float:
 	# charged in the demand loop). Bigger borders/reach/VR — influence you buy, not grow.
 	if best > 0.0 and systems[system_id].imperial_empire_id == empire_id:
 		best *= 1.0 + _imperial_bonus(system_id)
+	# An observation post projects its own sensor influence even with no colony here, so a
+	# forward watchtower still reaches outward (influence_reach then doubles it). On a real
+	# colony the colony's influence is larger, so maxf leaves established borders untouched.
+	if systems[system_id].obs_post_empire_id == empire_id:
+		best = maxf(best, SimConstants.OBS_POST_INFLUENCE)
 	return best
 
 

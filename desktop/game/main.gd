@@ -1564,7 +1564,7 @@ func _draw_galaxy() -> void:
 					break   # one planet per node -> one bubble per system
 			if _galaxy_cam_zoom >= LABEL_ZOOM:
 				# colony shown by its skyline glyph in the crown above -- no count
-				_draw_name(font, sys.map_pos + Vector2(-60.0, label_y), sys.name,
+				_draw_name(font, sys.map_pos + Vector2(0.0, label_y), sys.name,
 					Color(1, 1, 1, 0.85))
 		else:
 			# Explored but out of VR: dim star + the frozen last-seen snapshot
@@ -1577,7 +1577,7 @@ func _draw_galaxy() -> void:
 				gc.a = 0.4
 				draw_arc(sys.map_pos, 13.0, 0.0, TAU, 40, gc, 1.5, true)
 			if _galaxy_cam_zoom >= LABEL_ZOOM:
-				_draw_name(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
+				_draw_name(font, sys.map_pos + Vector2(0.0, 26.0), sys.name,
 					Color(1, 1, 1, 0.5))
 		# Setting: draw this system's deposit glyph always (not just on hover). The
 		# hovered system already shows the full symbol row, so skip it here.
@@ -1932,10 +1932,22 @@ func _star_color(sid: int) -> Color:
 
 # A centered map label with a soft dark drop-shadow, so names lift off the fog/stars
 # (depth + readability) instead of blending into the background.
+# `pos` is the CENTER anchor of the label, in world space. Labels are drawn under the zoom
+# camera, so a fixed font_size rasterises its glyph atlas at ONE size and the camera then
+# magnifies that bitmap — crisp only near zoom 1.0, blurry when zoomed in (the "only one
+# focus level is unblurred" look). We counter-scale the draw by 1/zoom so the atlas is
+# rasterised at the on-screen pixel size every frame: text stays a constant, crisp ~12px at
+# every zoom level instead of a single sharp one.
 func _draw_name(font: Font, pos: Vector2, text: String, col: Color) -> void:
-	draw_string(font, pos + Vector2(1.0, 1.5), text, HORIZONTAL_ALIGNMENT_CENTER, 120,
-		12, Color(0.0, 0.0, 0.0, col.a * 0.85))
-	draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_CENTER, 120, 12, col)
+	var z: float = maxf(_galaxy_cam_zoom, 0.001)
+	var fs := 12
+	var w: float = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	draw_set_transform(pos, 0.0, Vector2(1.0 / z, 1.0 / z))
+	var left := Vector2(-w * 0.5, 0.0)
+	draw_string(font, left + Vector2(1.0, 1.5), text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		fs, Color(0.0, 0.0, 0.0, col.a * 0.85))
+	draw_string(font, left, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 # Water deposit — a teardrop (pointed top, round bulb) with a rim and a highlight glint.
@@ -3258,12 +3270,16 @@ func _show_system_panel(sys_id: int) -> void:
 		obs_post_btn.visible = false
 	# Imperial center (burns tier-L alloy to amplify this system's colony influence). Built:
 	# a compact dial MenuButton (detail lives in the popup). Not built: a plain Build button.
-	imperial_menu.visible = false
+	# Toggling a MenuButton's .visible closes its open popup, so only touch .visible when the
+	# desired state actually changes — otherwise this per-refresh panel update slammed the
+	# dial shut every tick and the menu could never stay open long enough to read.
+	var want_imperial_menu: bool = live and sysd.imperial_empire_id == player_empire_id
+	if imperial_menu.visible != want_imperial_menu:
+		imperial_menu.visible = want_imperial_menu
 	if not live:
 		imperial_btn.visible = false
 	elif sysd.imperial_empire_id == player_empire_id:
 		imperial_btn.visible = false
-		imperial_menu.visible = true
 		var lvl: int = sysd.imperial_level
 		var tgt_pct: int = lvl * int(SimConstants.IMPERIAL_BONUS_PER_LEVEL * 100.0)
 		var charge: float = sim.imperial_feed_at(sys_id)

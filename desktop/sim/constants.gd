@@ -180,6 +180,14 @@ const DEPOT_COST_ALLOYS := 60.0
 # border). Vision: "doubles influence range, adds a separate visibility range."
 const OBS_POST_COST_ALLOYS := 90.0
 const OBS_POST_REACH_MULT := 2.0
+# A post also projects a small SENSOR influence of its own, so a FORWARD (bodyless)
+# watchtower on an empty frontier system still bulges the border and — scaled by sight
+# — lights up adjacent space for early warning. Without this the post was a no-op on
+# any system lacking a colony, since reach = A2 * system_influence and that is 0 with no
+# colony. On a real colony the colony's influence dwarfs this floor, so nothing changes
+# there. Kept below ACTIVATION_POP-equivalent influence so it can't conjure territory
+# the way a grown colony does: border reach ≈ A2*30*2 ≈ 108, sight ≈ 108*1.8 ≈ 195.
+const OBS_POST_INFLUENCE := 30.0
 # Citadel: an expensive fortress on one of your systems. It walls the system off — enemy
 # fleets cannot pass THROUGH it (they must make it their destination and bombard it down
 # to advance past). Its hull is enormous, so a citadel on a chokepoint lane buys many
