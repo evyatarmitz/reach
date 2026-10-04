@@ -81,6 +81,9 @@ func _init() -> void:
 	_test_citadel()
 	_test_attrition_and_depot()
 	_test_structure_capture()
+	_test_fort_razed_on_border_loss()
+	_test_fort_defends_colony_under_it()
+	_test_structure_anchored_by_colony()
 	_test_support_structures()
 	_test_resource_variety()
 	_test_construction_vessel()
@@ -1391,6 +1394,66 @@ func _test_structure_capture() -> void:
 	sim.tick(SimConstants.TICK_DAYS)
 	check(mp.mine_empire_id == strong.id,
 		"a mine changes hands to whoever controls the system as the border shifts")
+
+
+func _test_fort_razed_on_border_loss() -> void:
+	# A fort (citadel) on a chokepoint with NO colony under it: when an enemy border
+	# sweeps over its system, it is RAZED, never handed to the enemy.
+	var sim := Sim.new()
+	var mine := sim.add_empire("Mine", Color.GREEN)
+	var foe := sim.add_empire("Foe", Color.RED)
+	var home := sim.add_system("Home")
+	home.map_pos = Vector2(1000, 0)
+	var gate := sim.add_system("Gate")          # chokepoint: my fort, no colony
+	gate.map_pos = Vector2(100, 0)
+	var foebase := sim.add_system("FoeBase")
+	foebase.map_pos = Vector2.ZERO
+	sim.add_lane(home.id, gate.id)
+	sim.add_lane(gate.id, foebase.id)
+	sim.inject_colony(mine.id, sim.add_planet(home.id, "h").id, 300.0, true)
+	sim.add_planet(gate.id, "g")                 # empty node under the fort
+	sim.inject_colony(foe.id, sim.add_planet(foebase.id, "f").id, 6000.0, true)
+	gate.citadel_empire_id = mine.id
+	gate.citadel_hp = SimConstants.CITADEL_MAX_HP
+	check(sim.system_owner(gate.id) == foe.id, "the overwhelming foe border takes the gate")
+	sim.tick(SimConstants.TICK_DAYS)
+	check(sim.systems[gate.id].citadel_empire_id == -1,
+		"a fort with no colony under it is razed when the enemy border takes its system")
+
+
+func _test_fort_defends_colony_under_it() -> void:
+	# The same fort, but a friendly colony shelters under it: the border flips (the
+	# colony goes disconnected) yet the fort STANDS and keeps its owner.
+	var d := _overrun_scenario(SimConstants.Deposit.NONE)
+	var sim: Sim = d.sim
+	var m: StarSystem = d.m
+	m.citadel_empire_id = d.v.id
+	m.citadel_hp = SimConstants.CITADEL_MAX_HP
+	sim.tick(SimConstants.TICK_DAYS)
+	check(sim.owner_cached(m.id) == d.e.id, "the enemy border holds the overrun system")
+	check(sim.systems[m.id].citadel_empire_id == d.v.id,
+		"a fort over a friendly colony stands and defends instead of being razed")
+
+
+func _test_structure_anchored_by_colony() -> void:
+	# "Whoever has the planet owns its structures." A benefit structure (a supply depot)
+	# stays with its owner while that owner still holds a colony in the system, even under
+	# an enemy border — then changes hands once the colony is gone.
+	var d := _overrun_scenario(SimConstants.Deposit.NONE)
+	var sim: Sim = d.sim
+	var m: StarSystem = d.m
+	sim.systems[m.id].depot_empire_id = d.v.id
+	sim.tick(SimConstants.TICK_DAYS)
+	check(sim.owner_cached(m.id) == d.e.id, "the enemy border holds the overrun system")
+	check(sim.systems[m.id].depot_empire_id == d.v.id,
+		"a structure stays with its owner while a friendly colony anchors it")
+	# Remove the sheltering colony; now nothing anchors the depot and it flips.
+	sim.planets[d.fwd.planet_id].colony = null
+	sim.colonies.erase(d.fwd)
+	sim._invalidate_influence_caches()
+	sim.tick(SimConstants.TICK_DAYS)
+	check(sim.systems[m.id].depot_empire_id == d.e.id,
+		"with no colony to anchor it, the structure changes hands to the border owner")
 
 
 func _test_difficulty() -> void:

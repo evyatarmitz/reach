@@ -2114,16 +2114,22 @@ func tick(dt_days: float) -> void:
 	# 7. Combat: fleets auto-fight where enemies meet, else bombard (see 0.25.0).
 	_resolve_combat(dt_days)
 
-	# 8. Structures follow the border: a mine or supply depot changes hands to
-	#    whoever now controls its system. Colonies do NOT flip (a colony holds its
-	#    own system — it must be bombarded to be taken).
+	# 8. Structures follow the border — but a colony ANCHORS them. "Whoever has the
+	#    planet" owns its structures: a benefit structure (mine, supply depot, observation
+	#    post, imperial centre) changes hands to whoever now controls the system, UNLESS
+	#    its original owner still holds a colony there — a disconnected holdout keeps its
+	#    own structures even while an enemy border washes over the bubble. A citadel is a
+	#    FORT: it can never be handed to the enemy. If an enemy border takes its system and
+	#    no friendly colony shelters under it, the fort is destroyed (scorched, not
+	#    captured); with a colony under it, it stands and defends until it — or the colony —
+	#    is bombarded down. Colonies themselves never flip (they must be bombarded to fall).
 	var struct_systems := {}
 	for p in planets.values():
 		if p.has_mine():
 			struct_systems[p.system_id] = true
 	for sys in systems.values():
 		if sys.depot_empire_id != -1 or sys.obs_post_empire_id != -1 \
-				or sys.imperial_empire_id != -1:
+				or sys.imperial_empire_id != -1 or sys.citadel_empire_id != -1:
 			struct_systems[sys.id] = true
 	var owner_of := {}
 	for sid in struct_systems:
@@ -2131,15 +2137,23 @@ func tick(dt_days: float) -> void:
 	for p in planets.values():
 		if p.has_mine():
 			var o: int = owner_of[p.system_id]
-			if o != -1 and o != p.mine_empire_id:
+			if o != -1 and o != p.mine_empire_id \
+					and not _empire_has_colony_in(p.mine_empire_id, p.system_id):
 				p.mine_empire_id = o
 	for sys in systems.values():
 		var o: int = owner_of.get(sys.id, -1)
 		if o == -1:
 			continue
-		if sys.depot_empire_id != -1 and o != sys.depot_empire_id:
+		if sys.depot_empire_id != -1 and o != sys.depot_empire_id \
+				and not _empire_has_colony_in(sys.depot_empire_id, sys.id):
 			sys.depot_empire_id = o
-		if sys.obs_post_empire_id != -1 and o != sys.obs_post_empire_id:
+		if sys.obs_post_empire_id != -1 and o != sys.obs_post_empire_id \
+				and not _empire_has_colony_in(sys.obs_post_empire_id, sys.id):
 			sys.obs_post_empire_id = o
-		if sys.imperial_empire_id != -1 and o != sys.imperial_empire_id:
+		if sys.imperial_empire_id != -1 and o != sys.imperial_empire_id \
+				and not _empire_has_colony_in(sys.imperial_empire_id, sys.id):
 			sys.imperial_empire_id = o
+		if sys.citadel_empire_id != -1 and o != sys.citadel_empire_id \
+				and not _empire_has_colony_in(sys.citadel_empire_id, sys.id):
+			sys.citadel_empire_id = -1   # a fort is razed, never captured
+			sys.citadel_hp = 0.0

@@ -1460,16 +1460,20 @@ func _draw_galaxy() -> void:
 				else:
 					draw_arc(sys.map_pos, ring_r, 0.0, TAU, 40,
 						sim.empires[owner].color, 2.0, true)
-			# A disconnected (overrun/cut-off) colony still holds a TINY bubble around its
-			# own star in its owner's colour, even though the broad territory has flipped to
-			# whoever now surrounds it — a besieged holdout, smaller than any structure badge.
+			# A disconnected (overrun/cut-off) colony still holds a POCKET of territory
+			# around its own star in its owner's colour, even though the broad region has
+			# flipped to whoever surrounds it. Drawn as a real border bubble (filled claim +
+			# outline), sized to reach about halfway to the nearest star — held ground, not a dot.
 			for pid in sys.planet_ids:
 				var dcol: Colony = sim.planets[pid].colony
 				if dcol != null and not sim._is_colony_active(dcol):
 					var bc: Color = sim.empires[dcol.empire_id].color
-					draw_circle(sys.map_pos, 5.0 * sscale, Color(bc.r, bc.g, bc.b, 0.85))
-					draw_arc(sys.map_pos, 5.0 * sscale, 0.0, TAU, 20,
-						Color(1, 1, 1, 0.6), 1.0, true)
+					var br: float = _bubble_radius(sys.id)
+					draw_circle(sys.map_pos, br, Color(bc.r, bc.g, bc.b, 0.12))
+					draw_arc(sys.map_pos, br, 0.0, TAU, 48,
+						Color(bc.r, bc.g, bc.b, 0.22), 5.0, true)
+					draw_arc(sys.map_pos, br, 0.0, TAU, 48, bc, 2.0, true)
+					break   # one planet per node -> one bubble per system
 			if _galaxy_cam_zoom >= LABEL_ZOOM:
 				if cc > 0:   # colony count sits just OUTSIDE the ring, upper-right
 					draw_string(font, sys.map_pos + Vector2(ring_r + 4.0, -ring_r * 0.35),
@@ -1879,6 +1883,20 @@ func _label_drop(sys: StarSystem) -> float:
 			spop += pcol.population
 	var sscale: float = 1.0 + clampf(spop / 2500.0, 0.0, 1.0) * 0.7
 	return 15.0 * sscale + 12.0
+
+
+# Radius of a disconnected colony's held-territory bubble: about half the distance to the
+# nearest lane-neighbour star, so the pocket reaches roughly halfway to the next system.
+# Floored so it always reads larger than the owner ring; falls back to the map's minimum
+# star separation for a (lane-less) isolated node.
+func _bubble_radius(system_id: int) -> float:
+	var here: Vector2 = sim.systems[system_id].map_pos
+	var nd := INF
+	for nb in sim.lane_neighbors(system_id):
+		nd = minf(nd, here.distance_to(sim.systems[nb].map_pos))
+	if nd == INF:
+		nd = SimConstants.MAP_MIN_SEPARATION
+	return maxf(nd * 0.5, 18.0)
 
 
 func _draw_structure_badges(center: Vector2, depot_id: int, obs_id: int,
