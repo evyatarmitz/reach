@@ -417,7 +417,7 @@ func serialize() -> Dictionary:
 		fs.append({"id": f.id, "eid": f.empire_id, "sys": f.system_id,
 			"path": f.path.duplicate(), "prog": f.progress,
 			"fi": f.fighters.duplicate(), "bo": f.bombers.duplicate(),
-			"dmg": f.damage, "fd": f.foreign_days})
+			"dmg": f.damage, "sr": f.supply_reserve})
 	var ai: Array = []
 	for a in ais:
 		ai.append({"eid": a.empire_id, "bc": a._build_count,
@@ -504,7 +504,7 @@ static func deserialize(d: Dictionary) -> Sim:
 		fl.system_id = int(f.sys)
 		fl.progress = f.prog
 		fl.damage = f.dmg
-		fl.foreign_days = f.fd
+		fl.supply_reserve = float(f.get("sr", SimConstants.SUPPLY_RESERVE_DAYS))
 		var pth: Array[int] = []
 		for x in f.path:
 			pth.append(int(x))
@@ -1580,10 +1580,32 @@ func _fleet_supplied(f: Fleet) -> bool:
 	return false
 
 
-# Public wrapper: is this fleet currently within friendly supply range? (Renderer uses it
-# to flag an unsupplied fleet that's bleeding attrition in foreign space.)
-func fleet_supplied(f: Fleet) -> bool:
+# Is this fleet in SAFE space (no reserve drain, no attrition)? Safe if it sits on its own
+# border, ONE lane hop beyond it (free border grace — routine skirmishes need no supply
+# line), or within a friendly depot's radius.
+func _fleet_safe(f: Fleet) -> bool:
+	if owner_cached(f.system_id) == f.empire_id:
+		return true
+	for nb in lane_neighbors(f.system_id):
+		if owner_cached(nb) == f.empire_id:
+			return true
 	return _fleet_supplied(f)
+
+
+# Public wrapper: is this fleet currently in safe supply space? (Renderer uses it to flag a
+# fleet that's burning its supply reserve / bleeding attrition out in foreign space.)
+func fleet_supplied(f: Fleet) -> bool:
+	return _fleet_safe(f)
+
+
+# Fraction of the supply reserve a fleet has left (1 = full, 0 = dry → taking attrition).
+func fleet_reserve_frac(f: Fleet) -> float:
+	return clampf(f.supply_reserve / SimConstants.SUPPLY_RESERVE_DAYS, 0.0, 1.0)
+
+
+# True once a fleet is unsafe AND out of reserve — i.e. actively losing hull to attrition.
+func fleet_starving(f: Fleet) -> bool:
+	return not _fleet_safe(f) and f.supply_reserve <= 0.0
 
 
 # The set of systems that are SAFE for an empire's fleets — no border attrition there.
@@ -1595,6 +1617,12 @@ func supply_safe_systems(empire_id: int) -> Dictionary:
 	for sid in systems:
 		if owner_cached(sid) == empire_id:
 			safe[sid] = true
+	# +1 hop border grace (no depot needed): the ring of systems one lane out from any
+	# owned system is safe too, so border skirmishes stay attrition-free.
+	for sid in systems:
+		if owner_cached(sid) == empire_id:
+			for nb in lane_neighbors(sid):
+				safe[nb] = true
 	var dist := {}
 	var queue: Array = []
 	for sid in systems:
@@ -1878,16 +1906,19 @@ func _resolve_combat(dt_days: float) -> void:
 	if not destroyed_colonies.is_empty():
 		_invalidate_influence_caches()
 
-	# Border attrition: a fleet outside its own borders bleeds hull ∝ its own size,
-	# immediately (no grace). Negated within a friendly depot's supply radius, so a
-	# forward depot is what lets you campaign in hostile space. Moving fleets bleed
-	# too (keyed on the system they're leaving) — marching through foreign space costs.
+	# Border attrition, "oxygen" model: a fleet in unsafe space first burns a depletable
+	# supply reserve; only once that hits 0 does it bleed hull ∝ its own size. Safe space
+	# (own border, +1 hop grace, or a depot radius) refills the reserve fast. This buys a
+	# raid-and-return window instead of the old instant death-strike. Moving fleets are
+	# keyed on the system they're leaving — marching through foreign space still costs.
 	for f in fleets:
-		if owner_cached(f.system_id) == f.empire_id or _fleet_supplied(f):
-			f.foreign_days = 0.0
+		if _fleet_safe(f):
+			f.supply_reserve = minf(SimConstants.SUPPLY_RESERVE_DAYS,
+				f.supply_reserve + SimConstants.SUPPLY_REFILL_MULT * dt_days)
 			continue
-		f.foreign_days += dt_days
-		_damage_fleet(f, SimConstants.ATTRITION_FRAC * f.hull() * dt_days)
+		f.supply_reserve = maxf(0.0, f.supply_reserve - dt_days)
+		if f.supply_reserve <= 0.0:
+			_damage_fleet(f, SimConstants.ATTRITION_FRAC * f.hull() * dt_days)
 
 	# Cull emptied fleets.
 	var empty: Array[Fleet] = []

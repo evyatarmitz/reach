@@ -15,7 +15,9 @@ var progress: float = 0.0      # 0..1 along the lane from system_id to path[0]
 var fighters: Array[int] = [0, 0, 0, 0, 0]
 var bombers: Array[int] = [0, 0, 0, 0, 0]
 var damage: float = 0.0        # accumulated combat damage; destroys ships as it mounts
-var foreign_days: float = 0.0  # days parked in unsupplied foreign space (attrition)
+var supply_reserve: float = SimConstants.SUPPLY_RESERVE_DAYS  # "oxygen": days of endurance
+                                # left in unsafe space. Drains while unsafe, refills while
+                                # safe; attrition only bites once it hits 0. See Sim.tick.
 
 
 func is_moving() -> bool:

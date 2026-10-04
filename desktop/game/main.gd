@@ -1679,14 +1679,18 @@ func _draw_galaxy() -> void:
 			if f.is_moving():
 				draw_line(fp, sim.systems[f.path[f.path.size() - 1]].map_pos,
 					Color(1, 1, 1, 0.4), 1.0, true)
-			# Stranded outside the green supply field -> bleeding border attrition: a red
-			# warning ring and the days it's been losing ships to lack of supply.
+			# Outside the green supply field -> burning its supply reserve ("oxygen"). An
+			# amber ring + reserve % while it still has reserve; flips to a red "OUT OF
+			# SUPPLY" the moment the reserve runs dry and real attrition starts.
 			if own and not supply_safe.has(f.system_id):
-				draw_arc(fp, 13.0, 0.0, TAU, 32, Color(1.0, 0.30, 0.25, 0.9), 2.0, true)
-				var warn := "unsupplied"
-				if f.foreign_days >= 1.0:
-					warn = "unsupplied %dd" % int(f.foreign_days)
-				_draw_name(font, fp + Vector2(0, -22), warn, Color(1.0, 0.5, 0.42))
+				var frac := sim.fleet_reserve_frac(f)
+				var ring := Color(1.0, 0.65, 0.20, 0.85)
+				var warn := "supply %d%%" % int(frac * 100.0)
+				if frac <= 0.0:
+					ring = Color(1.0, 0.30, 0.25, 0.95)
+					warn = "OUT OF SUPPLY"
+				draw_arc(fp, 13.0, 0.0, TAU, 32, ring, 2.0, true)
+				_draw_name(font, fp + Vector2(0, -22), warn, ring)
 
 	# Live box-select rectangle while the player is dragging.
 	if _dragging:
@@ -3770,7 +3774,7 @@ func _autoshot() -> void:
 	f_safe.fighters[0] = 20
 	var f_stranded := sup_sim._fleet_at(sA.id, deep_sys.id)   # parked in rival deep space
 	f_stranded.fighters[0] = 20
-	f_stranded.foreign_days = 6.0
+	f_stranded.supply_reserve = 0.0   # reserve already spent -> red "OUT OF SUPPLY"
 	sim = sup_sim
 	player_empire_id = sA.id
 	_storm_bands.clear()

@@ -158,11 +158,18 @@ const BOMBARD_RATE := 0.15
 # flat per-battle cap used to flatten every ratio to the same tiny kill rate). This
 # constant is now just the AI's "I've massed a decisive strike force" threshold.
 const POWER_CEILING := 200.0
-# Border attrition: a fleet outside its own borders bleeds this fraction of its
-# own hull per day — immediately, no grace. Bigger fleets bleed more in absolute
-# terms, so no one can project force into hostile space indefinitely. The counter-
-# play is a supply depot (below), which extends a safe supply radius forward.
+# Border attrition: a fleet in UNSAFE space burns a depletable supply reserve ("oxygen")
+# first, and only starts bleeding this fraction of its own hull per day once the reserve
+# hits zero. Bigger fleets bleed more in absolute terms, so no one can project force into
+# hostile space indefinitely — but the reserve buys a window to raid and fight a small
+# battle before the clock bites. Safe space = own border, ONE lane hop beyond it (free
+# border grace, no depot), or a supply depot's radius (below).
 const ATTRITION_FRAC := 0.02
+# Fleet supply reserve, in days of endurance away from safe space. Full reserve ≈ a couple
+# of jumps out plus time for a short engagement before attrition begins; it refills (faster
+# than it drains) the moment the fleet is back in safe space. Tune for raid-and-return feel.
+const SUPPLY_RESERVE_DAYS := 18.0
+const SUPPLY_REFILL_MULT := 3.0   # reserve days regained per real day while in safe space
 # Supply depot: negates border attrition for friendly fleets within this many lane
 # jumps of the depot's system (0 = same system). This is what lets you campaign in
 # foreign space — plant a depot, and everything DEPOT_SUPPLY_JUMPS hops out is safe.

@@ -1401,23 +1401,46 @@ func _test_citadel() -> void:
 
 
 func _test_attrition_and_depot() -> void:
-	# home (owned) linked to a far, unowned system where a fleet will overstay.
+	# home (owned) -- mid (1 hop out, free grace) -- far (2 hops out, no supply).
 	var sim := Sim.new()
 	var e := sim.add_empire("E", Color.WHITE)
 	e.nat[0] = 1.0e9
 	var home := sim.add_system("Home")
 	home.map_pos = Vector2.ZERO
 	sim.inject_colony(e.id, sim.add_planet(home.id, "H").id, 150.0, true)
+	var mid := sim.add_system("Mid")
+	mid.map_pos = Vector2(5000, 0)   # 1 hop beyond the border
+	sim.add_planet(mid.id, "M")
 	var far := sim.add_system("Far")
-	far.map_pos = Vector2(5000, 0)   # out of the home's influence
+	far.map_pos = Vector2(6000, 0)   # 2 hops out, beyond the grace zone
 	sim.add_planet(far.id, "F")
-	sim.add_lane(home.id, far.id)
+	sim.add_lane(home.id, mid.id)
+	sim.add_lane(mid.id, far.id)
 
+	# One hop beyond the border = free grace zone: no depot, but still safe (no bleed).
+	var fg := sim._fleet_at(e.id, mid.id)
+	fg.fighters[0] = 200
+	var fg0: float = fg.hull()
+	check(sim.fleet_supplied(fg), "a fleet one hop beyond its border rides the free grace zone")
+
+	# Two hops out: it first burns its oxygen reserve, taking NO damage, then bleeds.
 	var f := sim._fleet_at(e.id, far.id)
 	f.fighters[0] = 200
 	var hull0: float = f.hull()
-	run_days(sim, 30.0)   # no grace period: it bleeds right away
-	check(f.hull() < hull0, "a fleet outside its borders bleeds hull to attrition immediately")
+	run_days(sim, SimConstants.SUPPLY_RESERVE_DAYS * 0.5)   # still inside the reserve window
+	check(is_equal_approx(f.hull(), hull0),
+		"a fleet out of supply takes NO damage while its reserve lasts")
+	check(f.supply_reserve < SimConstants.SUPPLY_RESERVE_DAYS,
+		"the supply reserve depletes in unsafe space")
+	run_days(sim, SimConstants.SUPPLY_RESERVE_DAYS)         # reserve now exhausted -> attrition
+	check(f.hull() < hull0, "a fleet bleeds hull only after its supply reserve runs dry")
+	check(is_equal_approx(fg.hull(), fg0), "the grace-zone fleet never bled")
+
+	# Back in safe space, the reserve refills.
+	var dry: float = f.supply_reserve
+	f.system_id = home.id
+	run_days(sim, 2.0)
+	check(f.supply_reserve > dry, "the supply reserve refills once back in safe space")
 
 	# Same, but a supply depot in the system negates attrition.
 	var sim2 := Sim.new()
