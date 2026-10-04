@@ -2,7 +2,9 @@ extends Node2D
 
 # Render/UI layer. Reads Sim state, forwards commands. No game rules live here.
 
-const SPEEDS: Array[float] = [0.0, 1.0, 3.0, 10.0]
+const SPEEDS: Array[float] = [0.0, 1.0, 2.0, 4.0, 7.0, 10.0]
+# Index 0 is paused; indices 1..5 are the five dial levels, shown as a strip of five
+# chevrons that light up toward "+". Spans the old 1x-10x range on a gentle ramp.
 # Base clock slowed (1.0 -> 0.5 -> 0.4) so the whole sim reads slower in real
 # time; the speed dial multiplies this, so fast-forward is still one click away.
 const DAYS_PER_REAL_SECOND := 0.4
@@ -147,7 +149,10 @@ var _alerts: Array = []               # [{"t": ms, "text": String, "sid": int}],
 var _alert_idx := 0                   # next alert the jump button will fly to (oldest->newest)
 var alert_btn: Button                 # bottom-center "N alerts — jump" button
 const ALERT_WINDOW_MS := 18000.0      # keep alerts from the last ~18s
-var speed_buttons: Array[Button] = []
+var speed_chevrons: Array[Label] = []   # the 5-level dial strip; lit up to speed_idx
+var speed_readout: Label                 # "Paused" / "2x" etc. beside the dial
+var speed_slower_btn: Button             # clickable "◀" (same as the - key)
+var speed_faster_btn: Button             # clickable "▶" (same as the + key)
 var panel: PanelContainer
 var ship_panel: PanelContainer   # top-right shipyard; the selection panel docks below it
 var ship_body: VBoxContainer     # the collapsible part (tier grid + cost note)
@@ -1300,10 +1305,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.keycode == KEY_ESCAPE:
 			_on_escape()
 			return
-		# Numpad +/- are fixed speed shortcuts on top of the rebindable = / -.
-		if event.keycode == KEY_KP_ADD:
+		# +/- step the speed dial, both on the numpad and the main row (KEY_EQUAL is the
+		# unshifted "+"), fixed on top of the rebindable = / - actions.
+		if event.keycode == KEY_KP_ADD or event.keycode == KEY_EQUAL:
 			speed_idx = mini(SPEEDS.size() - 1, speed_idx + 1)
-		elif event.keycode == KEY_KP_SUBTRACT:
+		elif event.keycode == KEY_KP_SUBTRACT or event.keycode == KEY_MINUS:
 			speed_idx = maxi(0, speed_idx - 1)
 		else:
 			_dispatch_action(Keybinds.action_for(event.keycode))
@@ -2424,13 +2430,48 @@ func _build_ui() -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bar.add_child(spacer)
 
-	for i in SPEEDS.size():
-		var b := Button.new()
-		b.text = "Pause" if i == 0 else "%dx" % int(SPEEDS[i])
-		b.toggle_mode = true
-		b.pressed.connect(func() -> void: speed_idx = i)
-		bar.add_child(b)
-		speed_buttons.append(b)
+	# Speed dial: [◀]  › › › › ›  [▶]  readout. The chevrons light up toward "+" to show
+	# the current level (none lit = paused). The arrows step it; so do the + / - keys.
+	var dial := HBoxContainer.new()
+	dial.add_theme_constant_override("separation", 3)
+	dial.tooltip_text = "Game speed — click the arrows or press + / - to change. Space pauses."
+
+	speed_slower_btn = Button.new()
+	speed_slower_btn.text = "◀"
+	speed_slower_btn.focus_mode = Control.FOCUS_NONE
+	speed_slower_btn.pressed.connect(func() -> void: speed_idx = maxi(0, speed_idx - 1))
+	dial.add_child(speed_slower_btn)
+
+	var strip := HBoxContainer.new()
+	strip.add_theme_constant_override("separation", 1)
+	for i in 5:
+		var chev := Label.new()
+		chev.text = "›"
+		chev.add_theme_font_size_override("font_size", 22)
+		# Clicking a chevron jumps straight to that level (level = index + 1).
+		chev.mouse_filter = Control.MOUSE_FILTER_STOP
+		var lvl := i + 1
+		chev.gui_input.connect(func(ev: InputEvent) -> void:
+			if ev is InputEventMouseButton and ev.pressed \
+					and ev.button_index == MOUSE_BUTTON_LEFT:
+				speed_idx = lvl)
+		strip.add_child(chev)
+		speed_chevrons.append(chev)
+	dial.add_child(strip)
+
+	speed_faster_btn = Button.new()
+	speed_faster_btn.text = "▶"
+	speed_faster_btn.focus_mode = Control.FOCUS_NONE
+	speed_faster_btn.pressed.connect(func() -> void:
+		speed_idx = mini(SPEEDS.size() - 1, speed_idx + 1))
+	dial.add_child(speed_faster_btn)
+
+	speed_readout = Label.new()
+	speed_readout.custom_minimum_size = Vector2(52, 0)
+	speed_readout.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	dial.add_child(speed_readout)
+
+	bar.add_child(dial)
 
 	var menu_btn := Button.new()
 	menu_btn.text = "Menu"
@@ -3057,8 +3098,13 @@ func _refresh_ui() -> void:
 			pcol += 1
 	standing_label.text = "◆ Worlds %d · Pop %s · Colonies %d" \
 		% [psys, _fmt_num(ppop), pcol]
-	for i in speed_buttons.size():
-		speed_buttons[i].button_pressed = (i == speed_idx)
+	for i in speed_chevrons.size():
+		var lit := i < speed_idx   # levels are 1-based; idx 0 (paused) lights none
+		speed_chevrons[i].modulate = Color(0.55, 1.0, 0.70) if lit \
+			else Color(1, 1, 1, 0.18)
+	speed_readout.text = "Paused" if speed_idx == 0 else "%dx" % int(SPEEDS[speed_idx])
+	speed_slower_btn.disabled = speed_idx == 0
+	speed_faster_btn.disabled = speed_idx == SPEEDS.size() - 1
 	for t in 5:   # enable ship buttons only for tiers the player can pay for
 		var affordable := sim.can_build_ship(player_empire_id, t + 1)
 		ship_f_btns[t].disabled = not affordable
