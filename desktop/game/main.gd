@@ -168,6 +168,7 @@ var upgrade_btn: Button
 var depot_btn: Button
 var obs_post_btn: Button
 var imperial_btn: Button
+var imperial_down_btn: Button
 var citadel_btn: Button
 var ship_f_btns: Array = []   # fighter build buttons, tier 1-5
 var ship_b_btns: Array = []   # bomber build buttons, tier 1-5
@@ -1781,8 +1782,9 @@ func _node_tooltip(sid: int) -> String:
 		if sys.obs_post_empire_id != -1:
 			structs.append("observation post")
 		if sys.imperial_empire_id != -1:
-			structs.append("imperial center L%d (+%d%% influence)"
-				% [sys.imperial_level, int(sim.imperial_bonus_at(sys.id) * 100.0)])
+			structs.append("imperial center L%d (+%d%% influence, eats T%d)"
+				% [sys.imperial_level, int(round(sim.imperial_bonus_at(sys.id) * 100.0)),
+					sys.imperial_level])
 		if sys.citadel_empire_id != -1:
 			structs.append("citadel (%d%% hull)"
 				% int(100.0 * sys.citadel_hp / SimConstants.CITADEL_MAX_HP))
@@ -2497,7 +2499,10 @@ func _build_ui() -> void:
 	obs_post_btn.tooltip_text = "Observation post — doubles this system's influence reach (its border pushes twice as far) and, since sight rides influence, extends your vision well past the border (early warning)."
 	imperial_btn = Button.new()
 	imperial_btn.pressed.connect(_on_build_imperial)
-	imperial_btn.tooltip_text = "Imperial center — amplifies this system's colony influence (bigger borders, longer reach and vision) in exchange for extra water: +10% for +10% at L1, upgrading to +30% then +50% as the colony grows. Buy influence with your water surplus."
+	imperial_btn.tooltip_text = "Imperial center — amplifies this system's colony influence (bigger borders, longer reach and vision) by burning alloy. Dial the level 1-5: each level adds +10% influence and drains a fixed amount of that tier's alloy per day (L1 eats T1 … L5 eats T5). High levels eat the same high-tier alloy your top warships need, so running several is costly. Run out of a tier's alloy and that center's bonus fades until you can feed it again."
+	imperial_down_btn = Button.new()
+	imperial_down_btn.pressed.connect(_on_lower_imperial)
+	imperial_down_btn.tooltip_text = "Lower this imperial center one level (cuts its alloy drain). Dropping below level 1 demolishes it."
 	citadel_btn = Button.new()
 	citadel_btn.pressed.connect(_on_build_citadel)
 	citadel_btn.tooltip_text = "Citadel — an expensive fortress with enormous hull. Enemy fleets cannot pass THROUGH this system while it stands; they must stop and bombard it down first. Plant one on a chokepoint lane to wall off a whole region until it's destroyed."
@@ -2515,6 +2520,7 @@ func _build_ui() -> void:
 	vbox.add_child(depot_btn)
 	vbox.add_child(obs_post_btn)
 	vbox.add_child(imperial_btn)
+	vbox.add_child(imperial_down_btn)
 	vbox.add_child(citadel_btn)
 	vbox.add_child(merge_btn)
 	vbox.add_child(split_btn)
@@ -2604,7 +2610,7 @@ func _build_legend(layer: CanvasLayer) -> void:
 		"bold coloured line — contested border",
 		"hover a system for its planets",
 		"● colony  ◆ mineral  ○ water  ⌞⌟ mine",
-		"■ depot (hold)  ◉ obs-post (2× reach)  ♛ imperial (+infl./water)",
+		"■ depot (hold)  ◉ obs-post (2× reach)  ♛ imperial (+infl., eats alloy)",
 		"purple nebula — anomaly (blocks influence + sight)",
 	]
 	for i in lines.size():
@@ -2902,9 +2908,14 @@ func _on_build_imperial() -> void:
 	if view_system_id == -1:
 		return
 	if sim.systems[view_system_id].imperial_empire_id == player_empire_id:
-		sim.upgrade_imperial(player_empire_id, view_system_id)
+		sim.upgrade_imperial(player_empire_id, view_system_id)   # dial level up
 	else:
 		sim.build_imperial(player_empire_id, view_system_id)
+
+
+func _on_lower_imperial() -> void:
+	if view_system_id != -1:
+		sim.lower_imperial(player_empire_id, view_system_id)     # dial down / demolish
 
 
 func _on_build_citadel() -> void:
@@ -3107,7 +3118,8 @@ func _show_fleet_panel(fleet: Fleet) -> void:
 		"  → moving" if fleet.is_moving() else "",
 		fleet.combat_power(), fleet.bomb_power(), comp, combat_line]
 	for b in [colonize_btn, mine_btn, emigrate_btn, abandon_btn, move_capital_btn, upgrade_btn,
-			spec_food_btn, spec_alloy_btn, depot_btn, obs_post_btn, imperial_btn, citadel_btn]:
+			spec_food_btn, spec_alloy_btn, depot_btn, obs_post_btn, imperial_btn,
+			imperial_down_btn, citadel_btn]:
 		b.visible = false
 	merge_btn.visible = true
 	merge_btn.disabled = fleet.is_moving() or not _another_fleet_here(fleet)
@@ -3166,21 +3178,28 @@ func _show_system_panel(sys_id: int) -> void:
 		obs_post_btn.disabled = not sim.can_build_obs_post(player_empire_id, sys_id)
 	else:
 		obs_post_btn.visible = false
-	# Imperial center (amplifies this system's colony influence for extra water).
+	# Imperial center (burns tier-L alloy to amplify this system's colony influence).
+	imperial_down_btn.visible = false
 	if not live:
 		imperial_btn.visible = false
 	elif sysd.imperial_empire_id == player_empire_id:
 		imperial_btn.visible = true
 		var lvl: int = sysd.imperial_level
-		var cur_pct: int = int(SimConstants.IMPERIAL_BONUS[lvl - 1] * 100.0)
+		var eff_pct: int = int(round(sim.imperial_bonus_at(sys_id) * 100.0))
+		var tier_lbl: String = "T%d" % lvl   # level L eats tier-L alloy
+		var starved: bool = sim.imperial_feed_at(sys_id) < 0.999
+		var state := " ⚠ starved" if starved else ""
 		if lvl < SimConstants.IMPERIAL_MAX_LEVEL:
-			var next_pct: int = int(SimConstants.IMPERIAL_BONUS[lvl] * 100.0)
-			imperial_btn.text = "Imperial center L%d (+%d%%) → +%d%% (%d alloys)" \
-				% [lvl, cur_pct, next_pct, int(SimConstants.IMPERIAL_UPGRADE_COST_ALLOYS)]
-			imperial_btn.disabled = not sim.can_upgrade_imperial(player_empire_id, sys_id)
+			var next_pct: int = (lvl + 1) * int(SimConstants.IMPERIAL_BONUS_PER_LEVEL * 100.0)
+			imperial_btn.text = "Imperial L%d (now +%d%%, eats %s) → L%d (+%d%%)%s" \
+				% [lvl, eff_pct, tier_lbl, lvl + 1, next_pct, state]
+			imperial_btn.disabled = false
 		else:
-			imperial_btn.text = "Imperial center L%d (+%d%%): maxed" % [lvl, cur_pct]
+			imperial_btn.text = "Imperial L%d (+%d%%, eats %s): max%s" \
+				% [lvl, eff_pct, tier_lbl, state]
 			imperial_btn.disabled = true
+		imperial_down_btn.visible = true
+		imperial_down_btn.text = ("Lower to L%d" % (lvl - 1)) if lvl > 1 else "Demolish imperial center"
 	elif sysd.imperial_empire_id == -1 and sim.is_under_influence(sys_id, player_empire_id):
 		imperial_btn.visible = true
 		imperial_btn.text = "Build imperial center (%d alloys)" \

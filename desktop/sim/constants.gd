@@ -181,21 +181,29 @@ const OBS_POST_REACH_MULT := 2.0
 const CITADEL_COST_ALLOYS := 300.0
 const CITADEL_MAX_HP := 6000.0
 # Imperial center: an administrative seat built on one of your systems. It amplifies the
-# influence its colony projects (bigger borders, longer reach/VR) in exchange for extra
-# water — the colony has to be supplied to run the bureaucracy. The trade is symmetric and
-# upgrades as the colony grows: +10% influence for +10% water at level 1, then +30/+30 at
-# level 2, capped at +50/+50 at level 3. So influence is something you can BUY with water
-# territory, not only grow — but it deepens your water dependence, keeping the water
-# economy the master constraint. (Was the transport hub, whose water-relief job is gone.)
-const IMPERIAL_COST_ALLOYS := 90.0
-const IMPERIAL_UPGRADE_COST_ALLOYS := 60.0
-const IMPERIAL_MAX_LEVEL := 3
-# Influence bonus AND matching water surcharge per level (index = level-1). Same number for
-# both: you pay in water exactly the fraction of influence you gain.
-const IMPERIAL_BONUS := [0.10, 0.30, 0.50]
-# The system's strongest colony must reach this pop to build/upgrade to each level
-# (index = level-1). Level 1 just needs the colony; higher levels need it to have grown.
-const IMPERIAL_UPGRADE_POP := [0.0, 400.0, 900.0]
+# influence its colony projects (bigger borders, longer reach/VR) by burning ALLOY — the
+# bureaucracy runs on refined metal, not water. You dial its LEVEL freely (1..5, no pop
+# gate, no upgrade cost): level L grants +L*10% influence and, in exchange, drains a fixed
+# amount of TIER-L alloy per day (L1 eats T1, L5 eats T5). The limiter is the alloy pyramid
+# itself: high tiers are scarce, so a +50% center eats the very same T5 your top warships
+# need — making it extremely hard to run more than one or two high-level centers while
+# still fielding a fleet. (Was a water surcharge; now it spends alloy instead.)
+const IMPERIAL_COST_ALLOYS := 90.0      # one-time build cost, paid in T1 alloy
+const IMPERIAL_MAX_LEVEL := 5           # one level per alloy tier
+# Influence bonus per level: level L -> +L*IMPERIAL_BONUS_PER_LEVEL (so L5 = +50%).
+const IMPERIAL_BONUS_PER_LEVEL := 0.10
+# Fixed alloy drained per day by a running center, in units of its level's tier. Flat
+# (not pop-scaled): "both fixed and reasonable." The scarcity of higher tiers — not a
+# bigger number — is what makes high levels punishing to sustain in bulk.
+const IMPERIAL_ALLOY_DRAIN := 2.0
+# Deficit falloff: when the empire can't pay a center's drain, the shortfall accrues as a
+# per-tier deficit (capped here). The influence bonus fades LINEARLY from full at deficit 0
+# to nothing at IMPERIAL_DEFICIT_MAX — a gentle "teachable" slide (run out of alloy and the
+# border recedes), not an instant cutoff. Surplus alloy pays the deficit back down.
+const IMPERIAL_DEFICIT_MAX := 40.0
+# AI only dials a center up a level when it holds at least this many days of the next
+# tier's drain in stock (and that tier is debt-free) — so it won't starve its own fleet.
+const AI_IMPERIAL_STOCK_DAYS := 15.0
 
 # --- refining: the single tiered ALLOY chain (minerals -> T1 -> T2 -> ... -> T5) ---
 # One chain now, no separate "alloys" resource: minerals refine into tier-1 alloy,

@@ -967,13 +967,12 @@ func _test_support_structures() -> void:
 		reach_before * SimConstants.OBS_POST_REACH_MULT),
 		"observation post doubles influence reach")
 
-	# Imperial center: a symmetric trade — it RAISES the system's colony influence
-	# (bigger borders) in exchange for RAISING water demand (+10% at L1). Compare a
-	# baseline empire against an identical one that builds an imperial center.
+	# Imperial center: RAISES the system's colony influence (bigger borders) by BURNING
+	# tier-L alloy — no water cost now. Compare a baseline empire against an identical one
+	# that builds a center, and confirm the center's tier alloy drains while influence rises.
 	var sim2 := Sim.new()
 	var e2 := sim2.add_empire("T", Color.WHITE)
 	e2.nat[0] = 100000.0
-	e2.water_income = 1000.0
 	var a := sim2.add_system("A")
 	a.map_pos = Vector2.ZERO
 	sim2.inject_colony(e2.id, sim2.add_planet(a.id, "pa").id, 500.0, true)
@@ -981,7 +980,6 @@ func _test_support_structures() -> void:
 	var sim3 := Sim.new()
 	var e3 := sim3.add_empire("T", Color.WHITE)
 	e3.nat[0] = 100000.0
-	e3.water_income = 1000.0
 	var a3 := sim3.add_system("A")
 	a3.map_pos = Vector2.ZERO
 	sim3.inject_colony(e3.id, sim3.add_planet(a3.id, "pa").id, 500.0, true)
@@ -994,8 +992,40 @@ func _test_support_structures() -> void:
 
 	sim2.tick(SimConstants.TICK_DAYS)
 	sim3.tick(SimConstants.TICK_DAYS)
-	check(e3.water_demand > e2.water_demand,
-		"imperial center raises water demand (paying influence with water)")
+	check(e3.nat[0] < e2.nat[0],
+		"an imperial center drains its tier's alloy (both refine equally; only e3 pays)")
+	check(e3.water_demand <= e2.water_demand + 0.001,
+		"the imperial center adds NO water demand anymore (alloy-fed)")
+
+	# Dialing the level up raises both the influence bonus and the tier it eats.
+	var infl_l1 := sim3.system_influence(a3.id, e3.id)
+	check(sim3.upgrade_imperial(e3.id, a3.id), "the center dials up a level")
+	check(sim3.systems[a3.id].imperial_level == 2, "it is now level 2")
+	check(sim3.system_influence(a3.id, e3.id) > infl_l1, "a higher level is a bigger bonus")
+
+	# Deficit falloff: starve the tier and the bonus fades linearly, not off a cliff.
+	var simd := Sim.new()
+	var ed := simd.add_empire("D", Color.WHITE)
+	ed.nat[0] = SimConstants.IMPERIAL_COST_ALLOYS   # just enough to build, nothing to feed it
+	var ad := simd.add_system("A")
+	ad.map_pos = Vector2.ZERO
+	simd.inject_colony(ed.id, simd.add_planet(ad.id, "pa").id, 40.0, true)  # too small to refine T1
+	check(simd.build_imperial(ed.id, ad.id), "a center builds with no spare alloy")
+	var full_bonus := simd.imperial_bonus_at(ad.id)
+	check(is_equal_approx(simd.imperial_feed_at(ad.id), 1.0), "it starts fully fed")
+	for _i in 60:
+		simd.tick(SimConstants.TICK_DAYS)   # ~6 days of unpaid drain
+	check(simd.imperial_feed_at(ad.id) < 1.0, "an unfed center's feed drops")
+	check(simd.imperial_bonus_at(ad.id) < full_bonus,
+		"and its influence bonus fades with the deficit")
+	check(simd.imperial_bonus_at(ad.id) > 0.0,
+		"the falloff is gradual, not an instant cutoff")
+	# Feeding it pays the debt down and restores the bonus.
+	ed.nat[0] = 100000.0
+	for _j in 30:
+		simd.tick(SimConstants.TICK_DAYS)
+	check(is_equal_approx(simd.imperial_feed_at(ad.id), 1.0),
+		"surplus alloy heals the deficit back to full feed")
 
 	# Sprawl penalty: many small colonies cost more water than the same total pop
 	# concentrated (per-colony overhead), but only marginally ("close, but not the same").
