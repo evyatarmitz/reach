@@ -4,6 +4,31 @@ New project, split from To Infinity (2026-07-02). This game is genuinely novel �
 nothing from the old codebase transfers directly, because the old build assumed an
 embodied player and direct entity control, and Reach has neither.
 
+## Shipped 2026-10-04 — civilian/military structure split + supply viz (`3746546`)
+
+Follow-up to the hand-switching batch (`d40561f`). Three-part request, one commit,
+full suite + determinism green, before/after autoshots verified visually AND by data.
+1. **Civilian vs military on border change** — when a border moves over a structure
+   whose owner no longer holds a colony there: civilian (mine, imperial center)
+   transfers to the new owner; military (supply depot, observation post, citadel) is
+   razed, never captured. Colony-anchor guard still exempts a structure on its own
+   colony. Judgment call: imperial center kept as *transferring* (not razed) because
+   it only functions for whoever holds the ground — flag for user if they'd rather it
+   raze with the other military-adjacent buildings.
+2. **Mine handover is visible** — a worked deposit gets a thin owner-colour halo, so a
+   captured mine flips red→green on screen (previously the gem glyph was colour-blind
+   to ownership). Verified: red halo + red depot/obs badges BEFORE; green halo + badges
+   gone AFTER; mineral counter 0→2 (player reaps the captured mine).
+3. **Fleet supply visualization** — select a fleet and every supply-safe system lights
+   up as a green field (own border + within a friendly depot's 3-hop reach). A selected
+   fleet stranded outside it gets a red ring + "unsupplied Nd" label (days bleeding
+   attrition). New `sim.supply_safe_systems()` / `sim.fleet_supplied()` helpers.
+   Autoshot pose `autoshot_supply.png` shows the field running out before a 4-hops-out
+   rival system where the stranded fleet sits.
+
+New tests: civilian-mine-anchored-by-colony, military-structures-razed,
+captured-mine-benefits-new-owner (income follows ownership after the flip).
+
 ## Shipped 2026-09-24 — capitals + supply lines + overrun colonies (`4015d92`)
 
 Six-part request, one commit, full suite + determinism green.
