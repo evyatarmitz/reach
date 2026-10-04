@@ -77,6 +77,7 @@ const VR_BAND := 0.6
 const VR_BORDER_FEATHER := 0.30
 const SAVE_PATH := "user://reach_save.json"
 const FLEET_ICON_OFF := Vector2(0, -17)   # drawn above the system so it stays clickable
+const FLEET_CROWN_GAP := 12.0   # extra lift for a parked fleet above a system's building row
 const FLEET_CLICK_R := 24.0   # screen-space click radius for fleets (÷ zoom in _select_at)
 const BORDER_INSET := 3.5    # push each empire's border curve into its own territory
 const BORDER_HOLE_BRIDGE := 2   # grow the sight-visible border set this many contour hops
@@ -1258,7 +1259,7 @@ func _select_at(pos: Vector2) -> void:
 	var fleet_r: float = maxf(15.0, FLEET_CLICK_R / _galaxy_cam_zoom)
 	for f in sim.fleets:
 		if f.empire_id == player_empire_id \
-				and pos.distance_to(sim.fleet_position(f) + FLEET_ICON_OFF) <= fleet_r:
+				and pos.distance_to(_fleet_icon_pos(f)) <= fleet_r:
 			selected_fleet_id = f.id
 			view_system_id = -1
 			return
@@ -1285,7 +1286,7 @@ func _box_select(a: Vector2, b: Vector2) -> void:
 	selected_fleets.clear()
 	for f in sim.fleets:
 		if f.empire_id == player_empire_id \
-				and rect.has_point(sim.fleet_position(f) + FLEET_ICON_OFF):
+				and rect.has_point(_fleet_icon_pos(f)):
 			selected_fleets.append(f.id)
 	if selected_fleets.is_empty():
 		selected_fleet_id = -1
@@ -1433,12 +1434,10 @@ func _draw_galaxy() -> void:
 			continue   # never seen -> stays black
 		if live:
 			# Live: bright glowing star sized by its population, owner ring, colonies.
-			var cc := 0
 			var spop := 0.0
 			for pid in sys.planet_ids:
 				var pcol: Colony = sim.planets[pid].colony
 				if pcol != null:
-					cc += 1
 					spop += pcol.population
 			var sscale: float = 1.0 + clampf(spop / 2500.0, 0.0, 1.0) * 0.7
 			_draw_star(sys.map_pos, _star_color(sys.id), 1.0, sscale)
@@ -1448,9 +1447,14 @@ func _draw_galaxy() -> void:
 			var ring_r: float = (15.0 if capitals.has(sys.id) else 13.0) * sscale
 			var label_y: float = 15.0 * sscale + 12.0   # clears even the widest (capital) ring
 			# Structure badges tuck just ABOVE the ring, scaled to clear it.
+			var col_owner := -1
+			for cpid in sys.planet_ids:
+				if sim.planets[cpid].colony != null:
+					col_owner = sim.planets[cpid].colony.empire_id
+					break
 			_draw_structure_badges(sys.map_pos, sys.depot_empire_id,
 				sys.obs_post_empire_id, sys.imperial_empire_id, sys.imperial_level,
-				sys.citadel_empire_id, -(15.0 * sscale + 8.0))
+				sys.citadel_empire_id, -(15.0 * sscale + 8.0), col_owner)
 			var owner: int = _system_owner.get(sys.id, -1)
 			if owner != -1:
 				# A capital's owner ring is drawn as a 5-point STAR outline instead of a
@@ -1475,9 +1479,7 @@ func _draw_galaxy() -> void:
 					draw_arc(sys.map_pos, br, 0.0, TAU, 48, bc, 2.0, true)
 					break   # one planet per node -> one bubble per system
 			if _galaxy_cam_zoom >= LABEL_ZOOM:
-				if cc > 0:   # colony count sits just OUTSIDE the ring, upper-right
-					draw_string(font, sys.map_pos + Vector2(ring_r + 4.0, -ring_r * 0.35),
-						str(cc), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.55, 0.85, 0.6))
+				# colony shown by its skyline glyph in the crown above -- no count
 				_draw_name(font, sys.map_pos + Vector2(-60.0, label_y), sys.name,
 					Color(1, 1, 1, 0.85))
 		else:
@@ -1491,13 +1493,6 @@ func _draw_galaxy() -> void:
 				gc.a = 0.4
 				draw_arc(sys.map_pos, 13.0, 0.0, TAU, 40, gc, 1.5, true)
 			if _galaxy_cam_zoom >= LABEL_ZOOM:
-				var scc := 0
-				for pinfo in snap.get("planets", {}).values():
-					if pinfo.get("colony", false):
-						scc += 1
-				if scc > 0:
-					draw_string(font, sys.map_pos + Vector2(14.0, -12.0), str(scc),
-						HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.5, 0.7, 0.55, 0.6))
 				_draw_name(font, sys.map_pos + Vector2(-60.0, 26.0), sys.name,
 					Color(1, 1, 1, 0.5))
 		# Setting: draw this system's deposit glyph always (not just on hover). The
@@ -1570,7 +1565,7 @@ func _draw_galaxy() -> void:
 		var own := f.empire_id == player_empire_id
 		if not (own or _sys_live(f.system_id)):
 			continue
-		var fp := sim.fleet_position(f) + FLEET_ICON_OFF   # above the system node
+		var fp := _fleet_icon_pos(f)   # above the system node / building crown
 		var col: Color = sim.empires[f.empire_id].color
 		var dir := Vector2.UP
 		if f.is_moving():
@@ -1922,10 +1917,55 @@ func _bubble_radius(system_id: int) -> float:
 	return maxf(nd * 0.5, 18.0)
 
 
+# Star size scales with the total population sitting in a system (matches the per-system
+# draw loop). Kept here so the fleet-crown geometry derives from the same number.
+func _system_star_scale(sys) -> float:
+	var spop := 0.0
+	for pid in sys.planet_ids:
+		var pcol: Colony = sim.planets[pid].colony
+		if pcol != null:
+			spop += pcol.population
+	return 1.0 + clampf(spop / 2500.0, 0.0, 1.0) * 0.7
+
+
+# Does this system show at least one glyph in its crown (a colony or any structure)?
+# If so, a parked fleet floats a row higher so it never overlaps a building or the star.
+func _system_has_building(sys) -> bool:
+	if sys.depot_empire_id != -1 or sys.obs_post_empire_id != -1 \
+			or sys.imperial_empire_id != -1 or sys.citadel_empire_id != -1:
+		return true
+	for pid in sys.planet_ids:
+		if sim.planets[pid].colony != null:
+			return true
+	return false
+
+
+# Where a fleet's icon is drawn (and hit-tested). A moving fleet uses the flat default
+# offset; a parked one nests just above its system's crown — in the top-of-star slot when
+# the system is bare, or one row higher when a building already occupies that slot.
+func _fleet_icon_pos(f) -> Vector2:
+	var base: Vector2 = sim.fleet_position(f)
+	if f.is_moving() or not sim.systems.has(f.system_id):
+		return base + FLEET_ICON_OFF
+	var sys = sim.systems[f.system_id]
+	var sscale := _system_star_scale(sys)
+	var crown_y := base.y - (15.0 * sscale + 8.0)   # the badge row, matching the draw loop
+	if _system_has_building(sys):
+		crown_y -= FLEET_CROWN_GAP
+	return Vector2(base.x, crown_y)
+
+
+# The "crown" of glyphs that arcs just above a star, centred so it stays symmetric as
+# buildings are added (two buildings straddle the top; none sits dead-centre). The colony
+# itself is the FIRST building in the bend (a little settlement skyline), then each
+# military/civilian structure. A parked fleet nests above this row (see _fleet_icon_pos),
+# so it never sits on top of the star. colony_id == -1 means no colony here.
 func _draw_structure_badges(center: Vector2, depot_id: int, obs_id: int,
 		imperial_id: int, imperial_level: int, citadel_id: int = -1,
-		y_off: float = -20.0) -> void:
+		y_off: float = -20.0, colony_id: int = -1) -> void:
 	var badges: Array = []
+	if colony_id != -1:
+		badges.append(["colony", sim.empires[colony_id].color, 0])
 	if depot_id != -1:
 		badges.append(["depot", sim.empires[depot_id].color, 0])
 	if obs_id != -1:
@@ -1943,6 +1983,10 @@ func _draw_structure_badges(center: Vector2, depot_id: int, obs_id: int,
 		var p := Vector2(x0 + i * gap, y)
 		var col: Color = badges[i][1]
 		match badges[i][0]:
+			"colony":   # the settlement itself: a little 3-building skyline
+				draw_rect(Rect2(p + Vector2(-4.0, -1.5), Vector2(2.4, 4.5)), col)
+				draw_rect(Rect2(p + Vector2(-1.2, -3.5), Vector2(2.4, 6.5)), col)
+				draw_rect(Rect2(p + Vector2(1.6, -0.5), Vector2(2.4, 3.5)), col)
 			"depot":   # supply crate: filled square
 				draw_rect(Rect2(p + Vector2(-3, -3), Vector2(6, 6)), col)
 			"obs":     # observation post: an eye (ring + pupil)
