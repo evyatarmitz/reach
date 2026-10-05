@@ -4,6 +4,54 @@ New project, split from To Infinity (2026-07-02). This game is genuinely novel �
 nothing from the old codebase transfers directly, because the old build assumed an
 embodied player and direct entity control, and Reach has neither.
 
+## Shipped 2026-10-05 — imperial colony-bound + escape-lane glow + supply-glow trim + smarter AI
+
+Ordered directive batch (#4 → #1 → #2), one commit each, suite + determinism green.
+
+1. **Imperial centres are colony-bound** (`b20547a`) — they now die WITH the colony
+   instead of surviving/transferring on a border flip. New `_clear_imperial_on` razes
+   the centre in `_remove_colony` and `_eliminate_empire`; the border-flip pass razes
+   (never transfers) a stray imperial centre. Resolves the long-open "raze vs transfer"
+   flag from the 2026-10-04 imperial redesign — answer: raze, because the centre is part
+   of the colony. (Was #4a.)
+2. **No-retreat / bombard escape-lane** (`a07f390`) — confirmed the no-retreat rules
+   were ALREADY enforced in `order_fleet` (pin==2 battle = locked, pin==1 over-enemy-
+   colony = retreat only to `prev_system`, i.e. the system the attackers came from).
+   #4's actual work was the VISUAL: a selected retreat-only fleet now draws a glowing
+   escape lane back to `prev_system` (same green as the supply glow), so the one legal
+   withdrawal is marked specially. (Was #4b.)
+3. **Supply glow: outside-border only** (`a07f390`) — the fleet-supply overlay now skips
+   systems inside your own border (`owner_cached(sid) == player_empire_id` → continue)
+   and only lights supply-safe systems OUTSIDE it. OPINION (user asked): outside-only is
+   the right call — inside-border supply is obvious and the full field was map clutter;
+   the glow now reads as "here's where you can still reach," which is the only ambiguous
+   case. Keep it. (Was #4c.)
+4. **Smarter rival AI** (`fd0cc56`) — the big one (#1). AI now (a) DEFENDS: before any
+   offensive move it recalls the nearest idle stack to relieve the highest-population own
+   colony that's besieged (enemy fleet sitting on it) or inbound (enemy move ends there)
+   and uncontested — previously it only ever pushed outward and let its worlds be bombed
+   for free; (b) TARGETS SMARTER: an attacking stack now picks the WEAKEST winnable
+   adjacent enemy colony (lowest defending power = fastest kill) instead of the first by
+   system id. All through the same public commands the player uses (no AI shortcuts,
+   still deterministic). New curated tests: `_test_ai_defends_threatened_colony`,
+   `_test_ai_targets_weakest_colony`. Also added `tests/observe_ai.gd` (scratch
+   time-series harness, not pass/fail).
+5. **Balance instrument** (#2, this commit) — `tests/balance_report.gd`: multi-seed
+   (`[20260702,1,7,42]`), 1500-day runs measuring both vision pillars against hard
+   numbers — P1 growth self-limits (grew >3× AND end ≥80% of peak = healthy plateau),
+   P2 no snowball (no empire reaches ~100% of the map) + no decisive fight (no single
+   25-day interval flips >45% of the map). Prints a per-seed table + pillar verdict.
+
+**Non-urgent balance-watch note (next conversation):** in the long AI observation run
+(`observe_ai.gd`, demo seed, 3000 days) one empire collapsed from ~10 colonies to 0 over
+roughly one 250-day sample window (day 1500→1750), while the leader jumped 52%→86% map
+share. Neither pillar is violated — the leader PLATEAUS at ~89% and never reaches 100%,
+and a rump empire + the idle player survive to the end, so it's not a snowball — but the
+mid-game swing was abrupt for a design whose combat pillar is "no war won by one decisive
+fight." Worth watching: if the balance_report's max-swing flag trips on more seeds, the
+smarter-AI defence may need an earlier trigger, or attrition/grace tuning. Not a fix for
+now — logged for eyeball on the next playtest.
+
 ## Shipped 2026-10-04 — imperial dial + fleet supply oxygen + speed dial + native-res
 
 Four-area feedback batch, one commit each, full suite + determinism green throughout.
