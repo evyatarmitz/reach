@@ -4,6 +4,31 @@ New project, split from To Infinity (2026-07-02). This game is genuinely novel �
 nothing from the old codebase transfers directly, because the old build assumed an
 embodied player and direct entity control, and Reach has neither.
 
+## Shipped 2026-10-05 (latest) — audio polish + sound tooling + supply visibility
+
+Feedback batch from playtest ("you have no ears, but it's working").
+
+1. **Per-cue throttle (`ba2d246`)** — building 10 ships fired `fleet_build` 10× µs
+   apart → a stuck/stutter buzz. `play()` now drops a repeat of the same cue inside a
+   short gap (70ms default; 140ms fleet_build, 120ms construct), keyed per cue in
+   `_last_play`. Different cues still overlap freely. Safety net over the existing
+   "one cue per build batch" call site.
+2. **Supply bubble visible (`8c56ab7`)** — in-supply systems were a 7%-alpha fill +
+   thin 1.5px ring in near-colony-green = invisible; only the red OUT-OF-SUPPLY text
+   read. Now a bold bubble: 16%-alpha halo (r20) + bright 2.5px outer ring + faint
+   inner ring (`main.gd` ~1724). Verified in `autoshot_supply.png` — Edge/Verge now
+   clearly marked.
+3. **fleet_build cut 5.0s → 0.57s (`5edbc34`)** — the Kenney engine clip was a uniform
+   5s loop texture misused as a one-shot. Trimmed to a 0.57s "whoomp" (20ms fade-in,
+   0.2s fade-out). All other cues confirmed sensibly short (0.04–0.53s); ambient is
+   70s looping (the "too short" complaint was a pre-loop-flag stale build).
+
+**Sound tooling — `desktop/tools/audio_tool.py` (`5edbc34`):** the ear replacement.
+Pure python (soundfile+matplotlib+numpy, pip, no ffmpeg). `info` = durations;
+`view` = waveform+spectrogram PNG I can open and look at; `trim`/`loop`/`fade`/
+`gain`/`cat` = cut/paste/loop edits. See memory [[reach-audio-tool]]. This is how to
+assess/modify sounds going forward — measure + look, don't guess.
+
 ## Shipped 2026-10-05 (later) — sound layer (`82efbe4`)
 
 Procedural synth audio, built at boot into `AudioStreamWAV`, so the game ships with
