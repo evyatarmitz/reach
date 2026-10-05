@@ -1721,8 +1721,12 @@ func _draw_galaxy() -> void:
 			var sp: Vector2 = sim.systems[sid].map_pos
 			if sp.x < view_lo.x or sp.x > view_hi.x or sp.y < view_lo.y or sp.y > view_hi.y:
 				continue
-			draw_circle(sp, 15.0, Color(0.40, 1.0, 0.65, 0.07))
-			draw_arc(sp, 15.0, 0.0, TAU, 32, Color(0.40, 1.0, 0.65, 0.5), 1.5, true)
+			# A bold supply "bubble" so forward supply reads at a glance: a filled halo + a
+			# bright thick outer ring + a faint inner ring. (Was a 7%-alpha fill and a thin
+			# 1.5px ring — all but invisible, and lost against the colony green / border arc.)
+			draw_circle(sp, 20.0, Color(0.35, 1.0, 0.70, 0.16))
+			draw_arc(sp, 20.0, 0.0, TAU, 40, Color(0.45, 1.0, 0.72, 0.9), 2.5, true)
+			draw_arc(sp, 13.0, 0.0, TAU, 32, Color(0.45, 1.0, 0.72, 0.4), 1.5, true)
 		# Escape-lane glow: a selected fleet sitting over an enemy colony (RETREAT-ONLY pin)
 		# may only fall back the way it came. Mark that one legal exit so the player sees the
 		# commitment — the lane back to prev_system glows the same green as the supply field.
