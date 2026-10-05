@@ -135,6 +135,8 @@ var _last_sample_day := -1
 const _MONTH_DAYS := [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 var standing_label: Label
 var hint_label: Label
+var scoreboard_label: RichTextLabel   # top-right standings: color, colonies, pop, fleet power
+var scoreboard_panel: PanelContainer
 var top_bar: PanelContainer   # the top HUD bar; hint/event labels dock below its real height
 var _tooltip_panel: PanelContainer   # Paradox-style hover popup (map nodes + HUD terms)
 var _tooltip_label: RichTextLabel
@@ -2546,6 +2548,29 @@ func _build_ui() -> void:
 	alert_btn.pressed.connect(_on_alert_pressed)
 	layer.add_child(alert_btn)
 
+	# Top-right standings board: one row per empire (colour swatch, colonies, population,
+	# fleet power), strongest on top. A strategic meta-layer above the fog -- it tells you
+	# who's ahead and who's collapsing at a glance, and is the natural shared readout for
+	# multiplayer later. Sits under the top bar so it never overlaps the resource figures.
+	scoreboard_panel = PanelContainer.new()
+	UiStyle.make_opaque_bar(scoreboard_panel)
+	scoreboard_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	scoreboard_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	scoreboard_panel.offset_top = 48.0
+	scoreboard_panel.offset_right = -10.0
+	scoreboard_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(scoreboard_panel)
+	scoreboard_label = RichTextLabel.new()
+	scoreboard_label.bbcode_enabled = true
+	scoreboard_label.fit_content = true
+	scoreboard_label.scroll_active = false
+	scoreboard_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	scoreboard_label.custom_minimum_size = Vector2(216, 0)
+	scoreboard_label.add_theme_font_size_override("normal_font_size", 13)
+	scoreboard_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	scoreboard_panel.add_child(scoreboard_label)
+	_add_ui_tip(scoreboard_label, "[b]Standings[/b]\nEvery empire, strongest on top, by: [color=#cfe8ff]⬢[/color] colonies, [color=#cfe8ff]pop[/color] (total population), [color=#cfe8ff]⚔[/color] fleet power (summed ship attack). This is the whole galaxy at a glance regardless of fog — who's winning, who's in trouble. A greyed-out row is an eliminated empire (capital fallen).")
+
 	# Floating hover tooltip (Paradox-style). Raised above the HUD via z_index; never
 	# eats mouse input so it can't block clicks or its own hover target.
 	_tooltip_panel = PanelContainer.new()
@@ -3222,6 +3247,62 @@ func _show_planet_frozen(planet: Planet, pinfo: Dictionary) -> void:
 	panel_body.text = "%s\n\n— out of sight; last-seen intel —" % lines
 
 
+# Per-empire standings for the top-right board: colony count, total population, and
+# summed fleet attack power, strongest (by population, then colonies, then power) on top.
+# Omniscient by design -- a strategic layer above the fog so you always know who's winning
+# and who's collapsing, and the natural shared readout once multiplayer lands.
+func _refresh_scoreboard() -> void:
+	if scoreboard_label == null:
+		return
+	var col := {}   # eid -> colony count
+	var pop := {}   # eid -> total population
+	var pwr := {}   # eid -> summed fleet attack power
+	var emps: Array = sim.empires.values()
+	for e in emps:
+		col[e.id] = 0
+		pop[e.id] = 0.0
+		pwr[e.id] = 0.0
+	for c in sim.colonies:
+		if col.has(c.empire_id):
+			col[c.empire_id] += 1
+			pop[c.empire_id] += c.population
+	for f in sim.fleets:
+		if pwr.has(f.empire_id):
+			pwr[f.empire_id] += f.combat_power()
+	var order: Array = emps.duplicate()
+	order.sort_custom(func(a: Empire, b: Empire) -> bool:
+		if not is_equal_approx(pop[a.id], pop[b.id]):
+			return pop[a.id] > pop[b.id]
+		if col[a.id] != col[b.id]:
+			return col[a.id] > col[b.id]
+		return pwr[a.id] > pwr[b.id])
+	scoreboard_label.clear()
+	scoreboard_label.push_table(4)
+	# Dim header so the symbols read as column keys (matches the hover explainer).
+	for h in ["", "[color=#7a8088]⬢[/color]", "[color=#7a8088]pop[/color]",
+			"[color=#7a8088]⚔[/color]"]:
+		scoreboard_label.push_cell(); scoreboard_label.append_text("  " + h); scoreboard_label.pop()
+	for e in order:
+		var alive: bool = col[e.id] > 0
+		var swatch: String = e.color.to_html(false) if alive else "5a5f65"
+		var tcol: String = "e8edf2" if alive else "6b7076"
+		var name_txt: String = ("▸ " if e.id == player_empire_id else "") + e.name
+		scoreboard_label.push_cell()
+		scoreboard_label.append_text("[color=#%s]■[/color] [color=#%s]%s[/color]"
+			% [swatch, tcol, name_txt])
+		scoreboard_label.pop()
+		scoreboard_label.push_cell()
+		scoreboard_label.append_text("  [color=#%s]%d[/color]" % [tcol, col[e.id]])
+		scoreboard_label.pop()
+		scoreboard_label.push_cell()
+		scoreboard_label.append_text("  [color=#%s]%s[/color]" % [tcol, _fmt_num(pop[e.id])])
+		scoreboard_label.pop()
+		scoreboard_label.push_cell()
+		scoreboard_label.append_text("  [color=#%s]%s[/color]" % [tcol, _fmt_num(pwr[e.id])])
+		scoreboard_label.pop()
+	scoreboard_label.pop()   # table
+
+
 func _refresh_ui() -> void:
 	var player: Empire = sim.empires[player_empire_id]
 	# Water is a flow (income vs population demand, per day — never banked); minerals are
@@ -3268,6 +3349,7 @@ func _refresh_ui() -> void:
 			pcol += 1
 	standing_label.text = "◆ Worlds %d · Pop %s · Colonies %d" \
 		% [psys, _fmt_num(ppop), pcol]
+	_refresh_scoreboard()
 	for i in speed_chevrons.size():
 		var lit := i < speed_idx   # levels are 1-based; idx 0 (paused) lights none
 		speed_chevrons[i].modulate = Color(0.55, 1.0, 0.70) if lit \
