@@ -23,6 +23,24 @@ NOTE: `audio.gd` has NO `class_name` on purpose — main.gd preloads it as a con
 `-s` load path (global class cache isn't populated) — cost a 47-min test hang before
 diagnosis; same trap as the `class_name Updater` one.
 
+**Volume split (`1e59fea`):** replaced the Music/SFX two-slider setup with a four-bus
+tree — Master (global trim + mute) feeding Ambient / Effects / Menu. UI cues
+(ui_click/move_order/refused) route to Menu per-voice in `play()`; combat bed + gameplay
+cues on Effects; drone on Ambient. Pause menu has all four sliders; `audio.cfg` migrates
+old music→ambient, sfx→effects/menu.
+
+**Real CC0 assets (`be57627`):** dropped Kenney (Impact/Sci-fi/Interface) + OpenGameArt
+("Outer Space Loop" mp3) files into `res://assets/audio/` for all 8 one-shots; the two
+combat beds stay synth (Kenney is one-shots, not seamless loops). All CC0, no
+attribution. `audio.gd` now also loads `.mp3` and force-loops ambient/combat beds
+(imported ogg/mp3 default loop=false). Picks were by filename, not audition — swap any
+by replacing the file. If you ever want real combat loops, grab CC0 battle-ambience
+loops from OpenGameArt and name them `battle_loop.ogg` / `bombard_loop.ogg`.
+
+Godot `--import` segfaults on shutdown in 4.7 (EXIT 139) but DOES write the `.import`
+sidecars first — harmless; don't chase it. `.import` files are committed, `.godot/`
+imported cache is gitignored (regenerates on open). Repo tracks `.uid` files.
+
 ## Shipped 2026-10-05 — imperial colony-bound + escape-lane glow + supply-glow trim + smarter AI
 
 Ordered directive batch (#4 → #1 → #2), one commit each, suite + determinism green.
