@@ -30,6 +30,10 @@ const SFX_VOICES := 6              # one-shot pool size
 const CFG_PATH := "user://audio.cfg"
 # Cues that belong on the Menu bus; everything else plays on Effects.
 const MENU_CUES := ["ui_click", "move_order", "refused"]
+# Min gap (ms) between two plays of the SAME cue — collapses machine-gun repeats (e.g.
+# building a stack of ships, or spam-clicking) into one clean hit instead of a stutter.
+const CUE_GAP_MS := 70
+const CUE_GAP_OVERRIDE := {"fleet_build": 140, "construct": 120}
 
 var _enabled := false
 var _streams := {}                 # name -> AudioStream
@@ -38,6 +42,7 @@ var _combat: AudioStreamPlayer
 var _sfx: Array[AudioStreamPlayer] = []
 var _sfx_next := 0
 var _combat_kind := -1             # -1 none / 0 battle / 1 bombard (current combat bed)
+var _last_play := {}               # cue name -> last Time.get_ticks_msec(), for the throttle
 var _master_vol := 0.9
 var _ambient_vol := 0.6
 var _effects_vol := 0.8
@@ -90,6 +95,13 @@ func play(name: String) -> void:
 	var s = _streams.get(name)
 	if s == null:
 		return
+	# Throttle identical cues: drop a repeat that lands within the cue's min gap, so a
+	# burst (ten ships queued at once) plays one clean hit, not a buzzsaw of overlaps.
+	var now := Time.get_ticks_msec()
+	var gap: int = CUE_GAP_OVERRIDE.get(name, CUE_GAP_MS)
+	if now - int(_last_play.get(name, -100000)) < gap:
+		return
+	_last_play[name] = now
 	# Prefer an idle voice; else steal the round-robin one so cues never queue.
 	var voice := _sfx[_sfx_next]
 	for p in _sfx:
