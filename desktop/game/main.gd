@@ -15,7 +15,9 @@ const MAX_TICKS_PER_FRAME := 8
 # every zoom level). Held-key panning runs in _process for smoothness.
 const PAN_SPEED := 780.0
 
+const GameAudioScript := preload("res://game/audio.gd")
 var sim: Sim
+var audio: Node                 # sound layer (synth cues + ambient/combat beds); headless no-op
 var player_empire_id := -1
 var speed_idx := 1
 var day_accum := 0.0
@@ -140,6 +142,7 @@ var _ui_tips: Array = []              # [Control, bbcode] HUD elements with an e
 var event_label: Label          # top-left feed of recent autonomous events
 var _events: Array = []         # [day, text] recent events, newest last
 var _prev_pcolonies: Dictionary = {}  # planet_id -> system_id, player's colonies
+var _prev_pestab: Dictionary = {}     # planet_id -> true, player's ESTABLISHED (producing) colonies
 var _seen_combat: Dictionary = {}     # system_id -> last combat day already logged
 var _prev_pstructs: Dictionary = {}   # "sid:kind" -> system_id, player-owned structures last scan
 # Location-anchored alerts (lost building/colony, colony under siege) for the bottom
@@ -219,6 +222,8 @@ func _ready() -> void:
 		sim = Sim.new_demo()
 	player_empire_id = sim.empires.keys()[0]  # first empire = human player
 	Keybinds.ensure_loaded()   # defaults + any saved rebindings, before the UI reads them
+	audio = GameAudioScript.new()
+	add_child(audio)
 	_build_tier_icons()
 	_build_ui()
 	_init_camera()
@@ -229,10 +234,12 @@ func _ready() -> void:
 		load_game(p)
 	if "--autoshot" in OS.get_cmdline_user_args():
 		_autoshot()
-	elif not is_load:
-		# New game: welcome the player (paused) with the goal + first steps.
-		intro_overlay.visible = true
-		speed_idx = 0
+	else:
+		audio.start_ambient()   # the background bed, under everything
+		if not is_load:
+			# New game: welcome the player (paused) with the goal + first steps.
+			intro_overlay.visible = true
+			speed_idx = 0
 
 
 func save_game(path: String = SAVE_PATH) -> void:
@@ -374,6 +381,7 @@ func _process(delta: float) -> void:
 		_ui_timer = UI_REFRESH
 		_update_hover()
 		_scan_events()
+		_update_combat_audio()
 		_check_game_over()
 		_refresh_ui()
 	# Redraw every frame: the viewport doesn't retain the canvas between frames here, so
@@ -387,11 +395,15 @@ func _process(delta: float) -> void:
 # battles in systems they can see — and surface them in the top-left feed. (Things
 # the player did themselves, like founding a colony, aren't logged — they know.)
 func _scan_events() -> void:
+	var warn := false   # any new danger alert this scan → one warning sting (not per-event)
 	# Player colony losses (a planet that was ours no longer has our colony).
 	var now := {}
+	var estab := {}
 	for c in sim.colonies:
 		if c.empire_id == player_empire_id:
 			now[c.planet_id] = sim.planets[c.planet_id].system_id
+			if c.established:
+				estab[c.planet_id] = true
 	if not _prev_pcolonies.is_empty():
 		for pid in _prev_pcolonies:
 			if not now.has(pid):
@@ -399,7 +411,17 @@ func _scan_events() -> void:
 				var nm: String = sim.systems[sid].name if sim.systems.has(sid) else "?"
 				_log_event("✖ Colony lost at %s" % nm)
 				_push_alert("✖ Colony lost at %s" % nm, sid)
+				warn = true
 	_prev_pcolonies = now
+	# Colony activation: a colony crossing its production threshold is the core milestone
+	# of the game — a satisfying "online" chime (skip the first scan so we don't fanfare
+	# every colony that already exists at load/new-game).
+	if audio != null and not _prev_pestab.is_empty():
+		for pid in estab:
+			if not _prev_pestab.has(pid):
+				audio.play("colony_activate")
+				break   # one chime even if several activate in the same scan
+	_prev_pestab = estab
 	# Player buildings lost (razed on border loss, or transferred away). One alert per
 	# structure that was ours last scan and isn't now.
 	var pstructs := {}
@@ -418,6 +440,7 @@ func _scan_events() -> void:
 				var nm2: String = sim.systems[sid3].name if sim.systems.has(sid3) else "?"
 				var kind: String = kind_name.get(String(key).split(":")[1], "building")
 				_push_alert("⌂ Lost %s at %s" % [kind, nm2], sid3)
+				warn = true
 	_prev_pstructs = pstructs
 	# Combat at systems the player can currently see. Battle (enemy fleets clashing) and
 	# bombardment (a lone fleet grinding a colony) are distinct mechanics everywhere else in
@@ -432,10 +455,36 @@ func _scan_events() -> void:
 				# Bombardment of one of OUR systems = a colony under siege: worth a jump alert.
 				if _system_has_player_colony(sid):
 					_push_alert("☄ Colony under siege at %s" % sim.systems[sid].name, sid)
+					warn = true
 			else:
 				_log_event("⚔ Battle at %s" % sim.systems[sid].name)
+	if warn and audio != null:
+		audio.play("alert")
 	_refresh_events()
 	_refresh_alerts()
+
+
+# Combat bed follows the SELECTION: while a selected fleet is sitting in a fight the
+# battle hum plays; while it's bombarding a world the (distinct) bombard rumble plays;
+# deselect or the fight ending stops it. Battle wins over bombard if the selection spans
+# both. set_combat() only reacts to a change, so this is cheap to call every UI tick.
+func _update_combat_audio() -> void:
+	if audio == null:
+		return
+	var kind := -1
+	var ids: Array = ([selected_fleet_id] if selected_fleet_id != -1 else []) + selected_fleets
+	for fid in ids:
+		var f := sim.get_fleet(fid)
+		if f == null or f.is_moving():
+			continue
+		var sid: int = f.system_id
+		if _sys_live(sid) and sim.combat_kind.has(sid):
+			var k: int = sim.combat_kind[sid]   # 0 battle, 1 bombard
+			if k == 0:
+				kind = 0
+				break           # a battle anywhere in the selection takes priority
+			kind = 1
+	audio.set_combat(kind)
 
 
 func _system_has_player_colony(sid: int) -> bool:
@@ -1206,7 +1255,10 @@ func _build_ships(role: int, tier: int, count: int) -> void:
 			break
 		made += 1
 	var rname: String = "Fighter" if role == SimConstants.Role.FIGHTER else "Bomber"
+	if made > 0:
+		audio.play("fleet_build")       # one cue for the batch, not one per ship
 	if made == 0:
+		audio.play("refused")
 		_log_event("✖ Can't build %s T%d — need %d tier-%d alloy"
 			% [rname, tier, int(SimConstants.SHIP_NAT_COST), tier])
 	elif made < count:
@@ -1332,8 +1384,11 @@ func _select_at(pos: Vector2) -> void:
 		for sys in sim.systems.values():
 			if pos.distance_to(sys.map_pos) <= 20.0 and _sys_known(sys.id):
 				var fl := sim.get_fleet(selected_fleet_id)
-				if not sim.order_fleet(selected_fleet_id, sys.id) and fl != null:
+				if sim.order_fleet(selected_fleet_id, sys.id):
+					audio.play("move_order")
+				elif fl != null:
 					# Refused by the FTL pin — tell the player why instead of silence.
+					audio.play("refused")
 					if sim.fleet_pin(fl) == 2:
 						_log_event("🔒 Fleet held in battle — can't jump until it's decided")
 					else:
@@ -1349,6 +1404,7 @@ func _select_at(pos: Vector2) -> void:
 				and pos.distance_to(_fleet_icon_pos(f)) <= fleet_r:
 			selected_fleet_id = f.id
 			view_system_id = -1
+			audio.play("ui_click")
 			return
 	# 3. Click a known system to open its planet-list menu (side panel).
 	for sys in sim.systems.values():
@@ -1359,6 +1415,7 @@ func _select_at(pos: Vector2) -> void:
 			selected_planet_id = sys.planet_ids[0] if not sys.planet_ids.is_empty() \
 				else -1
 			selected_fleet_id = -1
+			audio.play("ui_click")
 			return
 	# Empty space -> close panel / deselect.
 	view_system_id = -1
@@ -1381,6 +1438,7 @@ func _box_select(a: Vector2, b: Vector2) -> void:
 		return
 	selected_fleet_id = selected_fleets[0]
 	view_system_id = -1
+	audio.play("ui_click")
 	var n := selected_fleets.size()
 	_log_event("▭ Selected %d %s — click a system to move them" % [
 		n, "fleet" if n == 1 else "fleets"])
@@ -1393,6 +1451,7 @@ func _order_group(dest_sys: int) -> void:
 	for fid in selected_fleets:
 		if sim.get_fleet(fid) != null and sim.order_fleet(fid, dest_sys):
 			moved += 1
+	audio.play("move_order" if moved > 0 else "refused")
 	_log_event("➤ %d of %d fleets moving out" % [moved, selected_fleets.size()])
 	selected_fleets.clear()
 	selected_fleet_id = -1
@@ -2734,10 +2793,10 @@ func _build_menu_overlay(layer: CanvasLayer) -> void:
 	menu_overlay.anchor_right = 0.5
 	menu_overlay.anchor_top = 0.5
 	menu_overlay.anchor_bottom = 0.5
-	menu_overlay.offset_left = -150
-	menu_overlay.offset_right = 150
-	menu_overlay.offset_top = -160
-	menu_overlay.offset_bottom = 160
+	menu_overlay.offset_left = -170
+	menu_overlay.offset_right = 170
+	menu_overlay.offset_top = -240
+	menu_overlay.offset_bottom = 240
 	menu_overlay.visible = false
 	layer.add_child(menu_overlay)
 	var v := VBoxContainer.new()
@@ -2775,6 +2834,7 @@ func _build_menu_overlay(layer: CanvasLayer) -> void:
 		_always_show_resources = on
 		queue_redraw())
 	v.add_child(res_toggle)
+	_build_audio_controls(v)
 	var quit := Button.new()
 	quit.text = "Quit to menu"
 	quit.pressed.connect(func() -> void:
@@ -2819,6 +2879,41 @@ func _build_menu_overlay(layer: CanvasLayer) -> void:
 	overlay_update_status.modulate = Color(1, 1, 1, 0.7)
 	overlay_update_status.add_theme_font_size_override("font_size", 11)
 	v.add_child(overlay_update_status)
+
+
+# Sound section of the pause menu: a Mute toggle + Music/SFX sliders, persisted by the
+# audio layer itself (user://audio.cfg). Labelled rows so the sliders read clearly.
+func _build_audio_controls(v: VBoxContainer) -> void:
+	var sep := HSeparator.new()
+	v.add_child(sep)
+	var mute := CheckButton.new()
+	mute.text = "Mute sound"
+	mute.button_pressed = audio.is_muted()
+	mute.toggled.connect(func(on: bool) -> void: audio.set_muted(on))
+	v.add_child(mute)
+	_add_volume_row(v, "Music", audio.music_volume(),
+		func(val: float) -> void: audio.set_music_volume(val))
+	_add_volume_row(v, "Effects", audio.sfx_volume(),
+		func(val: float) -> void: audio.set_sfx_volume(val))
+
+
+func _add_volume_row(v: VBoxContainer, label: String, value: float, on_change: Callable) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var l := Label.new()
+	l.text = label
+	l.custom_minimum_size = Vector2(60, 0)
+	row.add_child(l)
+	var s := HSlider.new()
+	s.min_value = 0.0
+	s.max_value = 1.0
+	s.step = 0.05
+	s.value = value
+	s.custom_minimum_size = Vector2(180, 0)
+	s.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	s.value_changed.connect(on_change)
+	row.add_child(s)
+	v.add_child(row)
 
 
 func _on_update_check_done(available: bool, latest: String, note: String) -> void:
@@ -2949,14 +3044,16 @@ func _on_colonize() -> void:
 	# Dispatch a construction vessel from the capital (it travels lanes, can't cross
 	# enemy territory, and founds the colony on arrival).
 	if selected_planet_id != -1:
-		sim.order_construction(player_empire_id, SimConstants.Build.COLONY,
-			selected_planet_id)
+		if sim.order_construction(player_empire_id, SimConstants.Build.COLONY,
+				selected_planet_id):
+			audio.play("construct")
 
 
 func _on_build_mine() -> void:
 	if selected_planet_id != -1:
-		sim.order_construction(player_empire_id, SimConstants.Build.MINE,
-			selected_planet_id)
+		if sim.order_construction(player_empire_id, SimConstants.Build.MINE,
+				selected_planet_id):
+			audio.play("construct")
 
 
 func _on_emigrate() -> void:
@@ -2986,23 +3083,23 @@ func _on_spec(kind: int) -> void:
 
 
 func _on_upgrade_mine() -> void:
-	if selected_planet_id != -1:
-		sim.upgrade_mine(player_empire_id, selected_planet_id)
+	if selected_planet_id != -1 and sim.upgrade_mine(player_empire_id, selected_planet_id):
+		audio.play("construct")
 
 
 func _on_build_depot() -> void:
-	if view_system_id != -1:
-		sim.build_depot(player_empire_id, view_system_id)
+	if view_system_id != -1 and sim.build_depot(player_empire_id, view_system_id):
+		audio.play("construct")
 
 
 func _on_build_obs_post() -> void:
-	if view_system_id != -1:
-		sim.build_obs_post(player_empire_id, view_system_id)
+	if view_system_id != -1 and sim.build_obs_post(player_empire_id, view_system_id):
+		audio.play("construct")
 
 
 func _on_build_imperial() -> void:
-	if view_system_id != -1:
-		sim.build_imperial(player_empire_id, view_system_id)     # first build is level 1
+	if view_system_id != -1 and sim.build_imperial(player_empire_id, view_system_id):
+		audio.play("construct")        # first build is level 1
 
 
 # The dial: popup item id IS the target level (0 = demolish). set_imperial_level clamps to the
@@ -3034,8 +3131,8 @@ func _populate_imperial_menu(sys_id: int, cur_level: int) -> void:
 
 
 func _on_build_citadel() -> void:
-	if view_system_id != -1:
-		sim.build_citadel(player_empire_id, view_system_id)
+	if view_system_id != -1 and sim.build_citadel(player_empire_id, view_system_id):
+		audio.play("construct")
 
 
 func _on_merge() -> void:
