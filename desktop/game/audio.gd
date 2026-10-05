@@ -14,15 +14,22 @@ extends Node
 # (no synth, no players), so the headless test runs that instantiate main.tscn
 # (draw_smoke, border_flicker) stay fast and silent.
 #
-# Layers:
-#   - music : one looping ambient drone (the "background" bed).
-#   - combat: one looping bed swapped between a battle hum and a bombardment rumble,
-#             driven by whether the SELECTED fleet is engaged (set_combat()).
-#   - sfx   : a small pool of one-shot players so overlapping cues don't cut each other.
+# Bus tree (all three sub-buses feed the built-in Master bus):
+#   - Master : the global trim; one slider scales everything, and mute cuts it here.
+#   - Ambient: one looping drone (the "background" bed).
+#   - Effects: gameplay sfx — the combat bed + construct/fleet/alert/colony cues.
+#   - Menu   : UI feedback — select clicks, move orders, refused buzzes.
+# Effects and Menu are split so map-event noise and interaction chatter tune separately.
+#
+# Players: _music (Ambient), _combat (one looping bed on Effects, swapped between a
+# battle hum and a bombardment rumble via set_combat()), and a shared one-shot pool
+# whose voice bus is picked per cue (Menu for UI cues, Effects for everything else).
 
 const MIX := 32000                 # synth sample rate
 const SFX_VOICES := 6              # one-shot pool size
 const CFG_PATH := "user://audio.cfg"
+# Cues that belong on the Menu bus; everything else plays on Effects.
+const MENU_CUES := ["ui_click", "move_order", "refused"]
 
 var _enabled := false
 var _streams := {}                 # name -> AudioStream
@@ -31,11 +38,15 @@ var _combat: AudioStreamPlayer
 var _sfx: Array[AudioStreamPlayer] = []
 var _sfx_next := 0
 var _combat_kind := -1             # -1 none / 0 battle / 1 bombard (current combat bed)
-var _music_vol := 0.6
-var _sfx_vol := 0.8
+var _master_vol := 0.9
+var _ambient_vol := 0.6
+var _effects_vol := 0.8
+var _menu_vol := 0.7
 var _muted := false
-var _music_idx := -1
-var _sfx_idx := -1
+var _master_idx := 0               # built-in Master bus
+var _ambient_idx := -1
+var _effects_idx := -1
+var _menu_idx := -1
 
 
 func _ready() -> void:
@@ -45,19 +56,20 @@ func _ready() -> void:
 		return
 	_enabled = true
 	_load_cfg()
-	_music_idx = _ensure_bus("Music")
-	_sfx_idx = _ensure_bus("SFX")
+	_ambient_idx = _ensure_bus("Ambient")
+	_effects_idx = _ensure_bus("Effects")
+	_menu_idx = _ensure_bus("Menu")
 	_build_sounds()
 	_music = AudioStreamPlayer.new()
-	_music.bus = "Music"
+	_music.bus = "Ambient"
 	_music.stream = _streams.get("ambient")
 	add_child(_music)
 	_combat = AudioStreamPlayer.new()
-	_combat.bus = "SFX"
+	_combat.bus = "Effects"
 	add_child(_combat)
 	for i in SFX_VOICES:
 		var p := AudioStreamPlayer.new()
-		p.bus = "SFX"
+		p.bus = "Effects"
 		_sfx.append(p)
 		add_child(p)
 	_apply_volumes()
@@ -70,7 +82,8 @@ func start_ambient() -> void:
 		_music.play()
 
 
-# Play a one-shot cue by name on the next free voice (round-robin).
+# Play a one-shot cue by name on the next free voice (round-robin). The voice is routed
+# to the Menu bus for UI cues, Effects for everything else, so the two tune separately.
 func play(name: String) -> void:
 	if not _enabled:
 		return
@@ -84,6 +97,7 @@ func play(name: String) -> void:
 			voice = p
 			break
 	_sfx_next = (_sfx_next + 1) % _sfx.size()
+	voice.bus = "Menu" if name in MENU_CUES else "Effects"
 	voice.stream = s
 	voice.play()
 
@@ -101,13 +115,23 @@ func set_combat(kind: int) -> void:
 	_combat.play()
 
 
-func set_music_volume(v: float) -> void:
-	_music_vol = clampf(v, 0.0, 1.0)
+func set_master_volume(v: float) -> void:
+	_master_vol = clampf(v, 0.0, 1.0)
 	_apply_volumes(); _save_cfg()
 
 
-func set_sfx_volume(v: float) -> void:
-	_sfx_vol = clampf(v, 0.0, 1.0)
+func set_ambient_volume(v: float) -> void:
+	_ambient_vol = clampf(v, 0.0, 1.0)
+	_apply_volumes(); _save_cfg()
+
+
+func set_effects_volume(v: float) -> void:
+	_effects_vol = clampf(v, 0.0, 1.0)
+	_apply_volumes(); _save_cfg()
+
+
+func set_menu_volume(v: float) -> void:
+	_menu_vol = clampf(v, 0.0, 1.0)
 	_apply_volumes(); _save_cfg()
 
 
@@ -116,18 +140,24 @@ func set_muted(m: bool) -> void:
 	_apply_volumes(); _save_cfg()
 
 
-func music_volume() -> float: return _music_vol
-func sfx_volume() -> float: return _sfx_vol
+func master_volume() -> float: return _master_vol
+func ambient_volume() -> float: return _ambient_vol
+func effects_volume() -> float: return _effects_vol
+func menu_volume() -> float: return _menu_vol
 func is_muted() -> bool: return _muted
 
 
 # --- volume / buses --------------------------------------------------------------
 
+# Master carries the mute (one cut silences everything); the three sub-buses hold their
+# own level regardless, so unmuting restores the mix the player set.
 func _apply_volumes() -> void:
 	if not _enabled:
 		return
-	AudioServer.set_bus_volume_db(_music_idx, (-80.0 if _muted else _lin_db(_music_vol)))
-	AudioServer.set_bus_volume_db(_sfx_idx, (-80.0 if _muted else _lin_db(_sfx_vol)))
+	AudioServer.set_bus_volume_db(_master_idx, (-80.0 if _muted else _lin_db(_master_vol)))
+	AudioServer.set_bus_volume_db(_ambient_idx, _lin_db(_ambient_vol))
+	AudioServer.set_bus_volume_db(_effects_idx, _lin_db(_effects_vol))
+	AudioServer.set_bus_volume_db(_menu_idx, _lin_db(_menu_vol))
 
 
 func _lin_db(v: float) -> float:
@@ -146,16 +176,24 @@ func _ensure_bus(bus_name: String) -> int:
 
 func _load_cfg() -> void:
 	var cf := ConfigFile.new()
-	if cf.load(CFG_PATH) == OK:
-		_music_vol = clampf(cf.get_value("audio", "music", _music_vol), 0.0, 1.0)
-		_sfx_vol = clampf(cf.get_value("audio", "sfx", _sfx_vol), 0.0, 1.0)
-		_muted = bool(cf.get_value("audio", "muted", _muted))
+	if cf.load(CFG_PATH) != OK:
+		return
+	# Migrate the old two-slider layout: music -> ambient, sfx -> effects (+ menu).
+	var old_music = cf.get_value("audio", "music", _ambient_vol)
+	var old_sfx = cf.get_value("audio", "sfx", _effects_vol)
+	_master_vol = clampf(cf.get_value("audio", "master", _master_vol), 0.0, 1.0)
+	_ambient_vol = clampf(cf.get_value("audio", "ambient", old_music), 0.0, 1.0)
+	_effects_vol = clampf(cf.get_value("audio", "effects", old_sfx), 0.0, 1.0)
+	_menu_vol = clampf(cf.get_value("audio", "menu", old_sfx), 0.0, 1.0)
+	_muted = bool(cf.get_value("audio", "muted", _muted))
 
 
 func _save_cfg() -> void:
 	var cf := ConfigFile.new()
-	cf.set_value("audio", "music", _music_vol)
-	cf.set_value("audio", "sfx", _sfx_vol)
+	cf.set_value("audio", "master", _master_vol)
+	cf.set_value("audio", "ambient", _ambient_vol)
+	cf.set_value("audio", "effects", _effects_vol)
+	cf.set_value("audio", "menu", _menu_vol)
 	cf.set_value("audio", "muted", _muted)
 	cf.save(CFG_PATH)
 

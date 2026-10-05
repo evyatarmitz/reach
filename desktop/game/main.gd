@@ -2795,8 +2795,8 @@ func _build_menu_overlay(layer: CanvasLayer) -> void:
 	menu_overlay.anchor_bottom = 0.5
 	menu_overlay.offset_left = -170
 	menu_overlay.offset_right = 170
-	menu_overlay.offset_top = -240
-	menu_overlay.offset_bottom = 240
+	menu_overlay.offset_top = -278
+	menu_overlay.offset_bottom = 278
 	menu_overlay.visible = false
 	layer.add_child(menu_overlay)
 	var v := VBoxContainer.new()
@@ -2881,8 +2881,9 @@ func _build_menu_overlay(layer: CanvasLayer) -> void:
 	v.add_child(overlay_update_status)
 
 
-# Sound section of the pause menu: a Mute toggle + Music/SFX sliders, persisted by the
-# audio layer itself (user://audio.cfg). Labelled rows so the sliders read clearly.
+# Sound section of the pause menu: a Mute toggle + Master / Ambient / Effects / Menu
+# sliders, persisted by the audio layer itself (user://audio.cfg). Master scales the
+# other three; labelled rows so the sliders read clearly.
 func _build_audio_controls(v: VBoxContainer) -> void:
 	var sep := HSeparator.new()
 	v.add_child(sep)
@@ -2891,10 +2892,14 @@ func _build_audio_controls(v: VBoxContainer) -> void:
 	mute.button_pressed = audio.is_muted()
 	mute.toggled.connect(func(on: bool) -> void: audio.set_muted(on))
 	v.add_child(mute)
-	_add_volume_row(v, "Music", audio.music_volume(),
-		func(val: float) -> void: audio.set_music_volume(val))
-	_add_volume_row(v, "Effects", audio.sfx_volume(),
-		func(val: float) -> void: audio.set_sfx_volume(val))
+	_add_volume_row(v, "Master", audio.master_volume(),
+		func(val: float) -> void: audio.set_master_volume(val))
+	_add_volume_row(v, "Ambient", audio.ambient_volume(),
+		func(val: float) -> void: audio.set_ambient_volume(val))
+	_add_volume_row(v, "Effects", audio.effects_volume(),
+		func(val: float) -> void: audio.set_effects_volume(val))
+	_add_volume_row(v, "Menu", audio.menu_volume(),
+		func(val: float) -> void: audio.set_menu_volume(val))
 
 
 func _add_volume_row(v: VBoxContainer, label: String, value: float, on_change: Callable) -> void:
