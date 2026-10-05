@@ -500,8 +500,16 @@ func _test_ai_targets_weakest_colony() -> void:
 	# soft has no defending fleet.
 	var ai := EmpireAI.new(me.id)
 	check(defended.id < soft.id, "test setup: the defended colony has the lower id")
-	check(ai._best_attack_target(sim, strike) == soft.id,
+	check(ai._best_attack_target(sim, strike, true) == soft.id,
 		"AI strikes the undefended colony, not the lower-id defended one")
+	# Personality caution: give the soft colony a defender too, so NO undefended target
+	# remains. An aggressive stack still takes a defended-but-winnable colony; a cautious
+	# (turtle) stack won't trade blows for ground and holds.
+	sim._fleet_at(foe.id, soft.id).fighters[0] = 5
+	check(ai._best_attack_target(sim, strike, true) != -1,
+		"an aggressive AI takes a defended-but-winnable colony")
+	check(ai._best_attack_target(sim, strike, false) == -1,
+		"a cautious AI won't trade blows for a defended colony")
 
 
 func _test_mining() -> void:

@@ -108,8 +108,40 @@ const MINE_RICHNESS_MAX := 30.0
 const ESTIMATE_BAND := 8.0
 
 # How often an AI empire re-evaluates (sim days). Gradual, deterministic; not
-# tied to framerate or the speed dial.
+# tied to framerate or the speed dial. Scaled per-empire by difficulty cadence and
+# by personality (see below).
 const AI_ACTION_INTERVAL_DAYS := 8.0
+
+# AI personalities. Each only reweights the SAME player-available commands
+# (found_colony / build_ship / order_fleet ...) -- no AI-only powers, still fully
+# deterministic. BALANCED is the historical all-rounder.
+enum Personality { BALANCED, EXPANSIONIST, TURTLE, RAIDER, OPPORTUNIST }
+const PERSONALITY_NAMES := ["Balanced", "Expansionist", "Turtle", "Raider", "Opportunist"]
+
+# Per-personality knobs, indexed by Personality:
+#   colonies : colony vessels dispatched per action interval (expansion rate)
+#   march    : a massed stack marches out to the nearest enemy once it reaches this
+#              fraction of POWER_CEILING (INF = never leaves home -- a pure turtle only
+#              defends and snaps up UNDEFENDED adjacents)
+#   aggressive : if true a stack also takes DEFENDED-but-winnable adjacent colonies
+#              (power > defenders); if false it only takes undefended ones (turtle)
+#   cadence  : extra multiplier on this personality's think interval (raiders act a
+#              little more often, expansionists a little less) -- flavour on top of
+#              the difficulty cadence
+const AI_PERSONA := {
+	Personality.BALANCED:     {"colonies": 1, "march": 1.0,  "aggressive": true,  "cadence": 1.0},
+	Personality.EXPANSIONIST: {"colonies": 2, "march": 1.0,  "aggressive": true,  "cadence": 1.1},
+	Personality.TURTLE:       {"colonies": 1, "march": INF,  "aggressive": false, "cadence": 1.0},
+	Personality.RAIDER:       {"colonies": 1, "march": 0.35, "aggressive": true,  "cadence": 0.85},
+	Personality.OPPORTUNIST:  {"colonies": 1, "march": 0.6,  "aggressive": true,  "cadence": 1.0},
+}
+
+# Lower difficulty (efficiency) also makes the AI THINK slower, not just gather less:
+# its attention can't be everywhere at once, so it feels human rather than a resource-
+# starved clone -- especially on fleet micro. Normal (1.0) = base cadence; Easy (0.6)
+# ~1.9x slower; Hard (1.5) ~0.6x. Returns a multiplier on the action interval.
+static func ai_cadence_for(efficiency: float) -> float:
+	return pow(1.0 / maxf(efficiency, 0.1), 1.3)
 
 # Ships. Two roles x 5 tiers, built above the empire's most-populated city and
 # paid for in that tier's national military resource. Fighters win fleet combat

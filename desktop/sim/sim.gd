@@ -163,7 +163,8 @@ static func generate_map(cfg_in: Dictionary) -> Sim:
 	_connect_systems(sim, sys_ids, positions, float(cfg.lane_density))
 	_place_anomalies(sim, positions, size, rng)
 	_place_empires(sim, sys_ids, positions, int(cfg.empire_count),
-		float(cfg.ai_efficiency), int(cfg.get("player_color_idx", 0)))
+		float(cfg.ai_efficiency), int(cfg.get("player_color_idx", 0)),
+		cfg.get("ai_personalities", []), rng)
 	sim.recompute_connectivity()   # prime the supply-line snapshot before the first tick
 	return sim
 
@@ -319,7 +320,10 @@ static func _uf_find(parent: Array, x: int) -> int:
 # has both resource streams from tick 1 (one planet per node, so the two mines can't
 # share a node like they used to).
 static func _place_empires(sim: Sim, sys_ids: Array, positions: Array,
-		count: int, ai_efficiency: float, player_color_idx: int = 0) -> void:
+		count: int, ai_efficiency: float, player_color_idx: int = 0,
+		personalities: Array = [], rng: RandomNumberGenerator = null) -> void:
+	# Easier rivals also think slower (not just gather less) -- see ai_cadence_for.
+	var ai_cadence: float = SimConstants.ai_cadence_for(ai_efficiency)
 	var n := sys_ids.size()
 	var chosen: Array = [0]
 	while chosen.size() < count and chosen.size() < n:
@@ -376,11 +380,21 @@ static func _place_empires(sim: Sim, sys_ids: Array, positions: Array,
 			mp.deposit_type = SimConstants.Deposit.MINERAL
 			mp.mine_empire_id = emp.id
 		if e_i > 0:   # first empire is the human player
-			sim.add_ai(emp.id)
+			# Personality per rival: config entry if given, else Balanced. A -1 entry
+			# means "random", resolved here from the map seed so it stays deterministic.
+			var persona: int = SimConstants.Personality.BALANCED
+			var ai_idx: int = e_i - 1
+			if ai_idx < personalities.size():
+				persona = int(personalities[ai_idx])
+			if persona < 0:
+				persona = (rng.randi_range(0, SimConstants.PERSONALITY_NAMES.size() - 1)
+					if rng != null else SimConstants.Personality.BALANCED)
+			sim.add_ai(emp.id, persona, ai_cadence)
 
 
-func add_ai(empire_id: int) -> void:
-	ais.append(EmpireAI.new(empire_id))
+func add_ai(empire_id: int, persona: int = SimConstants.Personality.BALANCED,
+		cadence: float = 1.0) -> void:
+	ais.append(EmpireAI.new(empire_id, persona, cadence))
 
 
 # --- save / load -------------------------------------------------------------
@@ -420,7 +434,7 @@ func serialize() -> Dictionary:
 	var ai: Array = []
 	for a in ais:
 		ai.append({"eid": a.empire_id, "bc": a._build_count,
-			"nad": a._next_action_day})
+			"nad": a._next_action_day, "pers": a.personality, "cad": a.cadence})
 	var ans: Array = []
 	for an in anomalies:
 		var xs: Array = []
@@ -532,7 +546,8 @@ static func deserialize(d: Dictionary) -> Sim:
 			"path": bpath, "prog": float(b.prog), "type": int(b.type),
 			"target": int(b.target)})
 	for a in d.ais:
-		var ai := EmpireAI.new(int(a.eid))
+		var ai := EmpireAI.new(int(a.eid),
+			int(a.get("pers", SimConstants.Personality.BALANCED)), float(a.get("cad", 1.0)))
 		ai._build_count = int(a.bc)
 		ai._next_action_day = a.nad
 		sim.ais.append(ai)

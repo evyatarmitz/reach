@@ -7,28 +7,48 @@ extends RefCounted
 # no RNG, fixed iteration order, so identical runs stay bit-identical.
 
 var empire_id: int = -1
+var personality: int = SimConstants.Personality.BALANCED
+var cadence: float = 1.0    # difficulty-derived think-interval multiplier (>1 = slower)
 var _next_action_day: float = 0.0
 var _build_count: int = 0   # alternates fighter/bomber deterministically
 
 
-func _init(id: int) -> void:
+func _init(id: int, persona: int = SimConstants.Personality.BALANCED,
+		think_cadence: float = 1.0) -> void:
 	empire_id = id
+	personality = persona
+	cadence = think_cadence
+
+
+func _persona() -> Dictionary:
+	return SimConstants.AI_PERSONA[personality]
 
 
 func maybe_act(sim: Sim) -> void:
 	if sim.day < _next_action_day:
 		return
-	_next_action_day = sim.day + SimConstants.AI_ACTION_INTERVAL_DAYS
+	# Think interval = base x difficulty cadence x personality cadence. A lower-
+	# difficulty rival (bigger cadence) acts less often, so it can't micro everything
+	# at once -- it reads as a distracted human, not just a poorer one.
+	_next_action_day = sim.day + SimConstants.AI_ACTION_INTERVAL_DAYS \
+		* cadence * float(_persona()["cadence"])
 	_act(sim)
 
 
 func _act(sim: Sim) -> void:
-	# One mine and one colony per interval, keeping expansion gradual.
+	# One mine + the personality's expansion quota per interval, keeping growth gradual.
 	_build_one_mine(sim)
-	_found_one_colony(sim)
+	_found_colonies(sim)
 	_build_ships(sim)
 	_build_support(sim)
 	_move_fleets(sim)
+
+
+# Dispatch this personality's colony quota this interval (expansionists push two).
+# Each call re-scans, so the second skips the planet the first just targeted.
+func _found_colonies(sim: Sim) -> void:
+	for _i in int(_persona()["colonies"]):
+		_found_one_colony(sim)
 
 
 # Support structures, same options the player has (built instantly in own influence).
@@ -94,17 +114,22 @@ func _move_fleets(sim: Sim) -> void:
 	_consolidate(sim)
 	if _defend(sim):
 		return
+	var p := _persona()
+	var aggressive: bool = bool(p["aggressive"])
+	# How much massed power a stack needs before it marches out to the nearest enemy.
+	# Raiders commit at ~a third of a ceiling stack; a turtle (march = INF) never leaves.
+	var march_at: float = SimConstants.POWER_CEILING * float(p["march"])
 	for f in sim.fleets:
 		if f.empire_id != empire_id or f.is_moving() or f.ship_count() == 0:
 			continue
-		var target := _best_attack_target(sim, f)
+		var target := _best_attack_target(sim, f, aggressive)
 		if target != -1:
 			sim.order_fleet(f.id, target)
-		elif f.combat_power() >= SimConstants.POWER_CEILING:
-			# No easy adjacent target, but the stack has massed to a decisive force
-			# (a full power-ceiling's worth) — march it to the nearest enemy colony (it
-			# fights its way there). This is what gets the AI's fleets into the war,
-			# as committed strikes rather than a trickle that gets worn down.
+		elif f.combat_power() >= march_at:
+			# No easy adjacent target, but the stack has massed to this personality's
+			# commit threshold — march it to the nearest enemy colony (it fights its way
+			# there). This is what gets the AI's fleets into the war, as committed strikes
+			# rather than a trickle that gets worn down.
 			var dest := _nearest_enemy_colony(sim, f.system_id)
 			if dest != -1:
 				sim.order_fleet(f.id, dest)
@@ -239,11 +264,12 @@ func _consolidate(sim: Sim) -> void:
 
 
 # The WEAKEST adjacent enemy-colony system this fleet can take — undefended (bombard
-# freely) or where our combat power beats the defenders'. Picking the softest target
-# (least defending power) over the lowest id means the stack secures the fastest kill
-# and keeps moving instead of grinding the first colony it happens to border. Ties
-# break on lowest id (deterministic). -1 = hold and keep massing.
-func _best_attack_target(sim: Sim, f: Fleet) -> int:
+# freely) or, when aggressive, where our combat power beats the defenders'. A cautious
+# (turtle) stack only grabs UNDEFENDED neighbours and never trades blows for ground.
+# Picking the softest target (least defending power) over the lowest id means the stack
+# secures the fastest kill and keeps moving instead of grinding the first colony it
+# happens to border. Ties break on lowest id (deterministic). -1 = hold and keep massing.
+func _best_attack_target(sim: Sim, f: Fleet, aggressive: bool) -> int:
 	var mine: float = f.combat_power()
 	var targets: Array = sim.lane_neighbors(f.system_id)
 	targets.sort()
@@ -257,7 +283,7 @@ func _best_attack_target(sim: Sim, f: Fleet) -> int:
 		for eid in powers:
 			if eid != empire_id:
 				def += powers[eid].combat
-		if def <= 0.0 or mine > def:
+		if def <= 0.0 or (aggressive and mine > def):
 			if def < best_def:   # strict < keeps the first (lowest-id) of equal-defence ties
 				best_def = def
 				best = nb
