@@ -1,177 +1,137 @@
 extends SceneTree
 
-# Headless balance probe — NOT a pass/fail test. Runs a full all-AI game (the
-# player slot is driven by the same AI so nobody sits idle) and prints how the two
-# design pillars actually behave over a long game:
-#   Pillar 1 — uncapped BUT self-limiting population growth (should plateau by
-#              throughput/geometry, not explode, not hard-cap).
-#   Pillar 2 — no steamroll (no single empire should own the whole map quickly).
-# Plus economy health (do T0 stockpiles balloon? do cities ever refine enough?).
+# Balance instrumentation (not a pass/fail unit test — a tuning instrument).
 #
-# Run: godot --headless --path desktop --script res://tests/balance_report.gd
-# Optional: pass "seed=NNN systems=NN empires=N days=NNNN" via -- args.
+# Runs the full sim across several seeds and measures the two design pillars from
+# vision.md, so the "tune until it feels right" constants (diminishing-returns
+# exponent, neighbour-bonus falloff, attrition %, grace period, power ceiling...) can
+# be adjusted against hard numbers instead of vibes:
+#
+#   PILLAR 1 — growth is uncapped but self-limiting. Population should climb a long way
+#     and then PLATEAU as colonies saturate the map geometry and diminishing returns
+#     bite — never hit a flat designed ceiling early, never run away forever.
+#   PILLAR 2 — combat never snowballs. No empire should sweep the whole map (reach 100%
+#     of colonies), and no single sample interval should flip a large fraction of the
+#     map (that would be a "decisive fight" winning the war).
+#
+# Tweak the knobs below, run:
+#   godot --headless --path . -s tests/balance_report.gd
+# and read the per-seed table + the pillar verdict at the bottom.
 
-func _cfg_from_args() -> Dictionary:
-	var cfg := {"seed": 20260702, "system_count": 50, "empire_count": 4,
-		"ai_efficiency": 1.0}
-	var days := 3000.0
-	for a in OS.get_cmdline_user_args():
-		var kv: PackedStringArray = a.split("=")
-		if kv.size() != 2:
-			continue
-		match kv[0]:
-			"seed": cfg.seed = int(kv[1])
-			"systems": cfg.system_count = int(kv[1])
-			"empires": cfg.empire_count = int(kv[1])
-			"days": days = float(kv[1])
-	cfg["_days"] = days
-	return cfg
-
-
-func _totals(sim: Sim) -> Dictionary:
-	# Per empire: pop, colonies, systems owned, T0/T1 stockpiles, mil, fleet hull.
-	var out := {}
-	for e in sim.empires.values():
-		out[e.id] = {"pop": 0.0, "col": 0, "sys": 0,
-			"water": e.water_income, "minerals": e.minerals, "food": 0.0,
-			"alloys": e.nat[0], "mil": 0.0, "hull": 0.0, "ships": 0,
-			"tiers": e.nat.duplicate()}
-		for v in e.nat:
-			out[e.id]["mil"] += v
-	for c in sim.colonies:
-		if out.has(c.empire_id):
-			out[c.empire_id]["pop"] += c.population
-			out[c.empire_id]["col"] += 1
-	for sys in sim.systems.values():
-		var o := sim.system_owner(sys.id)
-		if out.has(o):
-			out[o]["sys"] += 1
-	for f in sim.fleets:
-		if out.has(f.empire_id):
-			out[f.empire_id]["hull"] += f.hull()
-			out[f.empire_id]["ships"] += f.ship_count()
-	return out
-
-
-func _fmt_row(day: float, t: Dictionary, ids: Array) -> String:
-	var s := "day %5d | " % int(day)
-	for id in ids:
-		var r: Dictionary = t[id]
-		s += "E%d pop%6d col%2d sys%2d  " % [id, int(r.pop), r.col, r.sys]
-	return s
+const SEEDS: Array = [20260702, 1, 7, 42]
+const HORIZON_DAYS: float = 1500.0
+const SAMPLE_DAYS: float = 25.0
+# A single sample interval flipping more than this fraction of the map = a "decisive
+# fight" red flag (one battle deciding the war).
+const DECISIVE_FRAC: float = 0.45
+# Population at the end should stay within this band of its peak to count as a healthy
+# plateau (rather than a collapse or a still-runaway curve).
+const PLATEAU_BAND: float = 0.80
 
 
 func _init() -> void:
-	var cfg := _cfg_from_args()
-	var days: float = cfg["_days"]
-	cfg.erase("_days")
-	var sim := Sim.generate_map(cfg)
-	var ids: Array = sim.empires.keys()
-	ids.sort()
-	# Drive the player slot (the one empire without an AI) so all empires play.
-	var with_ai := {}
-	for ai in sim.ais:
-		with_ai[ai.empire_id] = true
-	for id in ids:
-		if not with_ai.has(id):
-			sim.add_ai(id)
-
-	print("=== BALANCE REPORT ===")
-	print("seed=%d systems=%d empires=%d days=%d  (map has %d systems)" %
-		[cfg.seed, cfg.system_count, cfg.empire_count, int(days), sim.systems.size()])
-	print("")
-
-	var step := SimConstants.TICK_DAYS
-	var total_ticks := int(round(days / step))
-	var sample_every := int(round(300.0 / step))   # sample every 300 days
-
-	var peak_pop := {}
-	var peak_water := {}
-	var peak_total_pop := 0.0
-	var history: Array = []   # [day, totals]
-	for id in ids:
-		peak_pop[id] = 0.0
-		peak_water[id] = 0.0
-
-	for tick_i in total_ticks + 1:
-		if tick_i % sample_every == 0:
-			var t := _totals(sim)
-			history.append([sim.day, t])
-			print(_fmt_row(sim.day, t, ids))
-			var tp := 0.0
-			for id in ids:
-				peak_pop[id] = maxf(peak_pop[id], t[id].pop)
-				peak_water[id] = maxf(peak_water[id], t[id].water + t[id].minerals)
-				tp += t[id].pop
-			peak_total_pop = maxf(peak_total_pop, tp)
-		if tick_i < total_ticks:
-			sim.tick(step)
-
-	print("")
-	print("=== SUMMARY ===")
-	# Pillar 1: growth self-limits. Compare final total pop to peak — a healthy
-	# plateau sits near its peak (didn't crash) and the peak is finite/not runaway.
-	var last: Dictionary = history[history.size() - 1][1]
-	var final_total := 0.0
-	for id in ids:
-		final_total += last[id].pop
-	print("Pillar 1 (growth): peak total pop = %d, final = %d (%.0f%% of peak)"
-		% [int(peak_total_pop), int(final_total),
-			100.0 * final_total / maxf(peak_total_pop, 1.0)])
-	var biggest_col_pop := 0.0
-	for c in sim.colonies:
-		biggest_col_pop = maxf(biggest_col_pop, c.population)
-	print("  largest single colony pop = %d (watch for runaway lone cities)"
-		% int(biggest_col_pop))
-
-	# Pillar 2: no steamroll. Report final system share + when/if anyone hit >=75%.
-	var total_sys := sim.systems.size()
-	var shares: Array = []
-	for id in ids:
-		shares.append(100.0 * last[id].sys / maxf(total_sys, 1))
-	shares.sort()
-	shares.reverse()
-	var share_str := ""
-	for s in shares:
-		share_str += "%.0f%% " % s
-	print("Pillar 2 (no steamroll): final system share (high→low) = %s" % share_str)
-	var steamroll_day := -1.0
-	for h in history:
-		for id in ids:
-			if h[1][id].sys >= 0.75 * total_sys:
-				steamroll_day = h[0]
-				break
-		if steamroll_day >= 0.0:
-			break
-	if steamroll_day >= 0.0:
-		print("  WARNING: an empire reached >=75%% of the map by day %d (possible steamroll)"
-			% int(steamroll_day))
-	else:
-		print("  OK: no empire exceeded 75%% of the map during the run")
-
-	# Economy: T0 balloon check (raw water+minerals dwarfing what cities refine).
-	var worst_t0 := 0.0
-	for id in ids:
-		worst_t0 = maxf(worst_t0, last[id].minerals)
-	print("Economy: largest final raw mineral stockpile = %d" % int(worst_t0))
-	print("  (if this is enormous vs pop, mines out-produce refining — a known knob)")
-	var tsum := [0.0, 0.0, 0.0, 0.0, 0.0]
-	for id in ids:
-		for t in 5:
-			tsum[t] += last[id].tiers[t]
-	print("Alloy pyramid (total T1-5) = %d/%d/%d/%d/%d"
-		% [int(tsum[0]), int(tsum[1]), int(tsum[2]), int(tsum[3]), int(tsum[4])])
-	var total_ships := 0
-	for id in ids:
-		total_ships += last[id].ships
-	print("Combat: total ships alive at end = %d, colonies remaining = %d"
-		% [total_ships, sim.colonies.size()])
-	# Military tiers: max stockpile per tier across empires — confirms whether the
-	# higher ship tiers are actually reachable (were dead content when 0).
-	var maxnat := [0.0, 0.0, 0.0, 0.0, 0.0]
-	for e in sim.empires.values():
-		for t in 5:
-			maxnat[t] = maxf(maxnat[t], e.nat[t])
-	print("Military: max per-tier stockpile T1-5 = %d·%d·%d·%d·%d (0 = tier unreachable)"
-		% [int(maxnat[0]), int(maxnat[1]), int(maxnat[2]), int(maxnat[3]), int(maxnat[4])])
+	print("=== Reach balance report ===")
+	print("seeds=", SEEDS, "  horizon=", HORIZON_DAYS, "d  sample=", SAMPLE_DAYS, "d\n")
+	print("seed      | start_pop  peak_pop  end_pop  plateau | peak_share%  end_empires | max_swing")
+	var any_snowball := false
+	var any_decisive := false
+	var any_runaway := false
+	var peak_share_all := 0.0
+	for seed in SEEDS:
+		var r := _run_one(seed)
+		var plateau: bool = r.end_pop >= PLATEAU_BAND * r.peak_pop and r.peak_pop > 3.0 * r.start_pop
+		var snowball: bool = r.peak_share >= 99.9                 # total map domination
+		var decisive: bool = r.max_swing_frac > DECISIVE_FRAC
+		any_snowball = any_snowball or snowball
+		any_decisive = any_decisive or decisive
+		any_runaway = any_runaway or not plateau
+		peak_share_all = maxf(peak_share_all, r.peak_share)
+		print("%-9d | %9.0f %9.0f %8.0f  %-7s | %9.0f%%  %11d | %d cols (%.0f%% of map)%s%s" % [
+			seed, r.start_pop, r.peak_pop, r.end_pop, ("yes" if plateau else "NO"),
+			r.peak_share, r.end_empires, r.max_swing_cols, 100.0 * r.max_swing_frac,
+			("  <-- SNOWBALL" if snowball else ""),
+			("  <-- DECISIVE" if decisive else "")])
+	print("\n--- pillar verdict ---")
+	print("P1 growth self-limits : ", ("OK — every seed grew >3x and plateaued"
+		if not any_runaway else "WARN — a seed never plateaued (cap too hard, or runaway)"))
+	print("P2 no total snowball  : ", ("OK — no empire ever took the whole map (peak share %.0f%%)" % peak_share_all
+		if not any_snowball else "WARN — an empire reached ~100%% of the map"))
+	print("   no decisive fight  : ", ("OK — no interval flipped >%.0f%% of the map" % (100.0 * DECISIVE_FRAC)
+		if not any_decisive else "WARN — a single interval flipped >%.0f%% of the map" % (100.0 * DECISIVE_FRAC)))
 	quit()
+
+
+func _run_one(seed: int) -> Dictionary:
+	var sim := Sim.generate_map({"seed": seed})
+	var eids: Array = sim.empires.keys()
+	var start_pop := _total_pop(sim)
+	var peak_pop := start_pop
+	var end_pop := start_pop
+	var peak_share := _max_share(sim)
+	var max_swing_cols := 0
+	var max_swing_frac := 0.0
+	var prev_cols := _colony_counts(sim, eids)
+	var ticks := int(HORIZON_DAYS / SimConstants.TICK_DAYS)
+	var sample_every := int(SAMPLE_DAYS / SimConstants.TICK_DAYS)
+	for step in ticks:
+		sim.tick(SimConstants.TICK_DAYS)
+		if step % sample_every != 0:
+			continue
+		var pop := _total_pop(sim)
+		peak_pop = maxf(peak_pop, pop)
+		end_pop = pop
+		peak_share = maxf(peak_share, _max_share(sim))
+		var cols := _colony_counts(sim, eids)
+		var total := 0
+		for e in eids:
+			total += cols[e]
+		# Biggest single-empire colony change since the last sample, as a share of the
+		# current map — catches a war decided in one swing.
+		for e in eids:
+			var d: int = absi(cols[e] - prev_cols[e])
+			if d > max_swing_cols:
+				max_swing_cols = d
+			if total > 0:
+				max_swing_frac = maxf(max_swing_frac, float(d) / float(total))
+		prev_cols = cols
+	return {
+		"start_pop": start_pop, "peak_pop": peak_pop, "end_pop": end_pop,
+		"peak_share": peak_share, "max_swing_cols": max_swing_cols,
+		"max_swing_frac": max_swing_frac, "end_empires": _live_empires(sim, eids),
+	}
+
+
+func _total_pop(sim: Sim) -> float:
+	var p := 0.0
+	for c in sim.colonies:
+		p += c.population
+	return p
+
+
+func _colony_counts(sim: Sim, eids: Array) -> Dictionary:
+	var cols := {}
+	for e in eids:
+		cols[e] = 0
+	for c in sim.colonies:
+		cols[c.empire_id] = cols.get(c.empire_id, 0) + 1
+	return cols
+
+
+func _max_share(sim: Sim) -> float:
+	var eids: Array = sim.empires.keys()
+	var cols := _colony_counts(sim, eids)
+	var total := 0
+	var most := 0
+	for e in eids:
+		total += cols[e]
+		most = maxi(most, cols[e])
+	return 100.0 * most / total if total > 0 else 0.0
+
+
+func _live_empires(sim: Sim, eids: Array) -> int:
+	var cols := _colony_counts(sim, eids)
+	var n := 0
+	for e in eids:
+		if cols[e] > 0:
+			n += 1
+	return n
