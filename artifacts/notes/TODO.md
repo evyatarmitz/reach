@@ -4,6 +4,58 @@ New project, split from To Infinity (2026-07-02). This game is genuinely novel �
 nothing from the old codebase transfers directly, because the old build assumed an
 embodied player and direct entity control, and Reach has neither.
 
+## Shipped 2026-10-06 (latest) — scrap spec, scoreboard, AI personalities, 10-min ambient
+
+Big feedback batch (voice). Goal restated: keep Reach a *simpler* strategy game —
+player's hands are already full (pops, buildings, mines, posts, fleet). No happiness
+factor (explicitly rejected as "too much").
+
+1. **Scrapped colony specialization (`37bc612`)** — obsolete once food was removed;
+   the alloy-tier salvage idea doesn't work (higher tiers need the lower ones, so you'd
+   have to specialize in all of them). Removed `spec`/`spec_strength`/`spec_factor` from
+   colony.gd, the Spec enum + SPEC_BONUS/SPEC_RAMP from constants.gd, `set_specialization`
+   from sim.gd, the spec UI from main.gd, and the spec test.
+
+2. **Corner scoreboard (`c2bba3a`)** — top-right panel ranks every empire by population,
+   then colonies, then fleet power. Live from sim each refresh. Groundwork for multiplayer
+   standings ("who's strongest, who's in trouble"). Replaced my earlier influence-heatmap
+   idea (the user's call — a legible competition readout beats a prettier map).
+
+3. **AI personalities + difficulty-by-decision-speed (`62aa1db`, menu `b330ba5`)** — five
+   personalities (Balanced / Expansionist / Turtle / Raider / Opportunist) in constants.gd
+   `AI_PERSONA`, varying colony hunger, how close to the POWER_CEILING a fleet masses
+   before marching, whether it attacks held targets, and think cadence. Serialized with
+   the AI. Difficulty now *also* slows thinking (`ai_cadence_for`): lower efficiency →
+   longer gaps between decisions, so an easy AI feels less omnipresent on fleet micro
+   rather than just gathering slower. Menu New Game has an "AI personalities" section:
+   one picker per rival (Random + the five), rebuilt on empire-count change, plus a
+   "Randomize all" button. Config key `ai_personalities` (-1 = random per rival).
+   Determinism preserved (AI still RNG-free; randomize resolves once at map-gen via the
+   seeded rng).
+
+4. **10-minute seamless ambient (`tools/stitch_ambient.py`)** — a 70s loop is obvious
+   fast. Rebuilt `ambient.ogg` as 600s by layering the source at 5 incommensurate speeds
+   (0.5–1.06×, one reversed) + offsets + a slow level LFO, so the texture never repeats
+   within the window; tail equal-power crossfaded into the head for a seamless loop.
+   Verified: peak 0.897 (no clip), 70s-later self-correlation −0.15 (not a naive loop),
+   seam RMS continuous. Godot prefers `.ogg` over the `.mp3` source and loops it. Source
+   mp3 kept as the stitch master.
+
+5. **Audio classifier (`tools/audio_classify.py`)** — PANNs CNN14 (AudioSet, 527 tags)
+   via torch on py3.14 (torchaudio/onnxruntime/TF have no cp314 wheels; torch + librosa +
+   panns_inference do). Model + label CSV in `~/panns_data`. `--check` flags any cue
+   whose top tags don't read as its job. Ear-free QA, not a runtime dep.
+
+### Still open from this batch
+- **`alert` cue reads as plain "Music 0.51"** in audio_classify --check — no alarm/beep
+  character, so it may not cut through the ambient bed when something's wrong. Non-urgent;
+  retune the synth alert (sharper transient / dissonant interval) or swap the asset when
+  next touching audio. (All the sub-second UI CHECK flags are classifier noise, see
+  [[reach-audio-classifier]] — this one is a real "doesn't sound like its job".)
+- Achievements: user says "not an in-game thing" → skipped for now.
+- **Multiplayer: explicitly LAST**, after everything above. The scoreboard + personality
+  serialization were built partly as groundwork for it.
+
 ## Shipped 2026-10-05 (latest) — audio polish + sound tooling + supply visibility
 
 Feedback batch from playtest ("you have no ears, but it's working").
