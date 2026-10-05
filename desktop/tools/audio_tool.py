@@ -11,6 +11,7 @@ reads ogg/mp3/wav/flac and writes ogg/wav via its bundled libsndfile.
 
 Usage:
   python tools/audio_tool.py info  <file...>
+  python tools/audio_tool.py eval  <file...>          # does each cue fit its job?
   python tools/audio_tool.py view  <file> [out.png]
   python tools/audio_tool.py trim  <in> <out> --start S --end E   [--fade-out 0.03]
   python tools/audio_tool.py loop  <in> <out> (--dur D | --count N) [--xfade 0.0]
@@ -27,9 +28,90 @@ import numpy as np
 import soundfile as sf
 
 
+# Expected acoustic profile per cue ROLE -- the "is this the right sound" rubric.
+# dur = (min, max) seconds; attack = max seconds to reach 90% of peak (snappy vs slow);
+# bright = (min, max) spectral-centroid Hz (dull..bright); loop = should be seamless.
+# None means "don't check this axis". Cue names map to a role in CUE_ROLE below.
+ROLE_PROFILE = {
+    "click":   {"dur": (0.01, 0.20), "attack": 0.02, "bright": (1500, None), "loop": False},
+    "blip":    {"dur": (0.02, 0.40), "attack": 0.05, "bright": (800, None),  "loop": False},
+    "chime":   {"dur": (0.10, 0.70), "attack": 0.10, "bright": (600, None),  "loop": False},
+    "alert":   {"dur": (0.05, 0.60), "attack": 0.05, "bright": (400, None),  "loop": False},
+    "impact":  {"dur": (0.05, 0.80), "attack": 0.03, "bright": None,         "loop": False},
+    "whoosh":  {"dur": (0.10, 0.90), "attack": 0.08, "bright": None,         "loop": False},
+    "ambient": {"dur": (10.0, None), "attack": None, "bright": None,         "loop": True},
+}
+CUE_ROLE = {
+    "ui_click": "click", "move_order": "click",
+    "colony_activate": "chime", "alert": "alert", "refused": "alert",
+    "construct": "impact", "fleet_build": "whoosh",
+    "ambient": "ambient", "battle_loop": "ambient", "bombard_loop": "ambient",
+}
+
+
 def _read(path):
     data, sr = sf.read(path, always_2d=True, dtype="float32")
     return data, sr  # data: (frames, channels)
+
+
+def _features(mono, sr):
+    """Objective acoustic features -- the ear-replacement measurements."""
+    n = len(mono)
+    dur = n / sr
+    peak = float(np.max(np.abs(mono))) if n else 0.0
+    rms = float(np.sqrt(np.mean(mono ** 2))) if n else 0.0
+    peak_db = 20 * np.log10(peak) if peak > 1e-9 else -120.0
+    rms_db = 20 * np.log10(rms) if rms > 1e-9 else -120.0
+    # attack: time from start to first sample within 10% of peak (on a short envelope).
+    attack = 0.0
+    if peak > 1e-6:
+        idx = int(np.argmax(np.abs(mono) >= 0.9 * peak))
+        attack = idx / sr
+    # spectral centroid (brightness) over the whole clip.
+    spec = np.abs(np.fft.rfft(mono)) if n else np.array([0.0])
+    freqs = np.fft.rfftfreq(n, 1.0 / sr) if n else np.array([0.0])
+    centroid = float(np.sum(freqs * spec) / np.sum(spec)) if np.sum(spec) > 0 else 0.0
+    # spectral flatness: ~1 = noise, ~0 = tonal.
+    ps = spec ** 2 + 1e-12
+    flatness = float(np.exp(np.mean(np.log(ps))) / np.mean(ps))
+    # loop seam: energy of the discontinuity between last and first samples, vs RMS.
+    seam = abs(float(mono[-1] - mono[0])) / (rms + 1e-9) if n else 0.0
+    return {"dur": dur, "peak_db": peak_db, "rms_db": rms_db, "attack": attack,
+            "centroid": centroid, "flatness": flatness, "seam": seam}
+
+
+def cmd_eval(args):
+    import os
+    print("cue              dur    peakdB  rmsdB  atk    bright  noisy  flags")
+    for p in args.files:
+        name = os.path.splitext(os.path.basename(p))[0]
+        data, sr = _read(p)
+        f = _features(data.mean(axis=1), sr)
+        role = CUE_ROLE.get(name)
+        prof = ROLE_PROFILE.get(role, {}) if role else {}
+        flags = []
+        d = prof.get("dur")
+        if d:
+            if d[0] is not None and f["dur"] < d[0]:
+                flags.append("TOO SHORT")
+            if d[1] is not None and f["dur"] > d[1]:
+                flags.append("TOO LONG")
+        if prof.get("attack") is not None and f["attack"] > prof["attack"]:
+            flags.append("SLOW ATTACK")
+        b = prof.get("bright")
+        if b:
+            if b[0] is not None and f["centroid"] < b[0]:
+                flags.append("DULL")
+            if b[1] is not None and f["centroid"] > b[1]:
+                flags.append("HARSH")
+        if f["peak_db"] > -0.5:
+            flags.append("CLIPPY")
+        if prof.get("loop") and f["seam"] > 0.5:
+            flags.append("LOOP SEAM")
+        role_s = role or "?"
+        print("%-16s %5.2fs %6.1f %6.1f %5.3f %6.0f %6.2f  %s  [%s]" % (
+            name[:16], f["dur"], f["peak_db"], f["rms_db"], f["attack"],
+            f["centroid"], f["flatness"], ("OK" if not flags else ",".join(flags)), role_s))
 
 
 def _write(path, data, sr):
@@ -152,6 +234,7 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("info"); s.add_argument("files", nargs="+"); s.set_defaults(fn=cmd_info)
+    s = sub.add_parser("eval"); s.add_argument("files", nargs="+"); s.set_defaults(fn=cmd_eval)
     s = sub.add_parser("view"); s.add_argument("file"); s.add_argument("out", nargs="?"); s.set_defaults(fn=cmd_view)
     s = sub.add_parser("trim")
     s.add_argument("input"); s.add_argument("output")
