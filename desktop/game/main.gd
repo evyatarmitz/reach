@@ -1427,7 +1427,7 @@ func _draw_galaxy() -> void:
 	var view_hi := _galaxy_cam_pos + half + Vector2(80, 80)
 	# Deep-space backdrop: faint static stars, behind everything.
 	for s in _starfield:
-		draw_circle(s[0], s[1], s[2])
+		draw_circle(s[0], s[1], s[2], true, -1.0, true)
 	# Influence-shaped fog on the black background: one baked texture, drawn with
 	# linear filtering (see _ready) so the feathered lit region hugs the player's
 	# actual influence with a smooth edge — no blocks, no hard reach disc. Lit fades
@@ -1502,8 +1502,8 @@ func _draw_galaxy() -> void:
 	# Two passes: a wide translucent underlay for a soft glow, then the crisp core.
 	for bl in _border_segments:
 		var gc: Color = bl.col
-		gc.a = 0.22
-		draw_polyline(bl.pts, gc, 5.0, true)
+		gc.a = 0.18
+		draw_polyline(bl.pts, gc, 3.0, true)   # tight glow — was 5px/0.22, which bled into a wide fuzzy fade
 	for bl in _border_segments:
 		draw_polyline(bl.pts, bl.col, 2.0, true)
 	# Lanes: full between two known systems; HALF (out to the midpoint) when one
@@ -1575,7 +1575,7 @@ func _draw_galaxy() -> void:
 				if dcol != null and not sim._is_colony_active(dcol):
 					var bc: Color = sim.empires[dcol.empire_id].color
 					var br: float = _bubble_radius(sys.id)
-					draw_circle(sys.map_pos, br, Color(bc.r, bc.g, bc.b, 0.12))
+					draw_circle(sys.map_pos, br, Color(bc.r, bc.g, bc.b, 0.12), true, -1.0, true)
 					draw_arc(sys.map_pos, br, 0.0, TAU, 48,
 						Color(bc.r, bc.g, bc.b, 0.22), 5.0, true)
 					draw_arc(sys.map_pos, br, 0.0, TAU, 48, bc, 2.0, true)
@@ -1982,8 +1982,8 @@ func _draw_water_drop(c: Vector2, mined := true) -> void:
 		c + Vector2(-3.0, 3.6), c + Vector2(-3.7, 1.1), c + Vector2(-2.1, -2.4)])
 	draw_colored_polygon(drop, body)
 	draw_polyline(PackedVector2Array([drop[0], drop[1], drop[2], drop[3], drop[4],
-		drop[5], drop[6], drop[7], drop[0]]), rim, 1.0)
-	draw_circle(c + Vector2(-1.1, 1.4), 1.1, glint)   # glint
+		drop[5], drop[6], drop[7], drop[0]]), rim, 1.0, true)
+	draw_circle(c + Vector2(-1.1, 1.4), 1.1, glint, true, -1.0, true)   # glint
 
 
 # Mineral deposit — an upright faceted gem (diamond with a lighter top facet + rim).
@@ -2000,8 +2000,8 @@ func _draw_gem(c: Vector2, mined := true) -> void:
 	var mlft := c + Vector2(-2.3, -0.6)
 	draw_colored_polygon(PackedVector2Array([top, rgt, bot, lft]), body)   # gem body
 	draw_colored_polygon(PackedVector2Array([top, rgt, mrgt, mlft]), facet) # top-right facet
-	draw_polyline(PackedVector2Array([top, rgt, bot, lft, top]), rim, 1.0)
-	draw_line(lft, rgt, Color(rim.r, rim.g, rim.b, 0.5), 1.0)              # girdle line
+	draw_polyline(PackedVector2Array([top, rgt, bot, lft, top]), rim, 1.0, true)
+	draw_line(lft, rgt, Color(rim.r, rim.g, rim.b, 0.5), 1.0, true)        # girdle line
 
 
 # Structure badges: a system's built structures shown as a tidy centred row of
@@ -2109,8 +2109,8 @@ func _draw_structure_badges(center: Vector2, depot_id: int, obs_id: int,
 			"depot":   # supply crate: filled square
 				draw_rect(Rect2(p + Vector2(-3, -3), Vector2(6, 6)), col)
 			"obs":     # observation post: an eye (ring + pupil)
-				draw_arc(p, 3.5, 0.0, TAU, 12, col, 1.5)
-				draw_circle(p, 1.3, col)
+				draw_arc(p, 3.5, 0.0, TAU, 12, col, 1.5, true)
+				draw_circle(p, 1.3, col, true, -1.0, true)
 			"imperial":   # imperial center: a crown — a bar with points, tick per level
 				var lvl: int = badges[i][2]
 				var pts := PackedVector2Array([
@@ -2118,10 +2118,10 @@ func _draw_structure_badges(center: Vector2, depot_id: int, obs_id: int,
 					p + Vector2(-1.5, 1.0), p + Vector2(0.0, -2.5),
 					p + Vector2(1.5, 1.0), p + Vector2(3.5, -1.0),
 					p + Vector2(3.5, 2.0)])
-				draw_polyline(pts, col, 1.4)
+				draw_polyline(pts, col, 1.4, true)
 				# One small pip under the crown per upgrade level (1-3) — reads the tier.
 				for k in lvl:
-					draw_circle(p + Vector2(-2.0 + k * 2.0, 3.6), 0.8, col)
+					draw_circle(p + Vector2(-2.0 + k * 2.0, 3.6), 0.8, col, true, -1.0, true)
 			"citadel":   # fortress: a crenellated battlement (square with merlon teeth)
 				draw_rect(Rect2(p + Vector2(-3.5, -1.0), Vector2(7.0, 4.0)), col, false, 1.3)
 				for mx in [-3.5, -1.0, 1.5]:
@@ -2172,21 +2172,17 @@ func _draw_glow(pos: Vector2, r: float, col: Color) -> void:
 
 
 func _draw_star(pos: Vector2, col: Color, intensity: float, scale := 1.0) -> void:
-	# A luminous body with depth: soft radial discs for the halo, then a CRISP vector core
-	# on top so the star reads as a sharp, defined point at any zoom. The glow texture alone
-	# (linear-filtered) magnified into mush when zoomed in — draw_circle is resolution-
-	# independent and MSAA-smoothed, so it stays a clean dot. scale grows it with population.
+	# A crisp luminous disc with a restrained halo. Earlier this stacked THREE soft glow
+	# discs that bled outward, so the star read as a fuzzy blob that "fades slowly" instead
+	# of a defined point. Now: one faint halo for the light's reach, then two ANTIALIASED
+	# filled discs on top. draw_circle's antialiased=true is geometry AA (renderer-
+	# independent, not reliant on MSAA), so the body stays a sharp round dot at any zoom.
 	var c := col
-	c.a = 0.16 * intensity
-	_draw_glow(pos, 16.0 * scale, c)                 # outer haze — the "reach" of the light
-	c.a = 0.40 * intensity
-	_draw_glow(pos, 9.0 * scale, c)                  # coloured body glow
-	var core := col.lerp(Color.WHITE, 0.55)
-	core.a = 0.6 + 0.2 * intensity
-	_draw_glow(pos, (4.2 + 0.8 * intensity) * scale, core)   # soft bloom under the core
-	# Crisp focal core: solid coloured disc + bright white centre, sharp at every zoom.
-	draw_circle(pos, (3.0 + 0.6 * intensity) * scale, col.lerp(Color.WHITE, 0.35))
-	draw_circle(pos, (1.5 + 0.5 * intensity) * scale, Color(1, 1, 1, 0.92))
+	c.a = 0.22 * intensity
+	_draw_glow(pos, 10.0 * scale, c)                 # one restrained halo — the light's reach
+	var body := col.lerp(Color.WHITE, 0.30)
+	draw_circle(pos, (3.4 + 0.7 * intensity) * scale, body, true, -1.0, true)          # crisp coloured disc
+	draw_circle(pos, (1.7 + 0.5 * intensity) * scale, Color(1, 1, 1, 0.95), true, -1.0, true)  # white core
 
 
 # An empire's CAPITAL (its most-populated system — where its ships are built) gets its
@@ -2234,10 +2230,10 @@ func _draw_system_symbols(sys: StarSystem) -> void:
 		if has_colony and colony_owner != -1:
 			# Colony: filled owner-colour disc with a dark rim for contrast; a white
 			# ring means it's still growing (not yet an established city).
-			draw_circle(c, 6.0, Color(0, 0, 0, 0.5))
-			draw_circle(c, 5.0, sim.empires[colony_owner].color)
+			draw_circle(c, 6.0, Color(0, 0, 0, 0.5), true, -1.0, true)
+			draw_circle(c, 5.0, sim.empires[colony_owner].color, true, -1.0, true)
 			if not established:
-				draw_arc(c, 5.0, 0.0, TAU, 16, Color(1, 1, 1, 0.7), 1.0)
+				draw_arc(c, 5.0, 0.0, TAU, 16, Color(1, 1, 1, 0.7), 1.0, true)
 		elif p.has_deposit():
 			# Shape-coded so each reads without relying on colour: water = a teardrop,
 			# minerals = a faceted gem. Full colour when the deposit is WORKED (a mine),
@@ -2254,7 +2250,7 @@ func _draw_system_symbols(sys: StarSystem) -> void:
 			if mined:
 				draw_arc(c, 7.5, 0.0, TAU, 20, sim.empires[mine_owner].color, 1.5, true)
 		else:
-			draw_circle(c, 2.5, Color(0.5, 0.5, 0.55))
+			draw_circle(c, 2.5, Color(0.5, 0.5, 0.55), true, -1.0, true)
 		i += 1
 	if depot_owner != -1:
 		var dcpos := start + Vector2(i * step, 0)

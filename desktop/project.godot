@@ -26,6 +26,10 @@ window/dpi/allow_hidpi=true
 ; integrated GPUs and virtual machines that lack Vulkan — fewer "won't start" reports.
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
-; 4x MSAA on the 2D canvas: smooths every drawn circle/line/arc edge (stars, borders,
-; ships, rings) so the map reads crisp instead of jagged/pixelised.
-anti_aliasing/quality/msaa_2d=2
+; 2D MSAA is intentionally OFF: the Compatibility (GLES3) renderer we use for broad GPU
+; support does NOT implement it — Godot 4.7 prints "2D MSAA is not yet supported for
+; GLES3" and renders jagged. Instead every draw call that can alias passes
+; antialiased=true (lines, arcs, polylines, and filled circles via draw_circle's
+; antialiased arg): that's geometry-based edge AA, done on the CPU, so it works in
+; Compatibility and keeps rings/borders/stars/glyphs smooth without needing MSAA.
+anti_aliasing/quality/msaa_2d=0
