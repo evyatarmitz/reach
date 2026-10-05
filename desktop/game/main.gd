@@ -1650,15 +1650,35 @@ func _draw_galaxy() -> void:
 	# fleet's supply range; any selected fleet sitting OUTSIDE it is stranded and bleeding
 	# border attrition (flagged red in the fleet pass below). Function-scoped so that pass
 	# can reuse it.
+	# Only safe systems OUTSIDE your own border glow: inside it supply is a given, so lighting
+	# those too was just clutter — the useful signal is "how far my supply reaches into foreign
+	# space". supply_safe still holds the full field (the fleet pass tests membership on it).
 	var supply_safe := {}
 	if selected_fleet_id != -1 or not selected_fleets.is_empty():
 		supply_safe = sim.supply_safe_systems(player_empire_id)
 		for sid in supply_safe:
+			if sim.owner_cached(sid) == player_empire_id:
+				continue   # inside our own border — supply is obvious, don't clutter the map
 			var sp: Vector2 = sim.systems[sid].map_pos
 			if sp.x < view_lo.x or sp.x > view_hi.x or sp.y < view_lo.y or sp.y > view_hi.y:
 				continue
 			draw_circle(sp, 15.0, Color(0.40, 1.0, 0.65, 0.07))
 			draw_arc(sp, 15.0, 0.0, TAU, 32, Color(0.40, 1.0, 0.65, 0.5), 1.5, true)
+		# Escape-lane glow: a selected fleet sitting over an enemy colony (RETREAT-ONLY pin)
+		# may only fall back the way it came. Mark that one legal exit so the player sees the
+		# commitment — the lane back to prev_system glows the same green as the supply field.
+		for f in sim.fleets:
+			if f.empire_id != player_empire_id:
+				continue
+			if not (f.id == selected_fleet_id or selected_fleets.has(f.id)):
+				continue
+			if sim.fleet_pin(f) != 1 or f.prev_system == -1 \
+					or not sim.systems.has(f.prev_system):
+				continue
+			var ea: Vector2 = sim.systems[f.system_id].map_pos
+			var eb: Vector2 = sim.systems[f.prev_system].map_pos
+			draw_line(ea, eb, Color(0.40, 1.0, 0.65, 0.18), 4.0, true)   # soft glow underlay
+			draw_line(ea, eb, Color(0.40, 1.0, 0.65, 0.6), 2.0, true)    # crisp bright core
 
 	# Fleets: your own always visible; a rival's only while it sits in your VR.
 	# Drawn as an arrowhead in the empire's colour, pointed along its heading; a
@@ -3596,17 +3616,33 @@ func _autoshot() -> void:
 	# fleet battle. Find an enemy colony whose system has no enemy fleet, drop a bomber-heavy
 	# player fleet on it, tick once so _bombard runs and combat_kind flags 1.
 	var bomb_sys := -1
+	var bomb_pop := -1.0
 	for c in sim.colonies:
 		if c.empire_id == player_empire_id:
 			continue
 		var sid: int = sim.planets[c.planet_id].system_id
-		if not sim._has_enemy_fleet(player_empire_id, sid):   # no defender → bombardment
+		# Pick the MOST populous undefended enemy colony: a big one survives the single
+		# bombardment tick, so it stays an enemy colony and the fleet keeps its RETREAT-ONLY
+		# pin (needed for the escape-lane glow). A tiny colony gets wiped in one tick.
+		if not sim._has_enemy_fleet(player_empire_id, sid) and c.population > bomb_pop:
+			bomb_pop = c.population
 			bomb_sys = sid
-			break
 	if bomb_sys != -1:
+		# Enemy colonies this late in the harness seed are near-dead (~10 pop), so a single
+		# bombardment tick wipes them and the RETREAT-ONLY pin evaporates before the shot.
+		# Inflate the target so it survives the tick and stays a live enemy colony.
+		for pid in sim.systems[bomb_sys].planet_ids:
+			var ec: Colony = sim.planets[pid].colony
+			if ec != null and ec.empire_id != player_empire_id:
+				ec.population = 5000.0
 		var bf := sim._fleet_at(player_empire_id, bomb_sys)
-		bf.bombers[2] += 12   # bomb power to grind the colony
-		bf.fighters[1] += 4
+		bf.bombers[2] += 3   # enough bomb power to flag bombardment, not wipe the colony in
+		bf.fighters[1] += 4  # one tick (so it's still an enemy colony → RETREAT-ONLY pin holds)
+		# A real bombarding fleet jumped in from somewhere; record that lane so the
+		# escape-lane glow (RETREAT-ONLY pin can only fall back the way it came) renders.
+		var bomb_nbs := sim.lane_neighbors(bomb_sys)
+		if not bomb_nbs.is_empty():
+			bf.prev_system = bomb_nbs[0]
 		sim.tick(SimConstants.TICK_DAYS)   # _bombard runs → combat_kind[bomb_sys] = 1
 		_recompute_borders()
 		selected_fleet_id = -1
