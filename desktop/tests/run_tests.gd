@@ -58,6 +58,8 @@ func _init() -> void:
 	_test_fog_of_war()
 	_test_neighbor_bonus()
 	_test_ai_rival()
+	_test_ai_defends_threatened_colony()
+	_test_ai_targets_weakest_colony()
 	_test_mining()
 	_test_conversion()
 	_test_water_growth()
@@ -444,6 +446,63 @@ func _test_ai_rival() -> void:
 		max_ships = maxi(max_ships, sc)
 	check(max_colonies >= 2, "rival AI expands to multiple colonies over time")
 	check(max_ships >= 1, "rival AI builds ships once it can afford them")
+
+
+# Defence-first: with one of its colonies under siege AND an enemy colony it could
+# attack sitting right next door, the AI pulls its idle stack HOME to relieve the siege
+# instead of marching off to raid. The old AI only ever pushed outward.
+func _test_ai_defends_threatened_colony() -> void:
+	var sim := Sim.new()
+	var me := sim.add_empire("AI", Color.RED)
+	var foe := sim.add_empire("Foe", Color.BLUE)
+	# Home(my colony + my idle stack) -- Mid(my colony, under siege) ; Home -- Raid(enemy colony).
+	var home := sim.add_system("Home"); home.map_pos = Vector2.ZERO
+	var mid := sim.add_system("Mid"); mid.map_pos = Vector2(100, 0)
+	var raid := sim.add_system("Raid"); raid.map_pos = Vector2(-100, 0)
+	sim.add_lane(home.id, mid.id)
+	sim.add_lane(home.id, raid.id)
+	sim.inject_colony(me.id, sim.add_planet(home.id, "Home I").id, 300.0, true)
+	sim.inject_colony(me.id, sim.add_planet(mid.id, "Mid I").id, 300.0, false)
+	sim.inject_colony(foe.id, sim.add_planet(raid.id, "Raid I").id, 100.0, true)  # tempting raid
+	var guard := sim._fleet_at(me.id, home.id); guard.fighters[0] = 40  # could easily take Raid
+	var siege := sim._fleet_at(foe.id, mid.id); siege.bombers[0] = 20   # sitting on my colony
+	var ai := EmpireAI.new(me.id)
+	ai._move_fleets(sim)
+	check(guard.is_moving() and guard.path[guard.path.size() - 1] == mid.id,
+		"AI recalls its stack to relieve the besieged colony (Mid), not to raid")
+	check(guard.path[guard.path.size() - 1] != raid.id,
+		"it does NOT march off to the undefended enemy colony while home is threatened")
+	# Control: with no siege, _defend finds nothing to do.
+	var calm := Sim.new()
+	var m2 := calm.add_empire("AI", Color.RED)
+	var h2 := calm.add_system("H"); h2.map_pos = Vector2.ZERO
+	calm.inject_colony(m2.id, calm.add_planet(h2.id, "H I").id, 300.0, true)
+	calm._fleet_at(m2.id, h2.id).fighters[0] = 10
+	check(not EmpireAI.new(m2.id)._defend(calm),
+		"no defensive order is issued when nothing is threatened")
+
+
+# Target the SOFTEST winnable colony, not the lowest-id one. The fleet borders a
+# defended-but-winnable colony (lower id) and an undefended one (higher id); it should
+# pick the undefended kill. The old AI took the first (lowest-id) winnable target.
+func _test_ai_targets_weakest_colony() -> void:
+	var sim := Sim.new()
+	var me := sim.add_empire("AI", Color.RED)
+	var foe := sim.add_empire("Foe", Color.BLUE)
+	var a := sim.add_system("A"); a.map_pos = Vector2.ZERO
+	var defended := sim.add_system("Defended"); defended.map_pos = Vector2(100, 0)  # lower id
+	var soft := sim.add_system("Soft"); soft.map_pos = Vector2(-100, 0)             # higher id
+	sim.add_lane(a.id, defended.id)
+	sim.add_lane(a.id, soft.id)
+	sim.inject_colony(foe.id, sim.add_planet(defended.id, "D I").id, 100.0, true)
+	sim.inject_colony(foe.id, sim.add_planet(soft.id, "S I").id, 100.0, true)
+	var strike := sim._fleet_at(me.id, a.id); strike.fighters[0] = 50   # out-powers either
+	sim._fleet_at(foe.id, defended.id).fighters[0] = 5                   # a real defender
+	# soft has no defending fleet.
+	var ai := EmpireAI.new(me.id)
+	check(defended.id < soft.id, "test setup: the defended colony has the lower id")
+	check(ai._best_attack_target(sim, strike) == soft.id,
+		"AI strikes the undefended colony, not the lower-id defended one")
 
 
 func _test_mining() -> void:

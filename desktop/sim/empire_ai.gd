@@ -85,11 +85,15 @@ func _build_ships(sim: Sim) -> void:
 			return
 
 
-# Consolidate scattered fleets into single stacks, then send a stack to attack an
-# adjacent enemy colony ONLY when it can win (undefended, or it out-powers the
-# defenders) — so the AI fights as a massed force and stops throwing ships away.
+# Consolidate scattered fleets into single stacks, then act — DEFENCE FIRST (pull a
+# stack home to relieve a colony under attack), and only if nothing's threatened,
+# attack an adjacent enemy colony it can win (undefended, or it out-powers the
+# defenders), or march a decisive massed force to the nearest enemy colony. One order
+# per interval, so a live home threat always pre-empts an offensive move.
 func _move_fleets(sim: Sim) -> void:
 	_consolidate(sim)
+	if _defend(sim):
+		return
 	for f in sim.fleets:
 		if f.empire_id != empire_id or f.is_moving() or f.ship_count() == 0:
 			continue
@@ -105,6 +109,104 @@ func _move_fleets(sim: Sim) -> void:
 			if dest != -1:
 				sim.order_fleet(f.id, dest)
 		return   # one fleet order per interval
+
+
+# Relieve a colony under attack. A colony system is "threatened" when an enemy fleet
+# with ships is sitting on it (active siege) or is inbound (its move ends there) AND we
+# have no stationary fleet there already contesting it. We relieve the highest-stakes
+# threatened system (most of our population at risk) with our nearest idle stack that
+# can actually route there. Returns true if it issued a defensive order.
+#
+# This is what stops a rival's colonies falling for free: before, the AI only ever
+# pushed outward and let its own worlds be bombarded unanswered. It never gives the AI
+# a shortcut — it still moves through order_fleet like the player, so the FTL-inhibitor
+# pin, lane routing and border rules all apply.
+func _defend(sim: Sim) -> bool:
+	var best_sys := -1
+	var best_pop := -1.0
+	for sid in _owned_systems_sorted(sim):   # ascending id -> deterministic tie-break
+		if _friendly_fleet_in(sim, sid):
+			continue   # a defender is already contesting this system
+		if not _system_under_threat(sim, sid):
+			continue
+		var pop := _own_population_in(sim, sid)
+		if pop > best_pop:
+			best_pop = pop
+			best_sys = sid
+	if best_sys == -1:
+		return false
+	# Our nearest idle stack by lane hops (topology distance); ties break on fleet id.
+	# Unreachable fleets are dropped. Dispatch the first whose order is accepted (a
+	# nearer stack may be blocked by enemy territory, so fall through to the next).
+	var candidates: Array = []
+	for f in sim.fleets:
+		if f.empire_id != empire_id or f.is_moving() or f.ship_count() == 0:
+			continue
+		if f.system_id == best_sys:
+			continue
+		var h := _hops(sim, f.system_id, best_sys)
+		if h < 0:
+			continue
+		candidates.append({"id": f.id, "hops": h})
+	candidates.sort_custom(func(a, b):
+		if a["hops"] != b["hops"]:
+			return a["hops"] < b["hops"]
+		return a["id"] < b["id"])
+	for c in candidates:
+		if sim.order_fleet(c["id"], best_sys):
+			return true
+	return false
+
+
+func _friendly_fleet_in(sim: Sim, system_id: int) -> bool:
+	for f in sim.fleets:
+		if f.empire_id == empire_id and not f.is_moving() \
+				and f.system_id == system_id and f.ship_count() > 0:
+			return true
+	return false
+
+
+# An enemy stack sitting on this system (siege) or inbound to it (its path ends here).
+func _system_under_threat(sim: Sim, system_id: int) -> bool:
+	for f in sim.fleets:
+		if f.empire_id == empire_id or f.ship_count() == 0:
+			continue
+		if not f.is_moving() and f.system_id == system_id:
+			return true
+		if f.is_moving() and not f.path.is_empty() \
+				and f.path[f.path.size() - 1] == system_id:
+			return true
+	return false
+
+
+func _own_population_in(sim: Sim, system_id: int) -> float:
+	var total := 0.0
+	for pid in sim.systems[system_id].planet_ids:
+		var c: Colony = sim.planets[pid].colony
+		if c != null and c.empire_id == empire_id:
+			total += c.population
+	return total
+
+
+# Lane-topology hop distance a->b (BFS, ignores enemy blocking — a routing heuristic
+# for ranking; order_fleet does the real reachability check). -1 if disconnected.
+func _hops(sim: Sim, from_sys: int, to_sys: int) -> int:
+	if from_sys == to_sys:
+		return 0
+	var dist := {from_sys: 0}
+	var queue: Array = [from_sys]
+	while not queue.is_empty():
+		var s: int = queue.pop_front()
+		var nbs: Array = sim.lane_neighbors(s)
+		nbs.sort()
+		for nb in nbs:
+			if dist.has(nb):
+				continue
+			dist[nb] = dist[s] + 1
+			if nb == to_sys:
+				return dist[nb]
+			queue.append(nb)
+	return -1
 
 
 # Nearest enemy-colony system by lane hops (BFS). -1 if none reachable. Sorted
@@ -136,12 +238,17 @@ func _consolidate(sim: Sim) -> void:
 		sim.merge_fleets_into(keep_by_sys[sid])
 
 
-# Lowest-id adjacent enemy-colony system this fleet can take: undefended (bombard
-# freely) or where our combat power beats the defenders'. -1 = hold and keep massing.
+# The WEAKEST adjacent enemy-colony system this fleet can take — undefended (bombard
+# freely) or where our combat power beats the defenders'. Picking the softest target
+# (least defending power) over the lowest id means the stack secures the fastest kill
+# and keeps moving instead of grinding the first colony it happens to border. Ties
+# break on lowest id (deterministic). -1 = hold and keep massing.
 func _best_attack_target(sim: Sim, f: Fleet) -> int:
 	var mine: float = f.combat_power()
 	var targets: Array = sim.lane_neighbors(f.system_id)
 	targets.sort()
+	var best := -1
+	var best_def := INF
 	for nb in targets:
 		if not sim._has_enemy_colony(empire_id, nb):
 			continue
@@ -151,8 +258,10 @@ func _best_attack_target(sim: Sim, f: Fleet) -> int:
 			if eid != empire_id:
 				def += powers[eid].combat
 		if def <= 0.0 or mine > def:
-			return nb
-	return -1
+			if def < best_def:   # strict < keeps the first (lowest-id) of equal-defence ties
+				best_def = def
+				best = nb
+	return best
 
 
 func _build_one_mine(sim: Sim) -> void:
