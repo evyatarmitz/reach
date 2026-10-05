@@ -86,6 +86,7 @@ func _init() -> void:
 	_test_fort_defends_colony_under_it()
 	_test_structure_anchored_by_colony()
 	_test_military_structures_razed()
+	_test_imperial_center_colony_bound()
 	_test_captured_mine_benefits_new_owner()
 	_test_support_structures()
 	_test_resource_variety()
@@ -1606,6 +1607,32 @@ func _test_military_structures_razed() -> void:
 		"a military depot is razed, never handed to the enemy, when its colony is gone")
 	check(sim.systems[m.id].obs_post_empire_id == -1,
 		"a military observation post is razed, never handed to the enemy, when its colony is gone")
+
+
+func _test_imperial_center_colony_bound() -> void:
+	# The imperial centre is PART of its colony — never captured. While its colony shelters
+	# it (even overrun and cut off) it stands; the instant the colony is gone it's cleared,
+	# not handed to whoever's border now holds the ground.
+	var d := _overrun_scenario(SimConstants.Deposit.NONE)
+	var sim: Sim = d.sim
+	var m: StarSystem = d.m
+	sim.systems[m.id].imperial_empire_id = d.v.id
+	sim.systems[m.id].imperial_level = 1
+	sim.tick(SimConstants.TICK_DAYS)
+	check(sim.owner_cached(m.id) == d.e.id, "the enemy border holds the overrun system")
+	check(sim.systems[m.id].imperial_empire_id == d.v.id,
+		"an imperial centre stands while its own colony shelters it")
+	# Remove the colony through the sim's own path: the centre must fall WITH it.
+	sim._remove_colony(d.fwd)
+	check(sim.systems[m.id].imperial_empire_id == -1,
+		"removing the colony razes its imperial centre immediately (colony-bound)")
+	check(sim.systems[m.id].imperial_level == 0, "and resets its level")
+	# Belt-and-braces: a stray centre with no colony is razed by the border pass, not captured.
+	sim.systems[m.id].imperial_empire_id = d.v.id
+	sim.systems[m.id].imperial_level = 1
+	sim.tick(SimConstants.TICK_DAYS)
+	check(sim.systems[m.id].imperial_empire_id == -1,
+		"a stray imperial centre with no colony is razed by the border pass, not captured")
 
 
 func _test_captured_mine_benefits_new_owner() -> void:

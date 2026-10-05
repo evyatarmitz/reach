@@ -714,12 +714,25 @@ func move_capital(empire_id: int, planet_id: int) -> bool:
 # combat destruction of a capital is handled separately (it eliminates the empire).
 func _remove_colony(c: Colony) -> void:
 	var eid := c.empire_id
+	_clear_imperial_on(c.planet_id, eid)
 	planets[c.planet_id].colony = null
 	colonies.erase(c)
 	var e: Empire = empires.get(eid)
 	if e != null and e.capital_planet_id == c.planet_id:
 		e.capital_planet_id = _largest_colony_planet(eid)
 	_invalidate_influence_caches()
+
+
+# The imperial centre is PART of its colony — it stands and falls with the colony and is
+# never captured by a conqueror. Clear it the moment the anchoring colony is removed so it
+# can't outlive it (mine/depot/obs/citadel still resolve on the next border pass).
+func _clear_imperial_on(planet_id: int, empire_id: int) -> void:
+	var sid: int = planets[planet_id].system_id
+	var s: StarSystem = systems.get(sid)
+	if s != null and s.imperial_empire_id == empire_id:
+		s.imperial_empire_id = -1
+		s.imperial_level = 0
+		s.imperial_charge = 0.0
 
 
 # The planet of an empire's most-populated colony, or -1 if it has none.
@@ -742,6 +755,7 @@ func _eliminate_empire(empire_id: int) -> void:
 		if c.empire_id == empire_id:
 			doomed.append(c)
 	for c in doomed:
+		_clear_imperial_on(c.planet_id, empire_id)
 		planets[c.planet_id].colony = null
 		colonies.erase(c)
 	var e: Empire = empires.get(empire_id)
@@ -2313,15 +2327,16 @@ func tick(dt_days: float) -> void:
 	# 7. Combat: fleets auto-fight where enemies meet, else bombard (see 0.25.0).
 	_resolve_combat(dt_days)
 
-	# 8. Structures follow the border — but a colony ANCHORS them, and MILITARY structures
-	#    are razed rather than captured. "Whoever has the planet" owns its CIVILIAN structures
-	#    (the mine and the imperial centre): they change hands to whoever now controls the
-	#    system, UNLESS the original owner still holds a colony there — a disconnected holdout
-	#    keeps its own structures even while an enemy border washes over the bubble. The
-	#    MILITARY structures — supply depot, observation post, citadel — can never be handed
-	#    to the enemy: if an enemy border takes their system and no friendly colony shelters
-	#    them, they are destroyed (scorched, not captured). A sheltering colony keeps them
-	#    standing, and the citadel then defends until it — or the colony — is bombarded down.
+	# 8. Structures follow the border — but a colony ANCHORS them. Only the MINE is a
+	#    captured civilian structure: it changes hands to whoever now controls the system,
+	#    UNLESS the original owner still holds a colony there (a disconnected holdout keeps
+	#    its mine even while an enemy border washes over the bubble). The IMPERIAL CENTRE is
+	#    colony-bound — part of its colony, cleared with it in _remove_colony — so it is
+	#    never captured; the branch here only catches a stray one and razes it. The MILITARY
+	#    structures — supply depot, observation post, citadel — can never be handed to the
+	#    enemy: if an enemy border takes their system and no friendly colony shelters them,
+	#    they are destroyed (scorched, not captured). A sheltering colony keeps them standing,
+	#    and the citadel then defends until it — or the colony — is bombarded down.
 	#    Colonies themselves never flip (they must be bombarded to fall).
 	var struct_systems := {}
 	for p in planets.values():
@@ -2352,7 +2367,12 @@ func tick(dt_days: float) -> void:
 			sys.obs_post_empire_id = -1   # observation post is military — razed, never captured
 		if sys.imperial_empire_id != -1 and o != sys.imperial_empire_id \
 				and not _empire_has_colony_in(sys.imperial_empire_id, sys.id):
-			sys.imperial_empire_id = o
+			# Imperial centre is colony-bound (normally cleared with its colony in
+			# _remove_colony). If one is ever found with no sheltering colony, its colony
+			# has already fallen, so it's gone — never captured by the conqueror.
+			sys.imperial_empire_id = -1
+			sys.imperial_level = 0
+			sys.imperial_charge = 0.0
 		if sys.citadel_empire_id != -1 and o != sys.citadel_empire_id \
 				and not _empire_has_colony_in(sys.citadel_empire_id, sys.id):
 			sys.citadel_empire_id = -1   # a fort is razed, never captured
