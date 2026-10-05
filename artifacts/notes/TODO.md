@@ -4,6 +4,25 @@ New project, split from To Infinity (2026-07-02). This game is genuinely novel �
 nothing from the old codebase transfers directly, because the old build assumed an
 embodied player and direct entity control, and Reach has neither.
 
+## Shipped 2026-10-05 (later) — sound layer (`82efbe4`)
+
+Procedural synth audio, built at boot into `AudioStreamWAV`, so the game ships with
+sound and zero asset files. Any cue is overridable by dropping
+`res://assets/audio/<name>.ogg` (or `.wav`) — the synth is a placeholder, not the
+contract. `game/audio.gd` is a headless no-op (tests stay silent/fast). Two buses
+(Music, SFX) + a pause-menu mute toggle and Music/Effects sliders persisted to
+`user://audio.cfg`. Cues: ambient bed (starts on game begin, skipped during autoshot),
+construct (any successful build/upgrade/colonize), fleet_build (refused buzz if none
+made), battle_loop / bombard_loop (while a selected non-moving fleet sits in a live
+combat system — bombard is heavier/slower, no pings), plus colony_activate / alert /
+ui_click / move_order / refused UI cues. Combat audio driven off the UI tick
+(`set_combat` only acts on change); activation + alert off the event scan.
+
+NOTE: `audio.gd` has NO `class_name` on purpose — main.gd preloads it as a const
+(`GameAudioScript`). A `class_name` reference fails main.tscn parse under the headless
+`-s` load path (global class cache isn't populated) — cost a 47-min test hang before
+diagnosis; same trap as the `class_name Updater` one.
+
 ## Shipped 2026-10-05 — imperial colony-bound + escape-lane glow + supply-glow trim + smarter AI
 
 Ordered directive batch (#4 → #1 → #2), one commit each, suite + determinism green.
