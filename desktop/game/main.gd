@@ -170,8 +170,6 @@ var abandon_btn: Button
 var move_capital_btn: Button
 var merge_btn: Button
 var split_btn: Button
-var spec_food_btn: Button
-var spec_alloy_btn: Button
 var upgrade_btn: Button
 var depot_btn: Button
 var obs_post_btn: Button
@@ -2677,10 +2675,6 @@ func _build_ui() -> void:
 	split_btn = Button.new()
 	split_btn.text = "Split fleet"
 	split_btn.pressed.connect(_on_split)
-	spec_food_btn = Button.new()
-	spec_food_btn.pressed.connect(func() -> void: _on_spec(SimConstants.Spec.FOOD))
-	spec_alloy_btn = Button.new()
-	spec_alloy_btn.pressed.connect(func() -> void: _on_spec(SimConstants.Spec.ALLOY))
 	upgrade_btn = Button.new()
 	upgrade_btn.pressed.connect(_on_upgrade_mine)
 	depot_btn = Button.new()
@@ -2709,8 +2703,6 @@ func _build_ui() -> void:
 	vbox.add_child(emigrate_btn)
 	vbox.add_child(abandon_btn)
 	vbox.add_child(move_capital_btn)
-	vbox.add_child(spec_food_btn)
-	vbox.add_child(spec_alloy_btn)
 	vbox.add_child(depot_btn)
 	vbox.add_child(obs_post_btn)
 	vbox.add_child(imperial_btn)
@@ -3115,17 +3107,6 @@ func _on_move_capital() -> void:
 		sim.move_capital(player_empire_id, selected_planet_id)
 
 
-func _on_spec(kind: int) -> void:
-	if selected_planet_id != -1:
-		var c: Colony = sim.planets[selected_planet_id].colony
-		# Toggle off if pressing the active one, else set it.
-		if c != null and c.spec == kind:
-			sim.set_specialization(player_empire_id, selected_planet_id,
-				SimConstants.Spec.NONE)
-		else:
-			sim.set_specialization(player_empire_id, selected_planet_id, kind)
-
-
 func _on_upgrade_mine() -> void:
 	if selected_planet_id != -1 and sim.upgrade_mine(player_empire_id, selected_planet_id):
 		audio.play("construct")
@@ -3224,8 +3205,7 @@ func _planet_row_text(planet: Planet, live: bool, pinfo: Dictionary) -> String:
 # Read-only detail for a planet in an explored-but-out-of-sight system: static
 # deposit plus the frozen last-seen colony/mine — no population, no live changes.
 func _show_planet_frozen(planet: Planet, pinfo: Dictionary) -> void:
-	for b in [colonize_btn, mine_btn, emigrate_btn, abandon_btn, move_capital_btn, upgrade_btn,
-			spec_food_btn, spec_alloy_btn]:
+	for b in [colonize_btn, mine_btn, emigrate_btn, abandon_btn, move_capital_btn, upgrade_btn]:
 		b.visible = false
 	var dep_name: String = ["none", "water", "minerals"][planet.deposit_type]
 	var lines := "Deposit: %s" % dep_name
@@ -3386,7 +3366,7 @@ func _show_fleet_panel(fleet: Fleet) -> void:
 		"  → moving" if fleet.is_moving() else "",
 		fleet.combat_power(), fleet.bomb_power(), comp, combat_line]
 	for b in [colonize_btn, mine_btn, emigrate_btn, abandon_btn, move_capital_btn, upgrade_btn,
-			spec_food_btn, spec_alloy_btn, depot_btn, obs_post_btn, imperial_btn,
+			depot_btn, obs_post_btn, imperial_btn,
 			imperial_menu, citadel_btn]:
 		b.visible = false
 	merge_btn.visible = true
@@ -3502,8 +3482,7 @@ func _show_system_panel(sys_id: int) -> void:
 	var planet: Planet = sim.planets.get(selected_planet_id)
 	if planet == null or planet.system_id != sys_id:
 		panel_body.text = "Select a planet."
-		for b in [colonize_btn, mine_btn, emigrate_btn, abandon_btn, move_capital_btn, upgrade_btn,
-				spec_food_btn, spec_alloy_btn]:
+		for b in [colonize_btn, mine_btn, emigrate_btn, abandon_btn, move_capital_btn, upgrade_btn]:
 			b.visible = false
 		return
 
@@ -3593,15 +3572,6 @@ func _show_system_panel(sys_id: int) -> void:
 		upgrade_btn.text = "Upgrade mine (L%d, %d alloys)" \
 			% [planet.mine_level, int(SimConstants.MINE_UPGRADE_COST_ALLOYS)]
 		upgrade_btn.disabled = not sim.can_upgrade_mine(player_empire_id, planet.id)
-	# Specialization (own established city).
-	var can_spec: bool = own_colony and planet.colony.established
-	spec_food_btn.visible = false   # food removed; only the refining spec remains
-	spec_alloy_btn.visible = can_spec
-	if can_spec:
-		var sp: int = planet.colony.spec
-		spec_alloy_btn.text = ("◆ " if sp == SimConstants.Spec.ALLOY else "") \
-			+ "Specialize refining"
-
 
 # Debug hook for automated visual verification: found a colony, run fast for a
 # couple of real seconds, save galaxy + system screenshots, quit.
@@ -3666,7 +3636,7 @@ func _autoshot() -> void:
 	get_viewport().get_texture().get_image().save_png("user://autoshot_zoom.png")
 	_always_show_resources = false
 	# Fourth shot: a content-heavy OWN-city panel — the worst case for panel overflow
-	# (established city + own mine + specialization + all three system structures still
+	# (established city + own mine + all three system structures still
 	# buildable = the most action buttons at once). This is what the panel ScrollContainer
 	# has to survive. The one-planet-per-node model means there's no multi-planet list to
 	# stress; max button count is the real stress case. Fund the empire so the structure

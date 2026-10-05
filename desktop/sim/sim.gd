@@ -410,8 +410,7 @@ func serialize() -> Dictionary:
 	var cs: Array = []
 	for c in colonies:
 		cs.append({"pid": c.planet_id, "eid": c.empire_id, "pop": c.population,
-			"est": c.established, "emi": c.emigrating, "aban": c.abandoning, "spec": c.spec,
-			"sstr": c.spec_strength})
+			"est": c.established, "emi": c.emigrating, "aban": c.abandoning})
 	var fs: Array = []
 	for f in fleets:
 		fs.append({"id": f.id, "eid": f.empire_id, "sys": f.system_id,
@@ -493,8 +492,6 @@ static func deserialize(d: Dictionary) -> Sim:
 		col2.established = c.est
 		col2.emigrating = c.emi
 		col2.abandoning = c.get("aban", false)
-		col2.spec = int(c.spec)
-		col2.spec_strength = c.sstr
 		sim.planets[col2.planet_id].colony = col2
 		sim.colonies.append(col2)
 	for f in d.fleets:
@@ -1412,15 +1409,6 @@ func toggle_abandon(empire_id: int, planet_id: int) -> void:
 		p.colony.abandoning = not p.colony.abandoning
 
 
-# Set a colony's specialization target. Switching resets its ramp (inertia).
-func set_specialization(empire_id: int, planet_id: int, kind: int) -> void:
-	var p: Planet = planets.get(planet_id)
-	if p != null and p.colony != null and p.colony.empire_id == empire_id:
-		if p.colony.spec != kind:
-			p.colony.spec_strength = 0.0
-		p.colony.spec = kind
-
-
 # A mine can be upgraded when the same planet holds a big enough colony of the
 # owning empire (and there are alloys to pay for it).
 func can_upgrade_mine(empire_id: int, planet_id: int) -> bool:
@@ -2144,9 +2132,6 @@ func tick(dt_days: float) -> void:
 		if not c.established or not _is_colony_active(c):
 			continue   # disconnected colonies produce nothing (no refining contribution)
 		var e: Empire = empires[c.empire_id]
-		if c.spec != SimConstants.Spec.NONE and c.spec_strength < 1.0:
-			c.spec_strength = minf(1.0,
-				c.spec_strength + dt_days / SimConstants.SPEC_RAMP_DAYS)
 		var maxtier := 0
 		for t in 5:
 			if c.population < SimConstants.MIL_CUTOFF[t]:
@@ -2156,8 +2141,7 @@ func tick(dt_days: float) -> void:
 			maxtier = t + 1
 		if maxtier == 0:
 			continue
-		var budget: float = c.refine_capacity() \
-			* c.spec_factor(SimConstants.Spec.ALLOY) * e.efficiency * dt_days
+		var budget: float = c.refine_capacity() * e.efficiency * dt_days
 		var share: float = budget / maxtier
 		var carry := 0.0
 		for t in maxtier:
