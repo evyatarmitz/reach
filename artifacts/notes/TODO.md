@@ -23,6 +23,14 @@ Feedback batch from playtest ("you have no ears, but it's working").
    0.2s fade-out). All other cues confirmed sensibly short (0.04–0.53s); ambient is
    70s looping (the "too short" complaint was a pre-loop-flag stale build).
 
+4. **Siege/battle alert pile-up fixed** — an ongoing bombardment re-logged an event
+   AND re-pushed a jump alert every ~15Hz scan (hundreds of "under siege" alerts,
+   count rising live), because the scan keyed off `combat_at` = sim day (rises each
+   tick). `_scan_events` now diffs `combat_kind` against the previous scan and fires
+   only on the START edge; sieges keep ONE live jump alert (new `_sync_siege_alerts`)
+   added on start, dropped when the fight ends — live alerts bypass the 18s age-out.
+   Test `tests/alert_dedupe.gd` (200-scan siege → 1 alert; end → 0; re-siege → 1).
+
 **Sound tooling — `desktop/tools/audio_tool.py` (`5edbc34`):** the ear replacement.
 Pure python (soundfile+matplotlib+numpy, pip, no ffmpeg). `info` = durations;
 `view` = waveform+spectrogram PNG I can open and look at; `trim`/`loop`/`fade`/
