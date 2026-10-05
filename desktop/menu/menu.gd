@@ -23,6 +23,8 @@ var _size_slider_row: HBoxContainer
 var _size_val_label: Label
 var _empire_opt: OptionButton
 var _diff_opt: OptionButton
+var _persona_box: VBoxContainer
+var _persona_opts: Array = []   # one OptionButton per rival empire
 var _lane_slider: HSlider
 var _lane_val_label: Label
 var _player_color_idx: int = 0
@@ -137,6 +139,27 @@ func _ready() -> void:
 	_settings_box.add_child(_size_slider_row)
 	_empire_opt = _labeled_option("Empires", EMPIRES.map(func(n): return str(n)), 2)
 	_diff_opt = _labeled_option("Difficulty", DIFFS.map(func(d): return d[0]), 1)
+	# AI personalities — one picker per rival empire. Each rival defaults to "Random";
+	# "Randomize all" sets every picker back to Random. Rebuilt when the empire count
+	# changes so the number of rows always matches the number of AI rivals.
+	var persona_header := HBoxContainer.new()
+	var ph_label := Label.new()
+	ph_label.text = "AI personalities"
+	ph_label.custom_minimum_size = Vector2(120, 0)
+	persona_header.add_child(ph_label)
+	var rand_all := Button.new()
+	rand_all.text = "Randomize all"
+	rand_all.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rand_all.pressed.connect(func() -> void:
+		for o in _persona_opts:
+			o.selected = 0)   # 0 = Random
+	persona_header.add_child(rand_all)
+	_settings_box.add_child(persona_header)
+	_persona_box = VBoxContainer.new()
+	_persona_box.add_theme_constant_override("separation", 4)
+	_settings_box.add_child(_persona_box)
+	_empire_opt.item_selected.connect(func(_i: int) -> void: _rebuild_persona_rows())
+	_rebuild_persona_rows()
 	_build_color_row()
 	# Lane density: how many hyperlanes connect the stars. 0% = a single spanning tree
 	# (one connected wire, no islands); 100% = every planar near-neighbour lane. The map
@@ -305,6 +328,32 @@ func _build_color_row() -> void:
 	_select_color(0)
 
 
+# Rebuild the per-rival personality pickers to match the current empire count.
+# Option 0 is "Random"; options 1.. map to SimConstants.PERSONALITY_NAMES.
+func _rebuild_persona_rows() -> void:
+	for c in _persona_box.get_children():
+		_persona_box.remove_child(c)
+		c.queue_free()
+	_persona_opts.clear()
+	var rivals: int = EMPIRES[_empire_opt.selected] - 1   # player is one of the empires
+	var items: Array = ["Random"]
+	items.append_array(SimConstants.PERSONALITY_NAMES)
+	for r in rivals:
+		var row := HBoxContainer.new()
+		var l := Label.new()
+		l.text = "  Rival %d" % (r + 1)
+		l.custom_minimum_size = Vector2(120, 0)
+		row.add_child(l)
+		var opt := OptionButton.new()
+		opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		for it in items:
+			opt.add_item(it)
+		opt.selected = 0   # Random by default
+		row.add_child(opt)
+		_persona_box.add_child(row)
+		_persona_opts.append(opt)
+
+
 func _select_color(idx: int) -> void:
 	_player_color_idx = idx
 	for i in _color_swatches.size():
@@ -328,10 +377,14 @@ func _on_start() -> void:
 	var count: int = SIZES[_size_opt.selected][1]
 	if count == -1:
 		count = int(_size_slider.value)
+	var personas: Array = []
+	for o in _persona_opts:
+		personas.append(o.selected - 1)   # 0 -> -1 (random), i -> personality i-1
 	Session.config = {
 		"system_count": count,
 		"empire_count": EMPIRES[_empire_opt.selected],
 		"ai_efficiency": DIFFS[_diff_opt.selected][1],
+		"ai_personalities": personas,
 		"lane_density": _lane_slider.value / 100.0,
 		"player_color_idx": _player_color_idx,
 		"seed": randi(),
