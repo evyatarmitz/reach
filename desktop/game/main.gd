@@ -143,7 +143,7 @@ var event_label: Label          # top-left feed of recent autonomous events
 var _events: Array = []         # [day, text] recent events, newest last
 var _prev_pcolonies: Dictionary = {}  # planet_id -> system_id, player's colonies
 var _prev_pestab: Dictionary = {}     # planet_id -> true, player's ESTABLISHED (producing) colonies
-var _seen_combat: Dictionary = {}     # system_id -> last combat day already logged
+var _combat_prev: Dictionary = {}     # system_id -> combat_kind in combat LAST scan (for start-edge detection)
 var _prev_pstructs: Dictionary = {}   # "sid:kind" -> system_id, player-owned structures last scan
 # Location-anchored alerts (lost building/colony, colony under siege) for the bottom
 # jump bar. Separate from _events: these carry a system to fly the camera to, and are
@@ -442,22 +442,29 @@ func _scan_events() -> void:
 				_push_alert("⌂ Lost %s at %s" % [kind, nm2], sid3)
 				warn = true
 	_prev_pstructs = pstructs
-	# Combat at systems the player can currently see. Battle (enemy fleets clashing) and
-	# bombardment (a lone fleet grinding a colony) are distinct mechanics everywhere else in
-	# the UI, so the feed distinguishes them too — combat_kind is fresh from this tick's
-	# _resolve_combat when combat_at was just set.
-	for sid in sim.combat_at:
-		var d: float = sim.combat_at[sid]
-		if d > _seen_combat.get(sid, -1.0) and _sys_live(sid):
-			_seen_combat[sid] = d
-			if sim.combat_kind.get(sid, 0) == 1:
-				_log_event("☄ Bombardment at %s" % sim.systems[sid].name)
-				# Bombardment of one of OUR systems = a colony under siege: worth a jump alert.
-				if _system_has_player_colony(sid):
-					_push_alert("☄ Colony under siege at %s" % sim.systems[sid].name, sid)
-					warn = true
-			else:
-				_log_event("⚔ Battle at %s" % sim.systems[sid].name)
+	# Combat at systems the player can currently see. combat_kind is rebuilt every tick
+	# (one entry per system fighting RIGHT NOW), so a sustained battle appears every scan.
+	# Diff against last scan and fire only on the START edge — when a system newly enters
+	# combat, or flips battle<->bombard — never once per tick. (The old code keyed on
+	# combat_at = sim day, which rises every tick, so an ongoing siege re-logged and
+	# re-alerted ~15x/sec, piling up hundreds of identical "under siege" alerts.)
+	var combat_now := {}
+	for sid in sim.combat_kind:
+		if _sys_live(sid):
+			combat_now[sid] = int(sim.combat_kind[sid])
+	for sid in combat_now:
+		if _combat_prev.get(sid, -1) == combat_now[sid]:
+			continue   # same fight already announced last scan
+		if combat_now[sid] == 1:
+			_log_event("☄ Bombardment at %s" % sim.systems[sid].name)
+			if _system_has_player_colony(sid):
+				warn = true   # a NEW siege of our colony — sting once, not per tick
+		else:
+			_log_event("⚔ Battle at %s" % sim.systems[sid].name)
+	# One live jump alert per active siege: added on start, kept while it lasts, dropped
+	# the tick the fight ends (unlike transient alerts, which age out on a timer).
+	_sync_siege_alerts(combat_now)
+	_combat_prev = combat_now
 	if warn and audio != null:
 		audio.play("alert")
 	_refresh_events()
@@ -500,12 +507,40 @@ func _push_alert(text: String, sid: int) -> void:
 	_alerts.append({"t": Time.get_ticks_msec(), "text": text, "sid": sid})
 
 
+# Reconcile the set of live siege alerts with the systems currently under bombardment.
+# "live" alerts don't age out (see _refresh_alerts); they exist exactly as long as the
+# siege does, so the alert count tracks real ongoing sieges, not accumulated ticks. One
+# per system — a siege that's already flagged isn't duplicated.
+func _sync_siege_alerts(combat_now: Dictionary) -> void:
+	var want := {}   # sid -> true: player colonies under bombardment right now
+	for sid in combat_now:
+		if combat_now[sid] == 1 and _system_has_player_colony(sid):
+			want[sid] = true
+	var kept: Array = []
+	var have := {}
+	for a in _alerts:
+		if a.get("live", false):
+			if want.has(a["sid"]):   # siege still active — keep it
+				have[a["sid"]] = true
+				kept.append(a)
+			# else: the siege ended this tick — drop the live alert
+		else:
+			kept.append(a)
+	_alerts = kept
+	for sid in want:
+		if not have.has(sid):        # a newly-started siege — one live alert
+			_alerts.append({"t": Time.get_ticks_msec(), "live": true, "sid": sid,
+				"text": "☄ Colony under siege at %s" % sim.systems[sid].name})
+
+
 # Drop stale alerts, reset the cycle when the list empties, refresh the button label.
 func _refresh_alerts() -> void:
 	var nowt := float(Time.get_ticks_msec())
 	var kept: Array = []
 	for a in _alerts:
-		if nowt - float(a["t"]) <= ALERT_WINDOW_MS:
+		# Live siege alerts persist until the siege ends (managed in _sync_siege_alerts);
+		# transient alerts (colony/building lost) age out of the wall-clock window.
+		if a.get("live", false) or nowt - float(a["t"]) <= ALERT_WINDOW_MS:
 			kept.append(a)
 	_alerts = kept
 	if _alert_idx >= _alerts.size():
@@ -3927,7 +3962,7 @@ func _autoshot() -> void:
 	_storm_bands.clear()
 	_events.clear()            # drop the carried-over feed from the earlier poses
 	_prev_pcolonies = {}       # re-seed loss detection against the new sim (no false losses)
-	_seen_combat = {}
+	_combat_prev = {}
 	_prev_pstructs = {}
 	_alerts.clear(); _alert_idx = 0
 	selected_fleet_id = -1
@@ -4001,7 +4036,7 @@ func _autoshot() -> void:
 	_storm_bands.clear()
 	_events.clear()
 	_prev_pcolonies = {}
-	_seen_combat = {}
+	_combat_prev = {}
 	_prev_pstructs = {}
 	_alerts.clear(); _alert_idx = 0
 	_hover_hold = false
