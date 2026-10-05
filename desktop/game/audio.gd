@@ -201,14 +201,25 @@ func _save_cfg() -> void:
 # --- sound bank: drop-in file, else synth ----------------------------------------
 
 func _build_sounds() -> void:
+	# Loop the two beds whether they come from a file or the synth (an imported .ogg/.mp3
+	# defaults to loop=false; the synth WAVs are already LOOP_FORWARD).
 	for name in ["ambient", "construct", "fleet_build", "battle_loop", "bombard_loop",
 			"alert", "colony_activate", "ui_click", "move_order", "refused"]:
 		var f := _load_file(name)
-		_streams[name] = f if f != null else _synth(name)
+		var s: AudioStream = f if f != null else _synth(name)
+		if f != null and (name == "ambient" or name == "battle_loop" or name == "bombard_loop"):
+			_set_loop(s)
+		_streams[name] = s
+
+
+# Turn on looping for an imported stream type that exposes a `loop` flag (OggVorbis, MP3).
+func _set_loop(s: AudioStream) -> void:
+	if s is AudioStreamOggVorbis or s is AudioStreamMP3:
+		s.loop = true
 
 
 func _load_file(name: String) -> AudioStream:
-	for ext in [".ogg", ".wav"]:
+	for ext in [".ogg", ".mp3", ".wav"]:
 		var p := "res://assets/audio/%s%s" % [name, ext]
 		if ResourceLoader.exists(p):
 			var r = load(p)
